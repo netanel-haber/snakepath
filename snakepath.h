@@ -10,8 +10,24 @@
 #define SNAKEPATH_H
 
 #include <stddef.h>
-#include <stdbool.h>
 #include <string.h>
+
+#ifndef __cplusplus
+#include <stdbool.h>
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Compound literal helpers for C/C++ compatibility */
+#ifdef __cplusplus
+#define SP__STR(d, l) SpStr{(d), (l)}
+#define SP__OPTS(f) SpPathOpts{(f)}
+#else
+#define SP__STR(d, l) ((SpStr){.data = (d), .len = (l)})
+#define SP__OPTS(f) ((SpPathOpts){.flavor = (f)})
+#endif
 
 #ifndef SP_PATH_MAX
 #define SP_PATH_MAX 4096
@@ -80,19 +96,22 @@ typedef struct {
 
 /* ============ API Macros ============ */
 
-/* Path creation with optional flavor: sp_path("foo/bar") or sp_path("foo", .flavor = SP_FLAVOR_POSIX) */
+/* Path creation with optional flavor: sp_path("foo/bar") or sp_path("foo", SP_FLAVOR_POSIX) */
 typedef struct { SpFlavor flavor; } SpPathOpts;
-#define sp_path(s, ...) sp_path_new((s), (SpPathOpts){__VA_ARGS__})
+#define sp_path(s) sp_path_new((s), SP__OPTS(SP_FLAVOR_NATIVE))
+#define sp_path_f(s, f) sp_path_new((s), SP__OPTS(f))
 
-/* Join paths: sp_join(p, "a", "b", "c") */
+/* Join paths: sp_join(p, "a", "b", "c") - C only, use sp_join_one in C++ */
+#ifndef __cplusplus
 #define sp_join(base, ...) sp_join_impl((base), (const char*[]){__VA_ARGS__, NULL})
+#endif
 
 /* Comparison: sp_eq(a, b) */
 #define sp_eq(a, b) sp_path_eq(&(a), &(b))
 
 /* String view literal */
-#define sp_sv(s) ((SpStr){.data = (s), .len = sizeof(s) - 1})
-#define sp_sv_from(s, n) ((SpStr){.data = (s), .len = (n)})
+#define sp_sv(s) SP__STR((s), sizeof(s) - 1)
+#define sp_sv_from(s, n) SP__STR((s), (n))
 
 /* ============ Core Functions ============ */
 
@@ -153,10 +172,18 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
     return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
 }
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* SNAKEPATH_H */
 
 /* ============ Implementation ============ */
 #ifdef SNAKEPATH_IMPLEMENTATION
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 static inline bool sp__is_sep(char c, SpFlavor flavor) {
     if (flavor == SP_FLAVOR_WINDOWS || (flavor == SP_FLAVOR_NATIVE && SP_SEP == '\\')) {
@@ -300,7 +327,7 @@ const char *sp_str(const SpPath *p) {
 }
 
 SpStr sp_as_sv(const SpPath *p) {
-    return (SpStr){.data = p->buf, .len = p->len};
+    return SP__STR(p->buf, p->len);
 }
 
 void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
@@ -314,43 +341,43 @@ void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
 
 SpStr sp_drive(const SpPath *p) {
     size_t dlen = sp__drive_len(p->buf, p->len, p->flavor);
-    return (SpStr){.data = p->buf, .len = dlen};
+    return SP__STR(p->buf, dlen);
 }
 
 SpStr sp_root(const SpPath *p) {
     size_t start = sp__root_start(p->buf, p->len, p->flavor);
     size_t rlen = sp__root_len(p->buf, p->len, p->flavor);
-    return (SpStr){.data = p->buf + start, .len = rlen};
+    return SP__STR(p->buf + start, rlen);
 }
 
 SpStr sp_anchor(const SpPath *p) {
     size_t alen = sp__anchor_len(p->buf, p->len, p->flavor);
-    return (SpStr){.data = p->buf, .len = alen};
+    return SP__STR(p->buf, alen);
 }
 
 SpStr sp_name(const SpPath *p) {
-    if (p->len == 0) return (SpStr){.data = p->buf, .len = 0};
+    if (p->len == 0) return SP__STR(p->buf, 0);
     size_t anchor = sp__anchor_len(p->buf, p->len, p->flavor);
-    if (anchor == p->len) return (SpStr){.data = p->buf + p->len, .len = 0};
+    if (anchor == p->len) return SP__STR(p->buf + p->len, 0);
     size_t i = p->len;
     while (i > anchor && !sp__is_sep(p->buf[i-1], p->flavor)) i--;
-    return (SpStr){.data = p->buf + i, .len = p->len - i};
+    return SP__STR(p->buf + i, p->len - i);
 }
 
 SpStr sp_suffix(const SpPath *p) {
     SpStr name = sp_name(p);
-    if (name.len == 0) return (SpStr){.data = NULL, .len = 0};
+    if (name.len == 0) return SP__STR(NULL, 0);
     size_t i = name.len;
     while (i > 0 && name.data[i-1] != '.') i--;
-    if (i <= 1) return (SpStr){.data = NULL, .len = 0};
-    if (i >= name.len) return (SpStr){.data = NULL, .len = 0};
-    return (SpStr){.data = name.data + i - 1, .len = name.len - i + 1};
+    if (i <= 1) return SP__STR(NULL, 0);
+    if (i >= name.len) return SP__STR(NULL, 0);
+    return SP__STR(name.data + i - 1, name.len - i + 1);
 }
 
 SpStr sp_stem(const SpPath *p) {
     SpStr name = sp_name(p);
     SpStr suffix = sp_suffix(p);
-    return (SpStr){.data = name.data, .len = name.len - suffix.len};
+    return SP__STR(name.data, name.len - suffix.len);
 }
 
 SpSuffixes sp_suffixes(const SpPath *p) {
@@ -384,7 +411,7 @@ SpPath sp_parent(const SpPath *p) {
     while (i > anchor && !sp__is_sep(p->buf[i-1], p->flavor)) i--;
     if (i > anchor) i--;
     if (i == 0 && anchor == 0) {
-        return sp_path_new(".", (SpPathOpts){.flavor = p->flavor});
+        return sp_path_new(".", SP__OPTS(p->flavor));
     }
     if (i <= anchor) i = anchor;
     SpPath r = {0};
@@ -463,7 +490,7 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
     if (sp__is_sep(other[0], flavor)) {
         /* Has root - check for drive replacement on Windows */
         if (sp__has_drive(other, olen, flavor) || sp__is_unc(other, olen, flavor)) {
-            return sp_path_new(other, (SpPathOpts){.flavor = flavor});
+            return sp_path_new(other, SP__OPTS(flavor));
         }
         /* Root only - keep drive from base */
         size_t dlen = sp__drive_len(base->buf, base->len, flavor);
@@ -480,7 +507,7 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
             sp__normalize(r.buf, &r.len, flavor);
             return r;
         }
-        return sp_path_new(other, (SpPathOpts){.flavor = flavor});
+        return sp_path_new(other, SP__OPTS(flavor));
     }
     if (sp__has_drive(other, olen, flavor)) {
         /* Other has drive */
@@ -507,7 +534,7 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
             return r;
         }
         /* Different drive */
-        return sp_path_new(other, (SpPathOpts){.flavor = flavor});
+        return sp_path_new(other, SP__OPTS(flavor));
     }
     /* Relative path - simple join */
     SpPath r = sp_path_copy(base);
@@ -592,7 +619,8 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
 
 SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
     if (!sp_is_relative_to(p, other)) {
-        return (SpPath){0};
+        SpPath empty = {0};
+        return empty;
     }
     SpPartsIter it_p = sp_parts_begin(p);
     SpPartsIter it_o = sp_parts_begin(other);
@@ -630,5 +658,9 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
 bool sp_is_empty(const SpPath *p) {
     return p->len == 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SNAKEPATH_IMPLEMENTATION */
