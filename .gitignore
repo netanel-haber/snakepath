@@ -1,0 +1,8 @@
+nob
+nob.old
+test_gcc
+test_clang
+test_gcc_san
+test_clang_san
+*.o
+*.dSYM/
