@@ -29,6 +29,31 @@
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
     "-Wno-unsafe-buffer-usage"
 
+/* C++ warnings - no C-specific warnings like -Wstrict-prototypes
+ * Also disable -Wmissing-field-initializers because {0} is valid C initialization */
+#define GPP_WARNINGS \
+    "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
+    "-Wconversion", "-Wsign-conversion", "-Wshadow", \
+    "-Wdouble-promotion", "-Wundef", "-Wwrite-strings", \
+    "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
+    "-Wnull-dereference", "-Wformat=2", "-Wvla", \
+    "-Wlogical-op", "-Wduplicated-cond", "-Wduplicated-branches", \
+    "-Wrestrict", "-Wno-missing-field-initializers"
+
+#define CLANGPP_WARNINGS \
+    "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
+    "-Wconversion", "-Wsign-conversion", "-Wshadow", \
+    "-Wdouble-promotion", "-Wundef", "-Wwrite-strings", \
+    "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
+    "-Wnull-dereference", "-Wformat=2", "-Wvla", \
+    "-Weverything", "-Wno-c++98-compat", "-Wno-c++98-compat-pedantic", \
+    "-Wno-disabled-macro-expansion", "-Wno-padded", \
+    "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
+    "-Wno-unsafe-buffer-usage", "-Wno-missing-field-initializers", \
+    "-Wno-reserved-identifier", "-Wno-reserved-macro-identifier", \
+    "-Wno-missing-braces", "-Wno-zero-as-null-pointer-constant", \
+    "-Wno-old-style-cast"
+
 static bool build_with_gcc(bool sanitizers) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "gcc");
@@ -57,6 +82,34 @@ static bool build_with_clang(bool sanitizers) {
     }
     nob_cmd_append(&cmd, "-g", "-O0");
     nob_cmd_append(&cmd, "-o", sanitizers ? "test_clang_san" : "test_clang");
+    nob_cmd_append(&cmd, "test.c");
+    bool result = nob_cmd_run_sync(cmd);
+    nob_cmd_free(cmd);
+    return result;
+}
+
+static bool build_with_gpp(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "g++");
+    nob_cmd_append(&cmd, "-std=c++11");
+    nob_cmd_append(&cmd, "-x", "c++");
+    nob_cmd_append(&cmd, GPP_WARNINGS);
+    nob_cmd_append(&cmd, "-g", "-O0");
+    nob_cmd_append(&cmd, "-o", "test_gpp");
+    nob_cmd_append(&cmd, "test.c");
+    bool result = nob_cmd_run_sync(cmd);
+    nob_cmd_free(cmd);
+    return result;
+}
+
+static bool build_with_clangpp(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "clang++");
+    nob_cmd_append(&cmd, "-std=c++11");
+    nob_cmd_append(&cmd, "-x", "c++");
+    nob_cmd_append(&cmd, CLANGPP_WARNINGS);
+    nob_cmd_append(&cmd, "-g", "-O0");
+    nob_cmd_append(&cmd, "-o", "test_clangpp");
     nob_cmd_append(&cmd, "test.c");
     bool result = nob_cmd_run_sync(cmd);
     nob_cmd_free(cmd);
@@ -131,6 +184,30 @@ int main(int argc, char **argv) {
         nob_log(NOB_INFO, "Running Clang sanitizer build...");
         if (!run_test("./test_clang_san")) {
             nob_log(NOB_ERROR, "Clang sanitizer tests failed");
+            all_ok = false;
+        }
+    }
+
+    nob_log(NOB_INFO, "Building with G++ (C++ compatibility)...");
+    if (!build_with_gpp()) {
+        nob_log(NOB_ERROR, "G++ build failed");
+        all_ok = false;
+    } else {
+        nob_log(NOB_INFO, "Running G++ build...");
+        if (!run_test("./test_gpp")) {
+            nob_log(NOB_ERROR, "G++ tests failed");
+            all_ok = false;
+        }
+    }
+
+    nob_log(NOB_INFO, "Building with Clang++ (C++ compatibility)...");
+    if (!build_with_clangpp()) {
+        nob_log(NOB_ERROR, "Clang++ build failed");
+        all_ok = false;
+    } else {
+        nob_log(NOB_INFO, "Running Clang++ build...");
+        if (!run_test("./test_clangpp")) {
+            nob_log(NOB_ERROR, "Clang++ tests failed");
             all_ok = false;
         }
     }
