@@ -10,6 +10,13 @@
 static int tests_run = 0;
 static int tests_passed = 0;
 
+/* C/C++ compatible cast helper */
+#ifdef __cplusplus
+#define CAST_INT(x) static_cast<int>(x)
+#else
+#define CAST_INT(x) ((int)(x))
+#endif
+
 #define TEST(name) static void test_##name(void)
 #define RUN(name) do { \
     printf("  %-50s", #name); \
@@ -33,7 +40,7 @@ static int tests_passed = 0;
     tests_run++; \
     if (_sv.len != _explen || (_sv.len > 0 && memcmp(_sv.data, _exp, _sv.len) != 0)) { \
         printf("\n    FAIL: %s:%d: expected \"%s\" (len %zu), got \"%.*s\" (len %zu)\n", \
-               __FILE__, __LINE__, _exp, _explen, (int)_sv.len, _sv.data ? _sv.data : "", _sv.len); \
+               __FILE__, __LINE__, _exp, _explen, CAST_INT(_sv.len), _sv.data ? _sv.data : "", _sv.len); \
         exit(1); \
     } \
     tests_passed++; \

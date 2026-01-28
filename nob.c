@@ -29,8 +29,7 @@
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
     "-Wno-unsafe-buffer-usage"
 
-/* C++ warnings - no C-specific warnings like -Wstrict-prototypes
- * Also disable -Wmissing-field-initializers because {0} is valid C initialization */
+/* C++ warnings - no C-specific warnings like -Wstrict-prototypes */
 #define GPP_WARNINGS \
     "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
     "-Wconversion", "-Wsign-conversion", "-Wshadow", \
@@ -38,7 +37,7 @@
     "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
     "-Wnull-dereference", "-Wformat=2", "-Wvla", \
     "-Wlogical-op", "-Wduplicated-cond", "-Wduplicated-branches", \
-    "-Wrestrict", "-Wno-missing-field-initializers"
+    "-Wrestrict"
 
 #define CLANGPP_WARNINGS \
     "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
@@ -49,10 +48,7 @@
     "-Weverything", "-Wno-c++98-compat", "-Wno-c++98-compat-pedantic", \
     "-Wno-disabled-macro-expansion", "-Wno-padded", \
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
-    "-Wno-unsafe-buffer-usage", "-Wno-missing-field-initializers", \
-    "-Wno-reserved-identifier", "-Wno-reserved-macro-identifier", \
-    "-Wno-missing-braces", "-Wno-zero-as-null-pointer-constant", \
-    "-Wno-old-style-cast"
+    "-Wno-unsafe-buffer-usage"
 
 static bool build_with_gcc(bool sanitizers) {
     Nob_Cmd cmd = {0};
