@@ -13,6 +13,10 @@
 #include <stdbool.h>
 #include <string.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef SP_PATH_MAX
 #define SP_PATH_MAX 4096
 #endif
@@ -153,10 +157,18 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
     return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
 }
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* SNAKEPATH_H */
 
 /* ============ Implementation ============ */
 #ifdef SNAKEPATH_IMPLEMENTATION
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 static inline bool sp__is_sep(char c, SpFlavor flavor) {
     if (flavor == SP_FLAVOR_WINDOWS || (flavor == SP_FLAVOR_NATIVE && SP_SEP == '\\')) {
@@ -630,5 +642,9 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
 bool sp_is_empty(const SpPath *p) {
     return p->len == 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SNAKEPATH_IMPLEMENTATION */
