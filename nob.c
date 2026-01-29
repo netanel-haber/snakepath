@@ -119,6 +119,8 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #ifdef _WIN32
     if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
         nob_cmd_append(&cmd, "/Od", "/Zi");
+        /* Use /Fd to give each build its own PDB file for parallel compilation */
+        nob_cmd_append(&cmd, nob_temp_sprintf("/Fd:%.*s.pdb", (int)(strlen(cfg.output) - 4), cfg.output));
         nob_cmd_append(&cmd, "/Fe:", cfg.output);
     } else
 #endif
