@@ -110,6 +110,7 @@ int main(void) {
     ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "/");
     ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "a");
     ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "b");
+    ASSERT(!sp_parts_next(&it2, &part));
     
     SpPath ppc = sp_path_f("/a/b/c", P); ASSERT(sp_parts_count(&ppc) == 4);
     
@@ -174,16 +175,19 @@ int main(void) {
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "c:");
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "a");
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "b");
+    ASSERT(!sp_parts_next(&wit1, &part));
     
     SpPath wp2 = sp_path_f("c:/a/b", W); SpPartsIter wit2 = sp_parts_begin(&wp2);
     ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "c:\\");
     ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "a");
     ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "b");
+    ASSERT(!sp_parts_next(&wit2, &part));
     
     SpPath wp3 = sp_path_f("//server/share/a/b", W); SpPartsIter wit3 = sp_parts_begin(&wp3);
     ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "\\\\server\\share\\");
     ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "a");
     ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "b");
+    ASSERT(!sp_parts_next(&wit3, &part));
     
     SpPath ws = sp_path_f("c:a/b.tar.gz", W); SpSuffixes wss = sp_suffixes(&ws);
     ASSERT(wss.count == 2); ASSERT_SV(wss.items[0], ".tar"); ASSERT_SV(wss.items[1], ".gz");
