@@ -2,11 +2,35 @@
  * Each test references Python pathlib documentation snippets.
  * https://docs.python.org/3/library/pathlib.html
  */
+
+/* nob.h needs POSIX extensions - must be defined before any headers */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
+
+/* Suppress warnings for nob.h which doesn't compile cleanly with strict flags */
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
+
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 static int tests_run = 0;
 
