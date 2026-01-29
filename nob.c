@@ -1,5 +1,7 @@
 /* nob.c - Build script for snakepath using nob.h
  * Usage: cc -o nob nob.c && ./nob
+ *
+ * Builds are parallelized across available CPU cores.
  */
 
 #define NOB_IMPLEMENTATION
@@ -81,7 +83,8 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     }
 }
 
-static bool build_source(BuildConfig cfg, const char *source, const char *extra_define) {
+/* Build source file, optionally async. Returns true if command was started/completed. */
+static bool build_source_async(BuildConfig cfg, const char *source, const char *extra_define, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
 
     switch (cfg.compiler) {
@@ -129,21 +132,34 @@ static bool build_source(BuildConfig cfg, const char *source, const char *extra_
     }
 
     nob_cmd_append(&cmd, source);
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
+
+    bool result;
+    if (procs) {
+        result = nob_cmd_run(&cmd, .async = procs);
+    } else {
+        result = nob_cmd_run(&cmd);
+    }
     return result;
 }
 
-static bool build(BuildConfig cfg) {
-    return build_source(cfg, "test.c", NULL);
+static bool build_source(BuildConfig cfg, const char *source, const char *extra_define) {
+    return build_source_async(cfg, source, extra_define, NULL);
+}
+
+static bool run_test_async(const char *exe, Nob_Procs *procs) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, exe);
+    bool result;
+    if (procs) {
+        result = nob_cmd_run(&cmd, .async = procs);
+    } else {
+        result = nob_cmd_run(&cmd);
+    }
+    return result;
 }
 
 static bool run_test(const char *exe) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, exe);
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
+    return run_test_async(exe, NULL);
 }
 
 #ifndef _WIN32
@@ -154,111 +170,158 @@ static bool run_valgrind(const char *exe) {
     nob_cmd_append(&cmd, "--error-exitcode=1");
     nob_cmd_append(&cmd, "--track-origins=yes");
     nob_cmd_append(&cmd, exe);
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
+    bool result = nob_cmd_run(&cmd);
     return result;
 }
 #endif
 
-static bool build_and_test(BuildConfig cfg, bool *all_ok, bool optional) {
-    nob_log(NOB_INFO, "Building with %s...", cfg.name);
-    if (!build(cfg)) {
-        if (optional) {
-            nob_log(NOB_WARNING, "%s build skipped (missing runtime)", cfg.name);
-            return true;
-        }
-        nob_log(NOB_ERROR, "%s build failed", cfg.name);
-        *all_ok = false;
-        return false;
-    }
+static const char *all_artifacts[] = {
+#ifdef _WIN32
+    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "demo.exe",
+    /* PDB and obj files from MSVC */
+    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "demo.pdb",
+    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "demo.obj",
+#else
+    "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
+    "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
+    "demo",
+#endif
+    NULL
+};
 
-    nob_log(NOB_INFO, "Running %s build...", cfg.name);
-    if (!run_test(cfg.output)) {
-        nob_log(NOB_ERROR, "%s tests failed", cfg.name);
-        *all_ok = false;
-        return false;
+static bool clean_artifacts(void) {
+    bool all_ok = true;
+    nob_log(NOB_INFO, "Cleaning build artifacts...");
+    for (size_t i = 0; all_artifacts[i] != NULL; i++) {
+        if (nob_file_exists(all_artifacts[i])) {
+            if (!nob_delete_file(all_artifacts[i])) {
+                all_ok = false;
+            }
+        }
     }
-    return true;
+    return all_ok;
 }
 
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
+    const char *program = nob_shift(argv, argc);
+    (void)program;
+
+    if (argc > 0) {
+        const char *subcmd = nob_shift(argv, argc);
+        if (strcmp(subcmd, "clean") == 0) {
+            if (clean_artifacts()) {
+                nob_log(NOB_INFO, "Clean complete.");
+                return 0;
+            } else {
+                nob_log(NOB_ERROR, "Clean failed.");
+                return 1;
+            }
+        } else {
+            nob_log(NOB_ERROR, "Unknown subcommand: %s", subcmd);
+            nob_log(NOB_INFO, "Usage: ./nob [clean]");
+            return 1;
+        }
+    }
+
     bool all_ok = true;
+    Nob_Procs procs = {0};
+
+    nob_log(NOB_INFO, "Building with %d parallel jobs...", nob_nprocs());
 
 #ifdef _WIN32
-    BuildConfig configs[] = {
+    BuildConfig test_configs[] = {
         {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
         {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
     };
-    size_t config_count = sizeof(configs) / sizeof(configs[0]);
+    BuildConfig fluent_configs[] = {
+        {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
+    };
+    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "demo.exe"};
+    const char *demo_output = "demo.exe";
+#else
+    BuildConfig test_configs[] = {
+        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
+        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
+        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./test_clang_san"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
+    };
+    BuildConfig fluent_configs[] = {
+        {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
+        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
+    };
+    BuildConfig demo_config = {COMPILER_GCC, false, "Demo", "./demo"};
+    const char *demo_output = "./demo";
+#endif
 
-    for (size_t i = 0; i < config_count; i++) {
-        build_and_test(configs[i], &all_ok, false);
+    size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
+    size_t fluent_count = sizeof(fluent_configs) / sizeof(fluent_configs[0]);
+
+    /* Phase 1: Build everything in parallel */
+    nob_log(NOB_INFO, "=== Building all targets ===");
+
+    for (size_t i = 0; i < test_count; i++) {
+        nob_log(NOB_INFO, "  Starting build: %s", test_configs[i].name);
+        build_source_async(test_configs[i], "test.c", NULL, &procs);
     }
 
-    /* Fluent API tests (C only - uses designated initializers) */
-    nob_log(NOB_INFO, "Building fluent API tests (MSVC)...");
-    BuildConfig fluent_msvc = {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"};
-    if (build_source(fluent_msvc, "test_fluent_api.c", NULL)) {
-        nob_log(NOB_INFO, "Running fluent API tests...");
-        if (!run_test("test_fluent_msvc.exe")) {
-            nob_log(NOB_ERROR, "Fluent API tests failed");
-            all_ok = false;
-        }
-    } else {
-        nob_log(NOB_ERROR, "Fluent API build failed");
+    for (size_t i = 0; i < fluent_count; i++) {
+        nob_log(NOB_INFO, "  Starting build: %s", fluent_configs[i].name);
+        build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
+    }
+
+    nob_log(NOB_INFO, "  Starting build: %s", demo_config.name);
+    build_source_async(demo_config, "demo.c", NULL, &procs);
+
+    /* Wait for all builds to complete */
+    if (!nob_procs_wait(procs)) {
+        nob_log(NOB_ERROR, "Some builds failed");
         all_ok = false;
     }
-#else
-    BuildConfig configs[] = {
-        {COMPILER_GCC,     false, "GCC",                 "./test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",               "./test_clang"},
-        {COMPILER_GCC,     true,  "GCC + sanitizers",    "./test_gcc_san"},
-        {COMPILER_CLANG,   true,  "Clang + sanitizers",  "./test_clang_san"},
-        {COMPILER_GPP,     false, "G++ (C++)",           "./test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",       "./test_clangpp"},
-    };
-    size_t config_count = sizeof(configs) / sizeof(configs[0]);
+    procs.count = 0;
 
-    for (size_t i = 0; i < config_count; i++) {
-        bool optional = configs[i].sanitizers && configs[i].compiler == COMPILER_CLANG;
-        build_and_test(configs[i], &all_ok, optional);
+    if (!all_ok) goto end;
+
+    /* Phase 2: Run all tests in parallel */
+    nob_log(NOB_INFO, "=== Running all tests ===");
+
+    for (size_t i = 0; i < test_count; i++) {
+        nob_log(NOB_INFO, "  Starting test: %s", test_configs[i].name);
+        run_test_async(test_configs[i].output, &procs);
     }
 
-    nob_log(NOB_INFO, "Running valgrind...");
+    for (size_t i = 0; i < fluent_count; i++) {
+        nob_log(NOB_INFO, "  Starting test: %s", fluent_configs[i].name);
+        run_test_async(fluent_configs[i].output, &procs);
+    }
+
+    if (!nob_procs_wait(procs)) {
+        nob_log(NOB_ERROR, "Some tests failed");
+        all_ok = false;
+    }
+    procs.count = 0;
+
+#ifndef _WIN32
+    /* Phase 3: Valgrind (must be sequential, slow) */
+    nob_log(NOB_INFO, "=== Running valgrind ===");
     if (!run_valgrind("./test_gcc")) {
         nob_log(NOB_ERROR, "Valgrind check failed");
         all_ok = false;
     }
-
-    /* Fluent API tests (C only - uses designated initializers) */
-    nob_log(NOB_INFO, "Building fluent API tests (GCC)...");
-    BuildConfig fluent_gcc = {COMPILER_GCC, false, "GCC Fluent", "./test_fluent_gcc"};
-    if (build_source(fluent_gcc, "test_fluent_api.c", NULL)) {
-        nob_log(NOB_INFO, "Running fluent API tests...");
-        if (!run_test("./test_fluent_gcc")) {
-            nob_log(NOB_ERROR, "Fluent API tests failed");
-            all_ok = false;
-        }
-    } else {
-        nob_log(NOB_ERROR, "Fluent API build failed");
-        all_ok = false;
-    }
-
-    nob_log(NOB_INFO, "Building fluent API tests (Clang)...");
-    BuildConfig fluent_clang = {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"};
-    if (build_source(fluent_clang, "test_fluent_api.c", NULL)) {
-        nob_log(NOB_INFO, "Running fluent API tests (Clang)...");
-        if (!run_test("./test_fluent_clang")) {
-            nob_log(NOB_ERROR, "Fluent API tests (Clang) failed");
-            all_ok = false;
-        }
-    } else {
-        nob_log(NOB_ERROR, "Fluent API build (Clang) failed");
-        all_ok = false;
-    }
 #endif
+
+    /* Phase 4: Run demo to show it works */
+    nob_log(NOB_INFO, "=== Running demo ===");
+    if (!run_test(demo_output)) {
+        nob_log(NOB_ERROR, "Demo failed");
+        all_ok = false;
+    }
+
+end:
+    nob_da_free(procs);
 
     if (all_ok) {
         nob_log(NOB_INFO, "All builds and tests passed!");
