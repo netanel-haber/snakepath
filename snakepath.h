@@ -160,11 +160,11 @@ bool sp_is_empty(const SpPath *p);
 
 /* ============ Helper Functions ============ */
 static inline bool sp_sv_eq(SpStr a, SpStr b) {
-    return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
+    return a.len == b.len && memcmp(a.data, b.data, a.len) == 0;
 }
 static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
     size_t blen = strlen(b);
-    return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
+    return a.len == blen && memcmp(a.data, b, a.len) == 0;
 }
 
 #ifdef __cplusplus
@@ -227,12 +227,8 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
     return 0;
 }
 
-static size_t sp_priv_root_start(const char *s, size_t len, SpFlavor flavor) {
-    return sp_priv_drive_len(s, len, flavor);
-}
-
 static size_t sp_priv_root_len(const char *s, size_t len, SpFlavor flavor) {
-    size_t start = sp_priv_root_start(s, len, flavor);
+    size_t start = sp_priv_drive_len(s, len, flavor);
     if (start < len && sp_priv_is_sep(s[start], flavor)) {
         return 1;
     }
@@ -332,7 +328,7 @@ SpStr sp_drive(const SpPath *p) {
 }
 
 SpStr sp_root(const SpPath *p) {
-    size_t start = sp_priv_root_start(p->buf, p->len, p->flavor);
+    size_t start = sp_priv_drive_len(p->buf, p->len, p->flavor);
     size_t rlen = sp_priv_root_len(p->buf, p->len, p->flavor);
     return SP_PRIV_STR(p->buf + start, rlen);
 }
