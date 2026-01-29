@@ -8,3 +8,6 @@ test_gpp
 test_clangpp
 *.o
 *.dSYM/
+demo
+test_fluent_clang
+test_fluent_gcc

@@ -188,6 +188,29 @@ Define before including:
 | Drive | None | `C:` or UNC `\\server\share` |
 | Absolute | Has root `/` | Has drive + root `C:\` |
 
+## Gotchas
+
+### `sp_suffixes()` returns all dot-separated segments
+
+Like Python's `pathlib.Path.suffixes`, this function returns **all** segments after dots in the filename—not just "real" file extensions. This means version numbers get included:
+
+```c
+SpPath p = sp_path("snakepath-1.0.0.tar.gz");
+SpSuffixes s = sp_suffixes(&p);
+// s.count == 4
+// s.items: ".0", ".0", ".tar", ".gz"
+```
+
+Python behaves identically:
+
+```python
+>>> from pathlib import Path
+>>> Path("snakepath-1.0.0.tar.gz").suffixes
+['.0', '.0', '.tar', '.gz']
+```
+
+If you only want the final extension, use `sp_suffix()` which returns just `.gz`.
+
 ## Code Style
 
 - `sp_` prefix for public API
