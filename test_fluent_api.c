@@ -2,43 +2,23 @@
  * Each test references Python pathlib documentation snippets.
  * https://docs.python.org/3/library/pathlib.html
  */
-
-/* nob.h needs POSIX extensions - must be defined before any headers */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
-
-/* Suppress warnings for nob.h which doesn't compile cleanly with strict flags */
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wall"
-#pragma GCC diagnostic ignored "-Wextra"
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-
-#define NOB_IMPLEMENTATION
-#include "nob.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static int tests_run = 0;
 
-#define SP_TO_SV(sp) nob_sv_from_parts((sp).data, (sp).len)
-#define SV(s) nob_sv_from_cstr(s)
+/* Inline string view comparison */
+static int sv_eq(SpStr a, const char *b) {
+    size_t blen = strlen(b);
+    return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
+}
 
-#define ASSERT(cond) do { tests_run++; if (!(cond)) { nob_log(NOB_ERROR, "%s:%d: %s", __FILE__, __LINE__, #cond); exit(1); } } while(0)
-#define ASSERT_SV(sv, exp) ASSERT(nob_sv_eq(SP_TO_SV(sv), SV(exp)))
+#define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
+#define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
 #define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 

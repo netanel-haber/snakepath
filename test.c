@@ -1,40 +1,22 @@
 /* test.c - Rigorous pathlib tests for snakepath.h */
-
-/* nob.h needs POSIX extensions - must be defined before any headers */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
-
-/* Suppress warnings for nob.h which doesn't compile cleanly with strict flags */
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wall"
-#pragma GCC diagnostic ignored "-Wextra"
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-
-#define NOB_IMPLEMENTATION
-#include "nob.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static int tests_run = 0;
 
-#define SP_TO_SV(sp) nob_sv_from_parts((sp).data, (sp).len)
-#define SV(s) nob_sv_from_cstr(s)
+/* Inline string view comparison (like nob_sv_eq) */
+static int sv_eq(SpStr a, const char *b) {
+    size_t blen = strlen(b);
+    return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
+}
 
-#define ASSERT(cond) do { tests_run++; if (!(cond)) { nob_log(NOB_ERROR, "%s:%d: %s", __FILE__, __LINE__, #cond); exit(1); } } while(0)
-#define ASSERT_SV(sv, exp) ASSERT(nob_sv_eq(SP_TO_SV(sv), SV(exp)))
+#define ARRAY_LEN(a) (sizeof(a)/sizeof((a)[0]))
+
+#define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
+#define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
 #define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 #define ASSERT_ABS(path, flav, expected) do { SpPath _p = sp_path_f(path, flav); ASSERT(sp_is_absolute(&_p) == expected); } while(0)
 
@@ -77,37 +59,37 @@ int main(void) {
     printf("POSIX Tests:\n");
     
     SVTest posix_anchor[] = {{"", ""}, {"a/b", ""}, {"/", "/"}, {"/a/b", "/"}};
-    test_sv(P, sp_anchor, posix_anchor, NOB_ARRAY_LEN(posix_anchor));
+    test_sv(P, sp_anchor, posix_anchor, ARRAY_LEN(posix_anchor));
     
     SVTest posix_drive[] = {{"/a/b", ""}};
-    test_sv(P, sp_drive, posix_drive, NOB_ARRAY_LEN(posix_drive));
+    test_sv(P, sp_drive, posix_drive, ARRAY_LEN(posix_drive));
     
     SVTest posix_root[] = {{"a/b", ""}, {"/a/b", "/"}};
-    test_sv(P, sp_root, posix_root, NOB_ARRAY_LEN(posix_root));
+    test_sv(P, sp_root, posix_root, ARRAY_LEN(posix_root));
     
     SVTest posix_name[] = {{"", ""}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
-    test_sv(P, sp_name, posix_name, NOB_ARRAY_LEN(posix_name));
+    test_sv(P, sp_name, posix_name, ARRAY_LEN(posix_name));
     
     SVTest posix_stem[] = {{"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
-    test_sv(P, sp_stem, posix_stem, NOB_ARRAY_LEN(posix_stem));
+    test_sv(P, sp_stem, posix_stem, ARRAY_LEN(posix_stem));
     
     SVTest posix_suffix[] = {{"a/b.py", ".py"}, {"a/.hgrc", ""}, {"a/.hg.rc", ".rc"}, {"a/b.tar.gz", ".gz"}};
-    test_sv(P, sp_suffix, posix_suffix, NOB_ARRAY_LEN(posix_suffix));
+    test_sv(P, sp_suffix, posix_suffix, ARRAY_LEN(posix_suffix));
     
     SVTest posix_parent[] = {{"a/b/c", "a/b"}, {"/a/b/c", "/a/b"}, {"/", "/"}, {"a", "."}};
-    test_path(P, sp_parent, posix_parent, NOB_ARRAY_LEN(posix_parent));
+    test_path(P, sp_parent, posix_parent, ARRAY_LEN(posix_parent));
     
     JoinTest posix_join[] = {{"a/b", "c", "a/b/c"}, {"a/b", "/c", "/c"}};
-    test_join(P, posix_join, NOB_ARRAY_LEN(posix_join));
+    test_join(P, posix_join, ARRAY_LEN(posix_join));
     
     JoinTest posix_with_name[] = {{"a/b", "d.xml", "a/d.xml"}};
-    test_with(P, sp_with_name, posix_with_name, NOB_ARRAY_LEN(posix_with_name));
+    test_with(P, sp_with_name, posix_with_name, ARRAY_LEN(posix_with_name));
     
     JoinTest posix_with_stem[] = {{"a/b.py", "d", "a/d.py"}};
-    test_with(P, sp_with_stem, posix_with_stem, NOB_ARRAY_LEN(posix_with_stem));
+    test_with(P, sp_with_stem, posix_with_stem, ARRAY_LEN(posix_with_stem));
     
     JoinTest posix_with_suffix[] = {{"a/b.py", ".gz", "a/b.gz"}, {"a/b", ".gz", "a/b.gz"}, {"a/b.py", "", "a/b"}};
-    test_with(P, sp_with_suffix, posix_with_suffix, NOB_ARRAY_LEN(posix_with_suffix));
+    test_with(P, sp_with_suffix, posix_with_suffix, ARRAY_LEN(posix_with_suffix));
     
     ASSERT_ABS("/a/b", P, true); ASSERT_ABS("a/b", P, false);
     
@@ -151,42 +133,42 @@ int main(void) {
     
     SpPath ea = sp_path_f("a/b", P), eb = sp_path_f("a/b", P); ASSERT(sp_eq(ea, eb));
     
-    SpPath pap = sp_path_f("a/b/c", P); char *bap = nob_temp_alloc(SP_PATH_MAX);
-    sp_as_posix(&pap, bap, SP_PATH_MAX); ASSERT(strcmp(bap, "a/b/c") == 0);
+    SpPath pap = sp_path_f("a/b/c", P); char bap[SP_PATH_MAX];
+    sp_as_posix(&pap, bap, sizeof(bap)); ASSERT(strcmp(bap, "a/b/c") == 0);
     
     printf("  POSIX tests OK\n");
     
     printf("\nWindows Tests:\n");
     
     SVTest win_drive[] = {{"C:/a/b", "C:"}, {"/a/b", ""}};
-    test_sv(W, sp_drive, win_drive, NOB_ARRAY_LEN(win_drive));
+    test_sv(W, sp_drive, win_drive, ARRAY_LEN(win_drive));
     
     SVTest win_root[] = {{"C:/a/b", "\\"}, {"C:a/b", ""}};
-    test_sv(W, sp_root, win_root, NOB_ARRAY_LEN(win_root));
+    test_sv(W, sp_root, win_root, ARRAY_LEN(win_root));
     
     SVTest win_anchor[] = {{"C:/a/b", "C:\\"}, {"C:a/b", "C:"}};
-    test_sv(W, sp_anchor, win_anchor, NOB_ARRAY_LEN(win_anchor));
+    test_sv(W, sp_anchor, win_anchor, ARRAY_LEN(win_anchor));
     
     SVTest win_name[] = {{"C:/a/b.py", "b.py"}};
-    test_sv(W, sp_name, win_name, NOB_ARRAY_LEN(win_name));
+    test_sv(W, sp_name, win_name, ARRAY_LEN(win_name));
     
     SVTest win_suffix[] = {{"C:/a/b.py", ".py"}};
-    test_sv(W, sp_suffix, win_suffix, NOB_ARRAY_LEN(win_suffix));
+    test_sv(W, sp_suffix, win_suffix, ARRAY_LEN(win_suffix));
     
     SVTest win_parent[] = {{"C:/a/b/c", "C:\\a\\b"}};
-    test_path(W, sp_parent, win_parent, NOB_ARRAY_LEN(win_parent));
+    test_path(W, sp_parent, win_parent, ARRAY_LEN(win_parent));
     
     JoinTest win_join[] = {
         {"C:/a/b", "x/y", "C:\\a\\b\\x\\y"}, {"C:/a/b", "/x/y", "C:\\x\\y"},
         {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "C:\\a\\b\\x\\y"}
     };
-    test_join(W, win_join, NOB_ARRAY_LEN(win_join));
+    test_join(W, win_join, ARRAY_LEN(win_join));
     
     JoinTest win_with_name[] = {{"C:/a/b", "d.xml", "C:\\a\\d.xml"}};
-    test_with(W, sp_with_name, win_with_name, NOB_ARRAY_LEN(win_with_name));
+    test_with(W, sp_with_name, win_with_name, ARRAY_LEN(win_with_name));
     
     JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}};
-    test_with(W, sp_with_suffix, win_with_suffix, NOB_ARRAY_LEN(win_with_suffix));
+    test_with(W, sp_with_suffix, win_with_suffix, ARRAY_LEN(win_with_suffix));
     
     SpPath wp1 = sp_path_f("c:a/b", W); SpPartsIter wit1 = sp_parts_begin(&wp1);
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "c:");
@@ -211,8 +193,8 @@ int main(void) {
     
     ASSERT_PATH(sp_path_f("C:/a\\b/c", W), "C:\\a\\b\\c");
     
-    SpPath wap = sp_path_f("C:\\a\\b\\c", W); char *wbuf = nob_temp_alloc(SP_PATH_MAX);
-    sp_as_posix(&wap, wbuf, SP_PATH_MAX); ASSERT(strcmp(wbuf, "C:/a/b/c") == 0);
+    SpPath wap = sp_path_f("C:\\a\\b\\c", W); char wbuf[SP_PATH_MAX];
+    sp_as_posix(&wap, wbuf, sizeof(wbuf)); ASSERT(strcmp(wbuf, "C:/a/b/c") == 0);
     
     SpPath wr1 = sp_path_f("C:/a/b/c", W), wo1 = sp_path_f("C:/a", W);
     ASSERT_PATH(sp_relative_to(&wr1, &wo1), "b\\c");
