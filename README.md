@@ -1,4 +1,4 @@
-onger# snakepath
+snakepath
 
 C99 header-only pathlib library. POSIX + Windows. No malloc.
 
