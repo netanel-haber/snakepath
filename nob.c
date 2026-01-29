@@ -5,7 +5,6 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
-/* Base warnings shared by GCC and Clang (C and C++) */
 #define BASE_WARNINGS \
     "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
     "-Wconversion", "-Wsign-conversion", "-Wshadow", \
@@ -13,22 +12,18 @@
     "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
     "-Wnull-dereference", "-Wformat=2", "-Wvla"
 
-/* C-specific warnings (not valid in C++) */
 #define C_ONLY_WARNINGS \
     "-Wstrict-prototypes", "-Wmissing-prototypes", \
     "-Wold-style-definition"
 
-/* GCC-specific warnings (C and C++) */
 #define GCC_WARNINGS \
     "-Wformat-overflow=2", "-Wformat-truncation=2", \
     "-Wlogical-op", "-Wduplicated-cond", \
     "-Wduplicated-branches", "-Wrestrict"
 
-/* GCC C-specific warning */
 #define GCC_C_WARNINGS \
     "-Wjump-misses-init"
 
-/* Clang -Weverything with necessary exclusions */
 #define CLANG_EVERYTHING \
     "-Weverything", \
     "-Wno-disabled-macro-expansion", "-Wno-padded", \
