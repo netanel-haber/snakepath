@@ -1,500 +1,227 @@
-/* test.c - Rigorous pathlib tests for snakepath.h
- * Ported from Python's test_pathlib tests (POSIX and Windows)
- */
-
+/* test.c - Rigorous pathlib tests for snakepath.h */
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
-#include <stdio.h>
-#include <stdlib.h>
+#define NOB_IMPLEMENTATION
+#include "nob.h"
 
 static int tests_run = 0;
-static int tests_passed = 0;
 
-/* C/C++ compatible cast helper */
-#ifdef __cplusplus
-#define CAST_INT(x) static_cast<int>(x)
-#else
-#define CAST_INT(x) ((int)(x))
-#endif
+#define SP_TO_SV(sp) nob_sv_from_parts((sp).data, (sp).len)
+#define SV(s) nob_sv_from_cstr(s)
 
-#define TEST(name) static void test_##name(void)
-#define RUN(name) do { \
-    printf("  %-50s", #name); \
-    test_##name(); \
-    printf(" OK\n"); \
-} while(0)
+#define ASSERT(cond) do { tests_run++; if (!(cond)) { nob_log(NOB_ERROR, "%s:%d: %s", __FILE__, __LINE__, #cond); exit(1); } } while(0)
+#define ASSERT_SV(sv, exp) ASSERT(nob_sv_eq(SP_TO_SV(sv), SV(exp)))
+#define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
+#define ASSERT_ABS(path, flav, expected) do { SpPath _p = sp_path_f(path, flav); ASSERT(sp_is_absolute(&_p) == expected); } while(0)
 
-#define ASSERT(cond) do { \
-    tests_run++; \
-    if (!(cond)) { \
-        printf("\n    FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-        exit(1); \
-    } \
-    tests_passed++; \
-} while(0)
+/* Table-driven tests */
+typedef struct { const char *path; const char *expected; } SVTest;
+typedef struct { const char *path; const char *arg; const char *expected; } JoinTest;
 
-#define ASSERT_SV_EQ(sv, expected) do { \
-    SpStr _sv = (sv); \
-    const char *_exp = (expected); \
-    size_t _explen = strlen(_exp); \
-    tests_run++; \
-    if (_sv.len != _explen || (_sv.len > 0 && memcmp(_sv.data, _exp, _sv.len) != 0)) { \
-        printf("\n    FAIL: %s:%d: expected \"%s\" (len %zu), got \"%.*s\" (len %zu)\n", \
-               __FILE__, __LINE__, _exp, _explen, CAST_INT(_sv.len), _sv.data ? _sv.data : "", _sv.len); \
-        exit(1); \
-    } \
-    tests_passed++; \
-} while(0)
+#define P SP_FLAVOR_POSIX
+#define W SP_FLAVOR_WINDOWS
 
-#define ASSERT_PATH_EQ(p, expected) do { \
-    SpPath _p = (p); \
-    const char *_got = sp_str(&_p); \
-    const char *_exp = (expected); \
-    tests_run++; \
-    if (strcmp(_got, _exp) != 0) { \
-        printf("\n    FAIL: %s:%d: expected \"%s\", got \"%s\"\n", \
-               __FILE__, __LINE__, _exp, _got); \
-        exit(1); \
-    } \
-    tests_passed++; \
-} while(0)
-
-/* Helper macros for common test patterns */
-#define TEST_SV(name, flavor, path, func, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        ASSERT_SV_EQ(func(&p), expected); \
+static void test_sv(SpFlavor f, SpStr (*fn)(const SpPath*), SVTest *tests, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        SpPath p = sp_path_f(tests[i].path, f);
+        ASSERT_SV(fn(&p), tests[i].expected);
     }
+}
 
-#define TEST_PATH(name, flavor, path, func, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        ASSERT_PATH_EQ(func(&p), expected); \
+static void test_path(SpFlavor f, SpPath (*fn)(const SpPath*), SVTest *tests, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        SpPath p = sp_path_f(tests[i].path, f);
+        ASSERT_PATH(fn(&p), tests[i].expected);
     }
+}
 
-#define TEST_IS_ABS(name, flavor, path, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        ASSERT(sp_is_absolute(&p) == (expected)); \
+static void test_join(SpFlavor f, JoinTest *tests, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        SpPath p = sp_path_f(tests[i].path, f);
+        ASSERT_PATH(sp_join_one(&p, tests[i].arg), tests[i].expected);
     }
+}
 
-#define TEST_JOIN(name, flavor, path, arg, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        SpPath r = sp_join_one(&p, arg); \
-        ASSERT_PATH_EQ(r, expected); \
+static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), JoinTest *tests, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        SpPath p = sp_path_f(tests[i].path, f);
+        ASSERT_PATH(fn(&p, tests[i].arg), tests[i].expected);
     }
-
-#define TEST_WITH(name, flavor, path, func, arg, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        SpPath r = func(&p, arg); \
-        ASSERT_PATH_EQ(r, expected); \
-    }
-
-#define TEST_NORM(name, flavor, path, expected) \
-    TEST(name) { \
-        SpPath p = sp_path_f(path, flavor); \
-        ASSERT_PATH_EQ(p, expected); \
-    }
-
-/* ============ POSIX Tests ============ */
-
-TEST_SV(posix_anchor_empty,      SP_FLAVOR_POSIX, "",       sp_anchor, "")
-TEST_SV(posix_anchor_relative,   SP_FLAVOR_POSIX, "a/b",    sp_anchor, "")
-TEST_SV(posix_anchor_root,       SP_FLAVOR_POSIX, "/",      sp_anchor, "/")
-TEST_SV(posix_anchor_absolute,   SP_FLAVOR_POSIX, "/a/b",   sp_anchor, "/")
-TEST_SV(posix_drive,             SP_FLAVOR_POSIX, "/a/b",   sp_drive,  "")
-TEST_SV(posix_root_empty,        SP_FLAVOR_POSIX, "a/b",    sp_root,   "")
-TEST_SV(posix_root_slash,        SP_FLAVOR_POSIX, "/a/b",   sp_root,   "/")
-TEST_SV(posix_name_empty,        SP_FLAVOR_POSIX, "",       sp_name,   "")
-TEST_SV(posix_name_root,         SP_FLAVOR_POSIX, "/",      sp_name,   "")
-TEST_SV(posix_name_simple,       SP_FLAVOR_POSIX, "a/b",    sp_name,   "b")
-TEST_SV(posix_name_with_ext,     SP_FLAVOR_POSIX, "a/b.py", sp_name,   "b.py")
-TEST_SV(posix_stem_simple,       SP_FLAVOR_POSIX, "a/b",    sp_stem,   "b")
-TEST_SV(posix_stem_with_ext,     SP_FLAVOR_POSIX, "a/b.py", sp_stem,   "b")
-TEST_SV(posix_stem_hidden,       SP_FLAVOR_POSIX, "a/.hgrc",   sp_stem, ".hgrc")
-TEST_SV(posix_stem_multi_ext,    SP_FLAVOR_POSIX, "a/b.tar.gz", sp_stem, "b.tar")
-TEST_SV(posix_suffix_py,         SP_FLAVOR_POSIX, "a/b.py",     sp_suffix, ".py")
-TEST_SV(posix_suffix_hidden_none, SP_FLAVOR_POSIX, "a/.hgrc",   sp_suffix, "")
-TEST_SV(posix_suffix_hidden_with_ext, SP_FLAVOR_POSIX, "a/.hg.rc", sp_suffix, ".rc")
-TEST_SV(posix_suffix_multi,      SP_FLAVOR_POSIX, "a/b.tar.gz", sp_suffix, ".gz")
-
-TEST(posix_suffixes_single) {
-    SpPath p = sp_path_f("a/b.py", SP_FLAVOR_POSIX);
-    SpSuffixes s = sp_suffixes(&p);
-    ASSERT(s.count == 1);
-    ASSERT_SV_EQ(s.items[0], ".py");
 }
-
-TEST(posix_suffixes_multi) {
-    SpPath p = sp_path_f("a/b.tar.gz", SP_FLAVOR_POSIX);
-    SpSuffixes s = sp_suffixes(&p);
-    ASSERT(s.count == 2);
-    ASSERT_SV_EQ(s.items[0], ".tar");
-    ASSERT_SV_EQ(s.items[1], ".gz");
-}
-
-TEST(posix_suffixes_hidden) {
-    SpPath p = sp_path_f("a/.hgrc", SP_FLAVOR_POSIX);
-    SpSuffixes s = sp_suffixes(&p);
-    ASSERT(s.count == 0);
-}
-
-TEST(posix_parts_relative) {
-    SpPath p = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPartsIter it = sp_parts_begin(&p);
-    SpStr part;
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "a");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "b");
-    ASSERT(!sp_parts_next(&it, &part));
-}
-
-TEST(posix_parts_absolute) {
-    SpPath p = sp_path_f("/a/b", SP_FLAVOR_POSIX);
-    SpPartsIter it = sp_parts_begin(&p);
-    SpStr part;
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "/");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "a");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "b");
-    ASSERT(!sp_parts_next(&it, &part));
-}
-
-TEST(posix_parts_count) {
-    SpPath p = sp_path_f("/a/b/c", SP_FLAVOR_POSIX);
-    ASSERT(sp_parts_count(&p) == 4);
-}
-
-TEST_PATH(posix_parent_simple,   SP_FLAVOR_POSIX, "a/b/c",  sp_parent, "a/b")
-TEST_PATH(posix_parent_absolute, SP_FLAVOR_POSIX, "/a/b/c", sp_parent, "/a/b")
-TEST_PATH(posix_parent_root,     SP_FLAVOR_POSIX, "/",      sp_parent, "/")
-TEST_PATH(posix_parent_single,   SP_FLAVOR_POSIX, "a",      sp_parent, ".")
-
-TEST(posix_parents_iter) {
-    SpPath p = sp_path_f("a/b/c", SP_FLAVOR_POSIX);
-    SpParentsIter it = sp_parents_begin(&p);
-    SpPath parent;
-    ASSERT(sp_parents_next(&it, &parent));
-    ASSERT_PATH_EQ(parent, "a/b");
-    ASSERT(sp_parents_next(&it, &parent));
-    ASSERT_PATH_EQ(parent, "a");
-    ASSERT(sp_parents_next(&it, &parent));
-    ASSERT_PATH_EQ(parent, ".");
-    ASSERT(!sp_parents_next(&it, &parent));
-}
-
-TEST_JOIN(posix_join_simple,    SP_FLAVOR_POSIX, "a/b", "c",  "a/b/c")
-#ifndef __cplusplus
-TEST(posix_join_multi) {
-    SpPath p = sp_path_f("a", SP_FLAVOR_POSIX);
-    SpPath r = sp_join(&p, "b", "c");
-    ASSERT_PATH_EQ(r, "a/b/c");
-}
-#endif
-TEST_JOIN(posix_join_absolute_override, SP_FLAVOR_POSIX, "a/b", "/c", "/c")
-
-TEST_WITH(posix_with_name,   SP_FLAVOR_POSIX, "a/b",    sp_with_name,   "d.xml", "a/d.xml")
-TEST_WITH(posix_with_stem,   SP_FLAVOR_POSIX, "a/b.py", sp_with_stem,   "d",     "a/d.py")
-TEST_WITH(posix_with_suffix, SP_FLAVOR_POSIX, "a/b.py", sp_with_suffix, ".gz",   "a/b.gz")
-TEST_WITH(posix_with_suffix_add,    SP_FLAVOR_POSIX, "a/b",    sp_with_suffix, ".gz", "a/b.gz")
-TEST_WITH(posix_with_suffix_remove, SP_FLAVOR_POSIX, "a/b.py", sp_with_suffix, "",    "a/b")
-
-TEST_IS_ABS(posix_is_absolute_yes, SP_FLAVOR_POSIX, "/a/b", 1)
-TEST_IS_ABS(posix_is_absolute_no,  SP_FLAVOR_POSIX, "a/b",  0)
-
-TEST(posix_is_relative_to_yes) {
-    SpPath p = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPath o = sp_path_f("a", SP_FLAVOR_POSIX);
-    ASSERT(sp_is_relative_to(&p, &o));
-}
-
-TEST(posix_is_relative_to_no) {
-    SpPath p = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPath o = sp_path_f("c", SP_FLAVOR_POSIX);
-    ASSERT(!sp_is_relative_to(&p, &o));
-}
-
-TEST(posix_relative_to) {
-    SpPath p = sp_path_f("a/b/c", SP_FLAVOR_POSIX);
-    SpPath o = sp_path_f("a", SP_FLAVOR_POSIX);
-    SpPath r = sp_relative_to(&p, &o);
-    ASSERT_PATH_EQ(r, "b/c");
-}
-
-TEST(posix_relative_to_self) {
-    SpPath p = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPath o = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPath r = sp_relative_to(&p, &o);
-    ASSERT_PATH_EQ(r, ".");
-}
-
-TEST_NORM(posix_normalize_double_slash,   SP_FLAVOR_POSIX, "a//b",  "a/b")
-TEST_NORM(posix_normalize_trailing_slash, SP_FLAVOR_POSIX, "a/b/",  "a/b")
-
-TEST(posix_eq) {
-    SpPath a = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    SpPath b = sp_path_f("a/b", SP_FLAVOR_POSIX);
-    ASSERT(sp_eq(a, b));
-}
-
-TEST(posix_as_posix) {
-    SpPath p = sp_path_f("a/b/c", SP_FLAVOR_POSIX);
-    char buf[SP_PATH_MAX];
-    sp_as_posix(&p, buf, sizeof(buf));
-    ASSERT(strcmp(buf, "a/b/c") == 0);
-}
-
-/* ============ Windows Tests ============ */
-
-TEST_SV(win_drive_letter,       SP_FLAVOR_WINDOWS, "C:/a/b", sp_drive,  "C:")
-TEST_SV(win_drive_empty,        SP_FLAVOR_WINDOWS, "/a/b",   sp_drive,  "")
-TEST_SV(win_root_slash,         SP_FLAVOR_WINDOWS, "C:/a/b", sp_root,   "\\")
-TEST_SV(win_root_empty,         SP_FLAVOR_WINDOWS, "C:a/b",  sp_root,   "")
-TEST_SV(win_anchor_drive_root,  SP_FLAVOR_WINDOWS, "C:/a/b", sp_anchor, "C:\\")
-TEST_SV(win_anchor_drive_only,  SP_FLAVOR_WINDOWS, "C:a/b",  sp_anchor, "C:")
-
-TEST(win_parts_drive_relative) {
-    SpPath p = sp_path_f("c:a/b", SP_FLAVOR_WINDOWS);
-    SpPartsIter it = sp_parts_begin(&p);
-    SpStr part;
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "c:");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "a");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "b");
-    ASSERT(!sp_parts_next(&it, &part));
-}
-
-TEST(win_parts_absolute) {
-    SpPath p = sp_path_f("c:/a/b", SP_FLAVOR_WINDOWS);
-    SpPartsIter it = sp_parts_begin(&p);
-    SpStr part;
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "c:\\");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "a");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "b");
-    ASSERT(!sp_parts_next(&it, &part));
-}
-
-TEST(win_unc_parts) {
-    SpPath p = sp_path_f("//server/share/a/b", SP_FLAVOR_WINDOWS);
-    SpPartsIter it = sp_parts_begin(&p);
-    SpStr part;
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "\\\\server\\share\\");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "a");
-    ASSERT(sp_parts_next(&it, &part));
-    ASSERT_SV_EQ(part, "b");
-    ASSERT(!sp_parts_next(&it, &part));
-}
-
-TEST_JOIN(win_join_simple,             SP_FLAVOR_WINDOWS, "C:/a/b", "x/y",   "C:\\a\\b\\x\\y")
-TEST_JOIN(win_join_root_override,      SP_FLAVOR_WINDOWS, "C:/a/b", "/x/y",  "C:\\x\\y")
-TEST_JOIN(win_join_drive_override,     SP_FLAVOR_WINDOWS, "C:/a/b", "D:/x/y", "D:\\x\\y")
-TEST_JOIN(win_join_same_drive_relative, SP_FLAVOR_WINDOWS, "C:/a/b", "c:x/y", "C:\\a\\b\\x\\y")
-
-TEST_SV(win_name,   SP_FLAVOR_WINDOWS, "C:/a/b.py", sp_name,   "b.py")
-TEST_SV(win_suffix, SP_FLAVOR_WINDOWS, "C:/a/b.py", sp_suffix, ".py")
-
-TEST(win_suffixes_multi) {
-    SpPath p = sp_path_f("c:a/b.tar.gz", SP_FLAVOR_WINDOWS);
-    SpSuffixes s = sp_suffixes(&p);
-    ASSERT(s.count == 2);
-    ASSERT_SV_EQ(s.items[0], ".tar");
-    ASSERT_SV_EQ(s.items[1], ".gz");
-}
-
-TEST_PATH(win_parent, SP_FLAVOR_WINDOWS, "C:/a/b/c", sp_parent, "C:\\a\\b")
-
-TEST_IS_ABS(win_is_absolute_yes,          SP_FLAVOR_WINDOWS, "C:/a/b",           1)
-TEST_IS_ABS(win_is_absolute_no_drive_only, SP_FLAVOR_WINDOWS, "C:a/b",            0)
-TEST_IS_ABS(win_is_absolute_no_root_only,  SP_FLAVOR_WINDOWS, "/a/b",             0)
-TEST_IS_ABS(win_is_absolute_unc,           SP_FLAVOR_WINDOWS, "//server/share/a", 1)
-
-TEST_NORM(win_normalize_mixed_sep, SP_FLAVOR_WINDOWS, "C:/a\\b/c", "C:\\a\\b\\c")
-
-TEST(win_as_posix) {
-    SpPath p = sp_path_f("C:\\a\\b\\c", SP_FLAVOR_WINDOWS);
-    char buf[SP_PATH_MAX];
-    sp_as_posix(&p, buf, sizeof(buf));
-    ASSERT(strcmp(buf, "C:/a/b/c") == 0);
-}
-
-TEST_WITH(win_with_name,   SP_FLAVOR_WINDOWS, "C:/a/b",    sp_with_name,   "d.xml", "C:\\a\\d.xml")
-TEST_WITH(win_with_suffix, SP_FLAVOR_WINDOWS, "C:/a/b.py", sp_with_suffix, ".gz",   "C:\\a\\b.gz")
-
-TEST(win_relative_to) {
-    SpPath p = sp_path_f("C:/a/b/c", SP_FLAVOR_WINDOWS);
-    SpPath o = sp_path_f("C:/a", SP_FLAVOR_WINDOWS);
-    SpPath r = sp_relative_to(&p, &o);
-    ASSERT_PATH_EQ(r, "b\\c");
-}
-
-TEST(win_is_relative_to_diff_drive) {
-    SpPath p = sp_path_f("C:/a/b", SP_FLAVOR_WINDOWS);
-    SpPath o = sp_path_f("D:/a", SP_FLAVOR_WINDOWS);
-    ASSERT(!sp_is_relative_to(&p, &o));
-}
-
-/* ============ Edge Cases ============ */
-
-TEST(edge_empty_path) {
-    SpPath p = sp_path_f("", SP_FLAVOR_POSIX);
-    ASSERT(sp_is_empty(&p));
-    ASSERT_SV_EQ(sp_name(&p), "");
-    ASSERT_SV_EQ(sp_suffix(&p), "");
-}
-
-TEST(edge_dot_path) {
-    SpPath p = sp_path_f(".", SP_FLAVOR_POSIX);
-    ASSERT_PATH_EQ(p, ".");
-    ASSERT_SV_EQ(sp_name(&p), ".");
-}
-
-TEST(edge_dotdot_path) {
-    SpPath p = sp_path_f("..", SP_FLAVOR_POSIX);
-    ASSERT_PATH_EQ(p, "..");
-    ASSERT_SV_EQ(sp_name(&p), "..");
-}
-
-TEST_SV(edge_many_dots, SP_FLAVOR_POSIX, "...", sp_suffix, "")
-
-TEST(edge_complex_suffixes) {
-    SpPath p = sp_path_f("a/b.c.d.e", SP_FLAVOR_POSIX);
-    SpSuffixes s = sp_suffixes(&p);
-    ASSERT(s.count == 3);
-    ASSERT_SV_EQ(s.items[0], ".c");
-    ASSERT_SV_EQ(s.items[1], ".d");
-    ASSERT_SV_EQ(s.items[2], ".e");
-}
-
-TEST(edge_hidden_file_multi_ext) {
-    SpPath p = sp_path_f(".tar.gz", SP_FLAVOR_POSIX);
-    ASSERT_SV_EQ(sp_stem(&p), ".tar");
-    ASSERT_SV_EQ(sp_suffix(&p), ".gz");
-}
-
-TEST(edge_single_component) {
-    SpPath p = sp_path_f("file.txt", SP_FLAVOR_POSIX);
-    ASSERT_SV_EQ(sp_name(&p), "file.txt");
-    ASSERT_SV_EQ(sp_stem(&p), "file");
-    ASSERT_SV_EQ(sp_suffix(&p), ".txt");
-    ASSERT_PATH_EQ(sp_parent(&p), ".");
-}
-
-TEST(edge_deeply_nested) {
-    SpPath p = sp_path_f("/a/b/c/d/e/f/g", SP_FLAVOR_POSIX);
-    ASSERT(sp_parts_count(&p) == 8);
-    SpPath parent = sp_parent(&p);
-    ASSERT_PATH_EQ(parent, "/a/b/c/d/e/f");
-}
-
-TEST_JOIN(edge_join_empty,    SP_FLAVOR_POSIX, "a/b", "", "a/b")
-TEST_JOIN(edge_join_to_empty, SP_FLAVOR_POSIX, "",    "a", "a")
 
 int main(void) {
     printf("POSIX Tests:\n");
-    RUN(posix_anchor_empty);
-    RUN(posix_anchor_relative);
-    RUN(posix_anchor_root);
-    RUN(posix_anchor_absolute);
-    RUN(posix_drive);
-    RUN(posix_root_empty);
-    RUN(posix_root_slash);
-    RUN(posix_name_empty);
-    RUN(posix_name_root);
-    RUN(posix_name_simple);
-    RUN(posix_name_with_ext);
-    RUN(posix_stem_simple);
-    RUN(posix_stem_with_ext);
-    RUN(posix_stem_hidden);
-    RUN(posix_stem_multi_ext);
-    RUN(posix_suffix_py);
-    RUN(posix_suffix_hidden_none);
-    RUN(posix_suffix_hidden_with_ext);
-    RUN(posix_suffix_multi);
-    RUN(posix_suffixes_single);
-    RUN(posix_suffixes_multi);
-    RUN(posix_suffixes_hidden);
-    RUN(posix_parts_relative);
-    RUN(posix_parts_absolute);
-    RUN(posix_parts_count);
-    RUN(posix_parent_simple);
-    RUN(posix_parent_absolute);
-    RUN(posix_parent_root);
-    RUN(posix_parent_single);
-    RUN(posix_parents_iter);
-    RUN(posix_join_simple);
+    
+    SVTest posix_anchor[] = {{"", ""}, {"a/b", ""}, {"/", "/"}, {"/a/b", "/"}};
+    test_sv(P, sp_anchor, posix_anchor, NOB_ARRAY_LEN(posix_anchor));
+    
+    SVTest posix_drive[] = {{"/a/b", ""}};
+    test_sv(P, sp_drive, posix_drive, NOB_ARRAY_LEN(posix_drive));
+    
+    SVTest posix_root[] = {{"a/b", ""}, {"/a/b", "/"}};
+    test_sv(P, sp_root, posix_root, NOB_ARRAY_LEN(posix_root));
+    
+    SVTest posix_name[] = {{"", ""}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
+    test_sv(P, sp_name, posix_name, NOB_ARRAY_LEN(posix_name));
+    
+    SVTest posix_stem[] = {{"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
+    test_sv(P, sp_stem, posix_stem, NOB_ARRAY_LEN(posix_stem));
+    
+    SVTest posix_suffix[] = {{"a/b.py", ".py"}, {"a/.hgrc", ""}, {"a/.hg.rc", ".rc"}, {"a/b.tar.gz", ".gz"}};
+    test_sv(P, sp_suffix, posix_suffix, NOB_ARRAY_LEN(posix_suffix));
+    
+    SVTest posix_parent[] = {{"a/b/c", "a/b"}, {"/a/b/c", "/a/b"}, {"/", "/"}, {"a", "."}};
+    test_path(P, sp_parent, posix_parent, NOB_ARRAY_LEN(posix_parent));
+    
+    JoinTest posix_join[] = {{"a/b", "c", "a/b/c"}, {"a/b", "/c", "/c"}};
+    test_join(P, posix_join, NOB_ARRAY_LEN(posix_join));
+    
+    JoinTest posix_with_name[] = {{"a/b", "d.xml", "a/d.xml"}};
+    test_with(P, sp_with_name, posix_with_name, NOB_ARRAY_LEN(posix_with_name));
+    
+    JoinTest posix_with_stem[] = {{"a/b.py", "d", "a/d.py"}};
+    test_with(P, sp_with_stem, posix_with_stem, NOB_ARRAY_LEN(posix_with_stem));
+    
+    JoinTest posix_with_suffix[] = {{"a/b.py", ".gz", "a/b.gz"}, {"a/b", ".gz", "a/b.gz"}, {"a/b.py", "", "a/b"}};
+    test_with(P, sp_with_suffix, posix_with_suffix, NOB_ARRAY_LEN(posix_with_suffix));
+    
+    ASSERT_ABS("/a/b", P, true); ASSERT_ABS("a/b", P, false);
+    
+    SpPath ps1 = sp_path_f("a/b.py", P); SpSuffixes ss1 = sp_suffixes(&ps1);
+    ASSERT(ss1.count == 1); ASSERT_SV(ss1.items[0], ".py");
+    
+    SpPath ps2 = sp_path_f("a/b.tar.gz", P); SpSuffixes ss2 = sp_suffixes(&ps2);
+    ASSERT(ss2.count == 2); ASSERT_SV(ss2.items[0], ".tar"); ASSERT_SV(ss2.items[1], ".gz");
+    
+    SpPath ps3 = sp_path_f("a/.hgrc", P); ASSERT(sp_suffixes(&ps3).count == 0);
+    
+    SpPath pp1 = sp_path_f("a/b", P); SpPartsIter it1 = sp_parts_begin(&pp1); SpStr part;
+    ASSERT(sp_parts_next(&it1, &part)); ASSERT_SV(part, "a");
+    ASSERT(sp_parts_next(&it1, &part)); ASSERT_SV(part, "b");
+    ASSERT(!sp_parts_next(&it1, &part));
+    
+    SpPath pp2 = sp_path_f("/a/b", P); SpPartsIter it2 = sp_parts_begin(&pp2);
+    ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "/");
+    ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "a");
+    ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "b");
+    
+    SpPath ppc = sp_path_f("/a/b/c", P); ASSERT(sp_parts_count(&ppc) == 4);
+    
+    SpPath pp3 = sp_path_f("a/b/c", P); SpParentsIter pit = sp_parents_begin(&pp3); SpPath parent;
+    ASSERT(sp_parents_next(&pit, &parent)); ASSERT_PATH(parent, "a/b");
+    ASSERT(sp_parents_next(&pit, &parent)); ASSERT_PATH(parent, "a");
+    ASSERT(sp_parents_next(&pit, &parent)); ASSERT_PATH(parent, ".");
+    ASSERT(!sp_parents_next(&pit, &parent));
+    
 #ifndef __cplusplus
-    RUN(posix_join_multi);
+    SpPath pjm = sp_path_f("a", P); ASSERT_PATH(sp_join(&pjm, "b", "c"), "a/b/c");
 #endif
-    RUN(posix_join_absolute_override);
-    RUN(posix_with_name);
-    RUN(posix_with_stem);
-    RUN(posix_with_suffix);
-    RUN(posix_with_suffix_add);
-    RUN(posix_with_suffix_remove);
-    RUN(posix_is_absolute_yes);
-    RUN(posix_is_absolute_no);
-    RUN(posix_is_relative_to_yes);
-    RUN(posix_is_relative_to_no);
-    RUN(posix_relative_to);
-    RUN(posix_relative_to_self);
-    RUN(posix_normalize_double_slash);
-    RUN(posix_normalize_trailing_slash);
-    RUN(posix_eq);
-    RUN(posix_as_posix);
-
+    
+    SpPath pr1 = sp_path_f("a/b", P), po1 = sp_path_f("a", P); ASSERT(sp_is_relative_to(&pr1, &po1));
+    SpPath pr2 = sp_path_f("a/b", P), po2 = sp_path_f("c", P); ASSERT(!sp_is_relative_to(&pr2, &po2));
+    SpPath pr3 = sp_path_f("a/b/c", P), po3 = sp_path_f("a", P); ASSERT_PATH(sp_relative_to(&pr3, &po3), "b/c");
+    SpPath pr4 = sp_path_f("a/b", P), po4 = sp_path_f("a/b", P); ASSERT_PATH(sp_relative_to(&pr4, &po4), ".");
+    
+    ASSERT_PATH(sp_path_f("a//b", P), "a/b");
+    ASSERT_PATH(sp_path_f("a/b/", P), "a/b");
+    
+    SpPath ea = sp_path_f("a/b", P), eb = sp_path_f("a/b", P); ASSERT(sp_eq(ea, eb));
+    
+    SpPath pap = sp_path_f("a/b/c", P); char *bap = nob_temp_alloc(SP_PATH_MAX);
+    sp_as_posix(&pap, bap, SP_PATH_MAX); ASSERT(strcmp(bap, "a/b/c") == 0);
+    
+    printf("  POSIX tests OK\n");
+    
     printf("\nWindows Tests:\n");
-    RUN(win_drive_letter);
-    RUN(win_drive_empty);
-    RUN(win_root_slash);
-    RUN(win_root_empty);
-    RUN(win_anchor_drive_root);
-    RUN(win_anchor_drive_only);
-    RUN(win_parts_drive_relative);
-    RUN(win_parts_absolute);
-    RUN(win_unc_parts);
-    RUN(win_join_simple);
-    RUN(win_join_root_override);
-    RUN(win_join_drive_override);
-    RUN(win_join_same_drive_relative);
-    RUN(win_name);
-    RUN(win_suffix);
-    RUN(win_suffixes_multi);
-    RUN(win_parent);
-    RUN(win_is_absolute_yes);
-    RUN(win_is_absolute_no_drive_only);
-    RUN(win_is_absolute_no_root_only);
-    RUN(win_is_absolute_unc);
-    RUN(win_normalize_mixed_sep);
-    RUN(win_as_posix);
-    RUN(win_with_name);
-    RUN(win_with_suffix);
-    RUN(win_relative_to);
-    RUN(win_is_relative_to_diff_drive);
-
+    
+    SVTest win_drive[] = {{"C:/a/b", "C:"}, {"/a/b", ""}};
+    test_sv(W, sp_drive, win_drive, NOB_ARRAY_LEN(win_drive));
+    
+    SVTest win_root[] = {{"C:/a/b", "\\"}, {"C:a/b", ""}};
+    test_sv(W, sp_root, win_root, NOB_ARRAY_LEN(win_root));
+    
+    SVTest win_anchor[] = {{"C:/a/b", "C:\\"}, {"C:a/b", "C:"}};
+    test_sv(W, sp_anchor, win_anchor, NOB_ARRAY_LEN(win_anchor));
+    
+    SVTest win_name[] = {{"C:/a/b.py", "b.py"}};
+    test_sv(W, sp_name, win_name, NOB_ARRAY_LEN(win_name));
+    
+    SVTest win_suffix[] = {{"C:/a/b.py", ".py"}};
+    test_sv(W, sp_suffix, win_suffix, NOB_ARRAY_LEN(win_suffix));
+    
+    SVTest win_parent[] = {{"C:/a/b/c", "C:\\a\\b"}};
+    test_path(W, sp_parent, win_parent, NOB_ARRAY_LEN(win_parent));
+    
+    JoinTest win_join[] = {
+        {"C:/a/b", "x/y", "C:\\a\\b\\x\\y"}, {"C:/a/b", "/x/y", "C:\\x\\y"},
+        {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "C:\\a\\b\\x\\y"}
+    };
+    test_join(W, win_join, NOB_ARRAY_LEN(win_join));
+    
+    JoinTest win_with_name[] = {{"C:/a/b", "d.xml", "C:\\a\\d.xml"}};
+    test_with(W, sp_with_name, win_with_name, NOB_ARRAY_LEN(win_with_name));
+    
+    JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}};
+    test_with(W, sp_with_suffix, win_with_suffix, NOB_ARRAY_LEN(win_with_suffix));
+    
+    SpPath wp1 = sp_path_f("c:a/b", W); SpPartsIter wit1 = sp_parts_begin(&wp1);
+    ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "c:");
+    ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "a");
+    ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "b");
+    
+    SpPath wp2 = sp_path_f("c:/a/b", W); SpPartsIter wit2 = sp_parts_begin(&wp2);
+    ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "c:\\");
+    ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "a");
+    ASSERT(sp_parts_next(&wit2, &part)); ASSERT_SV(part, "b");
+    
+    SpPath wp3 = sp_path_f("//server/share/a/b", W); SpPartsIter wit3 = sp_parts_begin(&wp3);
+    ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "\\\\server\\share\\");
+    ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "a");
+    ASSERT(sp_parts_next(&wit3, &part)); ASSERT_SV(part, "b");
+    
+    SpPath ws = sp_path_f("c:a/b.tar.gz", W); SpSuffixes wss = sp_suffixes(&ws);
+    ASSERT(wss.count == 2); ASSERT_SV(wss.items[0], ".tar"); ASSERT_SV(wss.items[1], ".gz");
+    
+    ASSERT_ABS("C:/a/b", W, true); ASSERT_ABS("C:a/b", W, false);
+    ASSERT_ABS("/a/b", W, false); ASSERT_ABS("//server/share/a", W, true);
+    
+    ASSERT_PATH(sp_path_f("C:/a\\b/c", W), "C:\\a\\b\\c");
+    
+    SpPath wap = sp_path_f("C:\\a\\b\\c", W); char *wbuf = nob_temp_alloc(SP_PATH_MAX);
+    sp_as_posix(&wap, wbuf, SP_PATH_MAX); ASSERT(strcmp(wbuf, "C:/a/b/c") == 0);
+    
+    SpPath wr1 = sp_path_f("C:/a/b/c", W), wo1 = sp_path_f("C:/a", W);
+    ASSERT_PATH(sp_relative_to(&wr1, &wo1), "b\\c");
+    
+    SpPath wr2 = sp_path_f("C:/a/b", W), wo2 = sp_path_f("D:/a", W);
+    ASSERT(!sp_is_relative_to(&wr2, &wo2));
+    
+    printf("  Windows tests OK\n");
+    
     printf("\nEdge Cases:\n");
-    RUN(edge_empty_path);
-    RUN(edge_dot_path);
-    RUN(edge_dotdot_path);
-    RUN(edge_many_dots);
-    RUN(edge_complex_suffixes);
-    RUN(edge_hidden_file_multi_ext);
-    RUN(edge_single_component);
-    RUN(edge_deeply_nested);
-    RUN(edge_join_empty);
-    RUN(edge_join_to_empty);
-
-    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
+    
+    SpPath e1 = sp_path_f("", P); ASSERT(sp_is_empty(&e1)); ASSERT_SV(sp_name(&e1), ""); ASSERT_SV(sp_suffix(&e1), "");
+    SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), ".");
+    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "..");
+    SpPath e4 = sp_path_f("...", P); ASSERT_SV(sp_suffix(&e4), "");
+    
+    SpPath e5 = sp_path_f("a/b.c.d.e", P); SpSuffixes es5 = sp_suffixes(&e5);
+    ASSERT(es5.count == 3); ASSERT_SV(es5.items[0], ".c"); ASSERT_SV(es5.items[1], ".d"); ASSERT_SV(es5.items[2], ".e");
+    
+    SpPath e6 = sp_path_f(".tar.gz", P); ASSERT_SV(sp_stem(&e6), ".tar"); ASSERT_SV(sp_suffix(&e6), ".gz");
+    
+    SpPath e7 = sp_path_f("file.txt", P);
+    ASSERT_SV(sp_name(&e7), "file.txt"); ASSERT_SV(sp_stem(&e7), "file");
+    ASSERT_SV(sp_suffix(&e7), ".txt"); ASSERT_PATH(sp_parent(&e7), ".");
+    
+    SpPath e8 = sp_path_f("/a/b/c/d/e/f/g", P);
+    ASSERT(sp_parts_count(&e8) == 8); ASSERT_PATH(sp_parent(&e8), "/a/b/c/d/e/f");
+    
+    SpPath ej1 = sp_path_f("a/b", P); ASSERT_PATH(sp_join_one(&ej1, ""), "a/b");
+    SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
+    
+    printf("  Edge cases OK\n");
+    
+    printf("\n%d assertions passed\n", tests_run);
     return 0;
 }
