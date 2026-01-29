@@ -1,5 +1,7 @@
 snakepath
 
+vibe slopcoding experiment: C99 STB style ~port of Python's standard pathlib module. Use at your own peril, assume a human hasn't reviewed any of this. Built with Claude Code and Cursor, with opus 4.5
+
 C99 header-only pathlib library. POSIX + Windows. No malloc.
 
 A pure-computation path manipulation library inspired by Python's `pathlib`. Provides all the path parsing, joining, and manipulation features without any filesystem I/O.
