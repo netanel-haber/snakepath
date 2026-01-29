@@ -50,6 +50,14 @@
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
     "-Wno-unsafe-buffer-usage"
 
+/* MSVC warnings - maximum warning level with warnings as errors */
+#define MSVC_WARNINGS \
+    "/W4", "/WX"
+
+/* MSVC C++ warnings */
+#define MSVC_CPP_WARNINGS \
+    "/W4", "/WX", "/EHsc"
+
 static bool build_with_gcc(bool sanitizers) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "gcc");
@@ -112,6 +120,35 @@ static bool build_with_clangpp(void) {
     return result;
 }
 
+#ifdef _WIN32
+static bool build_with_msvc(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "cl.exe");
+    nob_cmd_append(&cmd, "/std:c11");
+    nob_cmd_append(&cmd, MSVC_WARNINGS);
+    nob_cmd_append(&cmd, "/Od", "/Zi");
+    nob_cmd_append(&cmd, "/Fe:test_msvc.exe");
+    nob_cmd_append(&cmd, "test.c");
+    bool result = nob_cmd_run_sync(cmd);
+    nob_cmd_free(cmd);
+    return result;
+}
+
+static bool build_with_msvc_cpp(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "cl.exe");
+    nob_cmd_append(&cmd, "/std:c++14");
+    nob_cmd_append(&cmd, "/TP");  /* Compile as C++ */
+    nob_cmd_append(&cmd, MSVC_CPP_WARNINGS);
+    nob_cmd_append(&cmd, "/Od", "/Zi");
+    nob_cmd_append(&cmd, "/Fe:test_msvc_cpp.exe");
+    nob_cmd_append(&cmd, "test.c");
+    bool result = nob_cmd_run_sync(cmd);
+    nob_cmd_free(cmd);
+    return result;
+}
+#endif /* _WIN32 */
+
 static bool run_test(const char *exe) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, exe);
@@ -137,6 +174,33 @@ int main(int argc, char **argv) {
 
     bool all_ok = true;
 
+#ifdef _WIN32
+    /* Windows: Test with MSVC */
+    nob_log(NOB_INFO, "Building with MSVC (C)...");
+    if (!build_with_msvc()) {
+        nob_log(NOB_ERROR, "MSVC build failed");
+        all_ok = false;
+    } else {
+        nob_log(NOB_INFO, "Running MSVC build...");
+        if (!run_test("test_msvc.exe")) {
+            nob_log(NOB_ERROR, "MSVC tests failed");
+            all_ok = false;
+        }
+    }
+
+    nob_log(NOB_INFO, "Building with MSVC (C++)...");
+    if (!build_with_msvc_cpp()) {
+        nob_log(NOB_ERROR, "MSVC C++ build failed");
+        all_ok = false;
+    } else {
+        nob_log(NOB_INFO, "Running MSVC C++ build...");
+        if (!run_test("test_msvc_cpp.exe")) {
+            nob_log(NOB_ERROR, "MSVC C++ tests failed");
+            all_ok = false;
+        }
+    }
+#else
+    /* Unix: Test with GCC, Clang, and valgrind */
     nob_log(NOB_INFO, "Building with GCC...");
     if (!build_with_gcc(false)) {
         nob_log(NOB_ERROR, "GCC build failed");
@@ -213,6 +277,7 @@ int main(int argc, char **argv) {
         nob_log(NOB_ERROR, "Valgrind check failed");
         all_ok = false;
     }
+#endif /* _WIN32 */
 
     if (all_ok) {
         nob_log(NOB_INFO, "All builds and tests passed!");
