@@ -119,17 +119,14 @@ typedef struct { SpFlavor flavor; } SpPathOpts;
 
 /* ============ Core Functions ============ */
 
-/* Creation */
 SpPath sp_path_new(const char *s, SpPathOpts opts);
 SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor);
 SpPath sp_path_copy(const SpPath *p);
 
-/* String conversion */
 const char *sp_str(const SpPath *p);
 SpStr sp_as_sv(const SpPath *p);
 void sp_as_posix(const SpPath *p, char *out, size_t out_size);
 
-/* Components */
 SpStr sp_drive(const SpPath *p);
 SpStr sp_root(const SpPath *p);
 SpStr sp_anchor(const SpPath *p);
@@ -139,30 +136,24 @@ SpStr sp_suffix(const SpPath *p);
 SpSuffixes sp_suffixes(const SpPath *p);
 SpPath sp_parent(const SpPath *p);
 
-/* Parts iteration */
 SpPartsIter sp_parts_begin(const SpPath *p);
 bool sp_parts_next(SpPartsIter *it, SpStr *out);
 size_t sp_parts_count(const SpPath *p);
 
-/* Parents iteration */
 SpParentsIter sp_parents_begin(const SpPath *p);
 bool sp_parents_next(SpParentsIter *it, SpPath *out);
 
-/* Joining */
 SpPath sp_join_one(const SpPath *base, const char *other);
 SpPath sp_join_impl(const SpPath *base, const char **parts);
 SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
-/* Modification */
 SpPath sp_with_name(const SpPath *p, const char *name);
 SpPath sp_with_stem(const SpPath *p, const char *stem);
 SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 
-/* Relative paths */
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
 
-/* Queries */
 bool sp_is_absolute(const SpPath *p);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
 bool sp_is_empty(const SpPath *p);
@@ -189,18 +180,20 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
 extern "C" {
 #endif
 
+static inline bool sp_priv_is_windows_flavor(SpFlavor flavor) {
+#ifdef SP_WINDOWS
+    return flavor == SP_FLAVOR_WINDOWS || flavor == SP_FLAVOR_NATIVE;
+#else
+    return flavor == SP_FLAVOR_WINDOWS;
+#endif
+}
+
 static inline bool sp_priv_is_sep(char c, SpFlavor flavor) {
-    if (flavor == SP_FLAVOR_WINDOWS || (flavor == SP_FLAVOR_NATIVE && SP_SEP == '\\')) {
-        return c == '/' || c == '\\';
-    }
-    return c == '/';
+    return sp_priv_is_windows_flavor(flavor) ? (c == '/' || c == '\\') : (c == '/');
 }
 
 static inline char sp_priv_sep(SpFlavor flavor) {
-    if (flavor == SP_FLAVOR_WINDOWS || (flavor == SP_FLAVOR_NATIVE && SP_SEP == '\\')) {
-        return '\\';
-    }
-    return '/';
+    return sp_priv_is_windows_flavor(flavor) ? '\\' : '/';
 }
 
 static inline bool sp_priv_is_drive_letter(char c) {
@@ -208,22 +201,12 @@ static inline bool sp_priv_is_drive_letter(char c) {
 }
 
 static inline bool sp_priv_has_drive(const char *s, size_t len, SpFlavor flavor) {
-    if (flavor == SP_FLAVOR_POSIX) return false;
-    if (flavor == SP_FLAVOR_NATIVE) {
-#ifdef SP_POSIX
-        return false;
-#endif
-    }
+    if (!sp_priv_is_windows_flavor(flavor)) return false;
     return len >= 2 && sp_priv_is_drive_letter(s[0]) && s[1] == ':';
 }
 
 static inline bool sp_priv_is_unc(const char *s, size_t len, SpFlavor flavor) {
-    if (flavor == SP_FLAVOR_POSIX) return false;
-    if (flavor == SP_FLAVOR_NATIVE) {
-#ifdef SP_POSIX
-        return false;
-#endif
-    }
+    if (!sp_priv_is_windows_flavor(flavor)) return false;
     return len >= 2 && sp_priv_is_sep(s[0], flavor) && sp_priv_is_sep(s[1], flavor);
 }
 
@@ -599,11 +582,8 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
 bool sp_is_absolute(const SpPath *p) {
     SpStr root = sp_root(p);
     if (root.len > 0) {
-        /* For Windows, also need a drive for fully absolute */
-        SpFlavor f = p->flavor;
-        if (f == SP_FLAVOR_WINDOWS || (f == SP_FLAVOR_NATIVE && SP_SEP == '\\')) {
-            SpStr drive = sp_drive(p);
-            return drive.len > 0;
+        if (sp_priv_is_windows_flavor(p->flavor)) {
+            return sp_drive(p).len > 0;
         }
         return true;
     }
