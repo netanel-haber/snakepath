@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,3 +24,19 @@ jobs:
 
       - name: Run build and tests
         run: ./nob
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build nob
+        run: cl.exe /Fe:nob.exe nob.c
+
+      - name: Run build and tests
+        run: .\nob.exe
