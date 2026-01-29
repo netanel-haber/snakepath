@@ -5,149 +5,130 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
-#define COMMON_WARNINGS \
-    "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
-    "-Wconversion", "-Wsign-conversion", "-Wshadow", \
-    "-Wstrict-prototypes", "-Wmissing-prototypes", \
-    "-Wold-style-definition", "-Wdouble-promotion", \
-    "-Wundef", "-Wwrite-strings", "-Wcast-qual", \
-    "-Wcast-align", "-Wpointer-arith", "-Wnull-dereference", \
-    "-Wformat=2", "-Wformat-overflow=2", "-Wformat-truncation=2", \
-    "-Wvla", "-Wlogical-op", "-Wduplicated-cond", \
-    "-Wduplicated-branches", "-Wrestrict", "-Wjump-misses-init"
-
-#define CLANG_WARNINGS \
-    "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
-    "-Wconversion", "-Wsign-conversion", "-Wshadow", \
-    "-Wstrict-prototypes", "-Wmissing-prototypes", \
-    "-Wold-style-definition", "-Wdouble-promotion", \
-    "-Wundef", "-Wwrite-strings", "-Wcast-qual", \
-    "-Wcast-align", "-Wpointer-arith", "-Wnull-dereference", \
-    "-Wformat=2", "-Wvla", "-Weverything", \
-    "-Wno-declaration-after-statement", \
-    "-Wno-disabled-macro-expansion", "-Wno-padded", \
-    "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
-    "-Wno-unsafe-buffer-usage"
-
-/* C++ warnings - no C-specific warnings like -Wstrict-prototypes */
-#define GPP_WARNINGS \
+#define BASE_WARNINGS \
     "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
     "-Wconversion", "-Wsign-conversion", "-Wshadow", \
     "-Wdouble-promotion", "-Wundef", "-Wwrite-strings", \
     "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
-    "-Wnull-dereference", "-Wformat=2", "-Wvla", \
-    "-Wlogical-op", "-Wduplicated-cond", "-Wduplicated-branches", \
-    "-Wrestrict"
+    "-Wnull-dereference", "-Wformat=2", "-Wvla"
 
-#define CLANGPP_WARNINGS \
-    "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
-    "-Wconversion", "-Wsign-conversion", "-Wshadow", \
-    "-Wdouble-promotion", "-Wundef", "-Wwrite-strings", \
-    "-Wcast-qual", "-Wcast-align", "-Wpointer-arith", \
-    "-Wnull-dereference", "-Wformat=2", "-Wvla", \
-    "-Weverything", "-Wno-c++98-compat", "-Wno-c++98-compat-pedantic", \
+#define C_ONLY_WARNINGS \
+    "-Wstrict-prototypes", "-Wmissing-prototypes", \
+    "-Wold-style-definition"
+
+#define GCC_WARNINGS \
+    "-Wformat-overflow=2", "-Wformat-truncation=2", \
+    "-Wlogical-op", "-Wduplicated-cond", \
+    "-Wduplicated-branches", "-Wrestrict"
+
+#define GCC_C_WARNINGS \
+    "-Wjump-misses-init"
+
+#define CLANG_EVERYTHING \
+    "-Weverything", \
     "-Wno-disabled-macro-expansion", "-Wno-padded", \
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
     "-Wno-unsafe-buffer-usage"
 
-/* MSVC warnings - maximum warning level with warnings as errors */
-#define MSVC_WARNINGS \
-    "/W4", "/WX"
+#define CLANG_C_EXCLUSIONS \
+    "-Wno-declaration-after-statement"
 
-/* MSVC C++ warnings */
-#define MSVC_CPP_WARNINGS \
-    "/W4", "/WX", "/EHsc"
+#define CLANG_CPP_EXCLUSIONS \
+    "-Wno-c++98-compat", "-Wno-c++98-compat-pedantic"
 
-static bool build_with_gcc(bool sanitizers) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "gcc");
-    nob_cmd_append(&cmd, "-std=c99");
-    nob_cmd_append(&cmd, COMMON_WARNINGS);
-    if (sanitizers) {
-        nob_cmd_append(&cmd, "-fsanitize=address,undefined");
-        nob_cmd_append(&cmd, "-fno-omit-frame-pointer");
+typedef enum {
+    COMPILER_GCC,
+    COMPILER_CLANG,
+    COMPILER_GPP,
+    COMPILER_CLANGPP,
+#ifdef _WIN32
+    COMPILER_MSVC,
+    COMPILER_MSVC_CPP,
+#endif
+} Compiler;
+
+typedef struct {
+    Compiler compiler;
+    bool sanitizers;
+    const char *name;
+    const char *output;
+} BuildConfig;
+
+static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
+    switch (compiler) {
+    case COMPILER_GCC:
+        nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS, GCC_WARNINGS, GCC_C_WARNINGS);
+        break;
+    case COMPILER_CLANG:
+        nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS);
+        nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_C_EXCLUSIONS);
+        break;
+    case COMPILER_GPP:
+        nob_cmd_append(cmd, BASE_WARNINGS, GCC_WARNINGS);
+        break;
+    case COMPILER_CLANGPP:
+        nob_cmd_append(cmd, BASE_WARNINGS);
+        nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_CPP_EXCLUSIONS);
+        break;
+#ifdef _WIN32
+    case COMPILER_MSVC:
+        nob_cmd_append(cmd, "/W4", "/WX");
+        break;
+    case COMPILER_MSVC_CPP:
+        nob_cmd_append(cmd, "/W4", "/WX", "/EHsc");
+        break;
+#endif
     }
-    nob_cmd_append(&cmd, "-g", "-O0");
-    nob_cmd_append(&cmd, "-o", sanitizers ? "test_gcc_san" : "test_gcc");
-    nob_cmd_append(&cmd, "test.c");
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
 }
 
-static bool build_with_clang(bool sanitizers) {
+static bool build(BuildConfig cfg) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "clang");
-    nob_cmd_append(&cmd, "-std=c99");
-    nob_cmd_append(&cmd, CLANG_WARNINGS);
-    if (sanitizers) {
-        nob_cmd_append(&cmd, "-fsanitize=address,undefined");
-        nob_cmd_append(&cmd, "-fno-omit-frame-pointer");
+
+    switch (cfg.compiler) {
+    case COMPILER_GCC:
+        nob_cmd_append(&cmd, "gcc", "-std=c99");
+        break;
+    case COMPILER_CLANG:
+        nob_cmd_append(&cmd, "clang", "-std=c99");
+        break;
+    case COMPILER_GPP:
+        nob_cmd_append(&cmd, "g++", "-std=c++11", "-x", "c++");
+        break;
+    case COMPILER_CLANGPP:
+        nob_cmd_append(&cmd, "clang++", "-std=c++11", "-x", "c++");
+        break;
+#ifdef _WIN32
+    case COMPILER_MSVC:
+        nob_cmd_append(&cmd, "cl.exe", "/std:c11");
+        break;
+    case COMPILER_MSVC_CPP:
+        nob_cmd_append(&cmd, "cl.exe", "/std:c++14", "/TP");
+        break;
+#endif
     }
-    nob_cmd_append(&cmd, "-g", "-O0");
-    nob_cmd_append(&cmd, "-o", sanitizers ? "test_clang_san" : "test_clang");
-    nob_cmd_append(&cmd, "test.c");
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
-}
 
-static bool build_with_gpp(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "g++");
-    nob_cmd_append(&cmd, "-std=c++11");
-    nob_cmd_append(&cmd, "-x", "c++");
-    nob_cmd_append(&cmd, GPP_WARNINGS);
-    nob_cmd_append(&cmd, "-g", "-O0");
-    nob_cmd_append(&cmd, "-o", "test_gpp");
-    nob_cmd_append(&cmd, "test.c");
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
-}
-
-static bool build_with_clangpp(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "clang++");
-    nob_cmd_append(&cmd, "-std=c++11");
-    nob_cmd_append(&cmd, "-x", "c++");
-    nob_cmd_append(&cmd, CLANGPP_WARNINGS);
-    nob_cmd_append(&cmd, "-g", "-O0");
-    nob_cmd_append(&cmd, "-o", "test_clangpp");
-    nob_cmd_append(&cmd, "test.c");
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
-}
+    append_warnings(&cmd, cfg.compiler);
 
 #ifdef _WIN32
-static bool build_with_msvc(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "cl.exe");
-    nob_cmd_append(&cmd, "/std:c11");
-    nob_cmd_append(&cmd, MSVC_WARNINGS);
-    nob_cmd_append(&cmd, "/Od", "/Zi");
-    nob_cmd_append(&cmd, "/Fe:test_msvc.exe");
-    nob_cmd_append(&cmd, "test.c");
-    bool result = nob_cmd_run_sync(cmd);
-    nob_cmd_free(cmd);
-    return result;
-}
+    if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
+        nob_cmd_append(&cmd, "/Od", "/Zi");
+        nob_cmd_append(&cmd, "/Fe:", cfg.output);
+    } else
+#endif
+    {
+        if (cfg.sanitizers) {
+            nob_cmd_append(&cmd, "-fsanitize=address,undefined");
+            nob_cmd_append(&cmd, "-fno-omit-frame-pointer");
+        }
+        nob_cmd_append(&cmd, "-g", "-O0");
+        nob_cmd_append(&cmd, "-o", cfg.output);
+    }
 
-static bool build_with_msvc_cpp(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "cl.exe");
-    nob_cmd_append(&cmd, "/std:c++14");
-    nob_cmd_append(&cmd, "/TP");  /* Compile as C++ */
-    nob_cmd_append(&cmd, MSVC_CPP_WARNINGS);
-    nob_cmd_append(&cmd, "/Od", "/Zi");
-    nob_cmd_append(&cmd, "/Fe:test_msvc_cpp.exe");
     nob_cmd_append(&cmd, "test.c");
     bool result = nob_cmd_run_sync(cmd);
     nob_cmd_free(cmd);
     return result;
 }
-#endif /* _WIN32 */
 
 static bool run_test(const char *exe) {
     Nob_Cmd cmd = {0};
@@ -157,6 +138,7 @@ static bool run_test(const char *exe) {
     return result;
 }
 
+#ifndef _WIN32
 static bool run_valgrind(const char *exe) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "valgrind");
@@ -168,6 +150,28 @@ static bool run_valgrind(const char *exe) {
     nob_cmd_free(cmd);
     return result;
 }
+#endif
+
+static bool build_and_test(BuildConfig cfg, bool *all_ok, bool optional) {
+    nob_log(NOB_INFO, "Building with %s...", cfg.name);
+    if (!build(cfg)) {
+        if (optional) {
+            nob_log(NOB_WARNING, "%s build skipped (missing runtime)", cfg.name);
+            return true;
+        }
+        nob_log(NOB_ERROR, "%s build failed", cfg.name);
+        *all_ok = false;
+        return false;
+    }
+
+    nob_log(NOB_INFO, "Running %s build...", cfg.name);
+    if (!run_test(cfg.output)) {
+        nob_log(NOB_ERROR, "%s tests failed", cfg.name);
+        *all_ok = false;
+        return false;
+    }
+    return true;
+}
 
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
@@ -175,101 +179,29 @@ int main(int argc, char **argv) {
     bool all_ok = true;
 
 #ifdef _WIN32
-    /* Windows: Test with MSVC */
-    nob_log(NOB_INFO, "Building with MSVC (C)...");
-    if (!build_with_msvc()) {
-        nob_log(NOB_ERROR, "MSVC build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running MSVC build...");
-        if (!run_test("test_msvc.exe")) {
-            nob_log(NOB_ERROR, "MSVC tests failed");
-            all_ok = false;
-        }
-    }
+    BuildConfig configs[] = {
+        {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
+        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
+    };
+    size_t config_count = sizeof(configs) / sizeof(configs[0]);
 
-    nob_log(NOB_INFO, "Building with MSVC (C++)...");
-    if (!build_with_msvc_cpp()) {
-        nob_log(NOB_ERROR, "MSVC C++ build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running MSVC C++ build...");
-        if (!run_test("test_msvc_cpp.exe")) {
-            nob_log(NOB_ERROR, "MSVC C++ tests failed");
-            all_ok = false;
-        }
+    for (size_t i = 0; i < config_count; i++) {
+        build_and_test(configs[i], &all_ok, false);
     }
 #else
-    /* Unix: Test with GCC, Clang, and valgrind */
-    nob_log(NOB_INFO, "Building with GCC...");
-    if (!build_with_gcc(false)) {
-        nob_log(NOB_ERROR, "GCC build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running GCC build...");
-        if (!run_test("./test_gcc")) {
-            nob_log(NOB_ERROR, "GCC tests failed");
-            all_ok = false;
-        }
-    }
+    BuildConfig configs[] = {
+        {COMPILER_GCC,     false, "GCC",                 "./test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",               "./test_clang"},
+        {COMPILER_GCC,     true,  "GCC + sanitizers",    "./test_gcc_san"},
+        {COMPILER_CLANG,   true,  "Clang + sanitizers",  "./test_clang_san"},
+        {COMPILER_GPP,     false, "G++ (C++)",           "./test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",       "./test_clangpp"},
+    };
+    size_t config_count = sizeof(configs) / sizeof(configs[0]);
 
-    nob_log(NOB_INFO, "Building with Clang...");
-    if (!build_with_clang(false)) {
-        nob_log(NOB_ERROR, "Clang build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running Clang build...");
-        if (!run_test("./test_clang")) {
-            nob_log(NOB_ERROR, "Clang tests failed");
-            all_ok = false;
-        }
-    }
-
-    nob_log(NOB_INFO, "Building with GCC + sanitizers...");
-    if (!build_with_gcc(true)) {
-        nob_log(NOB_ERROR, "GCC sanitizer build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running GCC sanitizer build...");
-        if (!run_test("./test_gcc_san")) {
-            nob_log(NOB_ERROR, "GCC sanitizer tests failed");
-            all_ok = false;
-        }
-    }
-
-    nob_log(NOB_INFO, "Building with Clang + sanitizers (optional)...");
-    if (!build_with_clang(true)) {
-        nob_log(NOB_WARNING, "Clang sanitizer build skipped (missing runtime)");
-    } else {
-        nob_log(NOB_INFO, "Running Clang sanitizer build...");
-        if (!run_test("./test_clang_san")) {
-            nob_log(NOB_ERROR, "Clang sanitizer tests failed");
-            all_ok = false;
-        }
-    }
-
-    nob_log(NOB_INFO, "Building with G++ (C++ compatibility)...");
-    if (!build_with_gpp()) {
-        nob_log(NOB_ERROR, "G++ build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running G++ build...");
-        if (!run_test("./test_gpp")) {
-            nob_log(NOB_ERROR, "G++ tests failed");
-            all_ok = false;
-        }
-    }
-
-    nob_log(NOB_INFO, "Building with Clang++ (C++ compatibility)...");
-    if (!build_with_clangpp()) {
-        nob_log(NOB_ERROR, "Clang++ build failed");
-        all_ok = false;
-    } else {
-        nob_log(NOB_INFO, "Running Clang++ build...");
-        if (!run_test("./test_clangpp")) {
-            nob_log(NOB_ERROR, "Clang++ tests failed");
-            all_ok = false;
-        }
+    for (size_t i = 0; i < config_count; i++) {
+        bool optional = configs[i].sanitizers && configs[i].compiler == COMPILER_CLANG;
+        build_and_test(configs[i], &all_ok, optional);
     }
 
     nob_log(NOB_INFO, "Running valgrind...");
@@ -277,7 +209,7 @@ int main(int argc, char **argv) {
         nob_log(NOB_ERROR, "Valgrind check failed");
         all_ok = false;
     }
-#endif /* _WIN32 */
+#endif
 
     if (all_ok) {
         nob_log(NOB_INFO, "All builds and tests passed!");
