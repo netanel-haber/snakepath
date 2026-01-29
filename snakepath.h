@@ -171,6 +171,77 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
 }
 #endif
 
+/* ============ Fluent API ============ */
+#ifdef SNAKEPATH_FLUENT
+
+/* Thread-local storage - portable across compilers */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
+  #define SP_TLS _Thread_local
+#elif defined(__GNUC__) || defined(__clang__)
+  #define SP_TLS __thread
+#elif defined(_MSC_VER)
+  #define SP_TLS __declspec(thread)
+#else
+  #define SP_TLS /* fallback: not thread-safe */
+#endif
+
+/* Forward declare the fluent struct */
+typedef struct SpFluent SpFluent;
+
+/* Function pointer types for fluent methods */
+typedef SpFluent (*SpFluentVoidFn)(void);
+typedef SpFluent (*SpFluentStrFn)(const char *);
+typedef SpStr (*SpFluentSvFn)(void);
+typedef SpSuffixes (*SpFluentSuffixesFn)(void);
+typedef const char *(*SpFluentCstrFn)(void);
+typedef bool (*SpFluentBoolFn)(void);
+typedef const SpPath *(*SpFluentGetFn)(void);
+typedef bool (*SpFluentRelToFn)(const SpPath *);
+typedef SpPath (*SpFluentRelativeToFn)(const SpPath *);
+
+/* The fluent API struct with function pointers for chaining */
+struct SpFluent {
+    /* Chainable methods (modify context, return SpFluent) */
+    SpFluentVoidFn parent;
+    SpFluentStrFn join;
+    SpFluentStrFn with_name;
+    SpFluentStrFn with_stem;
+    SpFluentStrFn with_suffix;
+    
+    /* Accessor methods (return values) */
+    SpFluentSvFn name;
+    SpFluentSvFn stem;
+    SpFluentSvFn suffix;
+    SpFluentSuffixesFn suffixes;
+    SpFluentSvFn drive;
+    SpFluentSvFn root;
+    SpFluentSvFn anchor;
+    SpFluentSvFn as_sv;
+    SpFluentCstrFn str;
+    SpFluentCstrFn as_posix;
+    SpFluentBoolFn is_absolute;
+    SpFluentRelToFn is_relative_to;
+    SpFluentRelativeToFn relative_to;
+    SpFluentGetFn get;
+};
+
+/* Global fluent instance (declared, defined in implementation) */
+#ifdef SNAKEPATH_IMPLEMENTATION
+extern SpFluent spf;
+#else
+extern SpFluent spf;
+#endif
+
+/* Path creation macros */
+#define SPF(s)   (sp_fluent_init(sp_path(s)), spf)
+#define SPF_P(s) (sp_fluent_init(sp_path_f((s), SP_FLAVOR_POSIX)), spf)
+#define SPF_W(s) (sp_fluent_init(sp_path_f((s), SP_FLAVOR_WINDOWS)), spf)
+
+/* Initialize fluent context (called by macros) */
+void sp_fluent_init(SpPath p);
+
+#endif /* SNAKEPATH_FLUENT */
+
 #endif /* SNAKEPATH_H */
 
 /* ============ Implementation ============ */
@@ -638,6 +709,134 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
 bool sp_is_empty(const SpPath *p) {
     return p->len == 0;
 }
+
+/* ============ Fluent API Implementation ============ */
+#ifdef SNAKEPATH_FLUENT
+
+/* Thread-local context for fluent operations */
+static SP_TLS SpPath sp_priv_f_ctx;
+static SP_TLS char sp_priv_f_posix_buf[SP_PATH_MAX];
+
+/* Initialize the fluent context */
+void sp_fluent_init(SpPath p) {
+    sp_priv_f_ctx = p;
+}
+
+/* Chainable method implementations */
+static SpFluent sp_priv_f_parent(void) {
+    sp_priv_f_ctx = sp_parent(&sp_priv_f_ctx);
+    extern SpFluent spf;
+    return spf;
+}
+
+static SpFluent sp_priv_f_join(const char *s) {
+    sp_priv_f_ctx = sp_join_one(&sp_priv_f_ctx, s);
+    extern SpFluent spf;
+    return spf;
+}
+
+static SpFluent sp_priv_f_with_name(const char *s) {
+    sp_priv_f_ctx = sp_with_name(&sp_priv_f_ctx, s);
+    extern SpFluent spf;
+    return spf;
+}
+
+static SpFluent sp_priv_f_with_stem(const char *s) {
+    sp_priv_f_ctx = sp_with_stem(&sp_priv_f_ctx, s);
+    extern SpFluent spf;
+    return spf;
+}
+
+static SpFluent sp_priv_f_with_suffix(const char *s) {
+    sp_priv_f_ctx = sp_with_suffix(&sp_priv_f_ctx, s);
+    extern SpFluent spf;
+    return spf;
+}
+
+/* Accessor method implementations */
+static SpStr sp_priv_f_name(void) {
+    return sp_name(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_stem(void) {
+    return sp_stem(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_suffix(void) {
+    return sp_suffix(&sp_priv_f_ctx);
+}
+
+static SpSuffixes sp_priv_f_suffixes(void) {
+    return sp_suffixes(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_drive(void) {
+    return sp_drive(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_root(void) {
+    return sp_root(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_anchor(void) {
+    return sp_anchor(&sp_priv_f_ctx);
+}
+
+static SpStr sp_priv_f_as_sv(void) {
+    return sp_as_sv(&sp_priv_f_ctx);
+}
+
+static const char *sp_priv_f_str(void) {
+    return sp_str(&sp_priv_f_ctx);
+}
+
+static const char *sp_priv_f_as_posix(void) {
+    sp_as_posix(&sp_priv_f_ctx, sp_priv_f_posix_buf, sizeof(sp_priv_f_posix_buf));
+    return sp_priv_f_posix_buf;
+}
+
+static bool sp_priv_f_is_absolute(void) {
+    return sp_is_absolute(&sp_priv_f_ctx);
+}
+
+static bool sp_priv_f_is_relative_to(const SpPath *other) {
+    return sp_is_relative_to(&sp_priv_f_ctx, other);
+}
+
+static SpPath sp_priv_f_relative_to(const SpPath *other) {
+    return sp_relative_to(&sp_priv_f_ctx, other);
+}
+
+static const SpPath *sp_priv_f_get(void) {
+    return &sp_priv_f_ctx;
+}
+
+/* Global fluent instance with all methods */
+SpFluent spf = {
+    /* Chainable */
+    .parent = sp_priv_f_parent,
+    .join = sp_priv_f_join,
+    .with_name = sp_priv_f_with_name,
+    .with_stem = sp_priv_f_with_stem,
+    .with_suffix = sp_priv_f_with_suffix,
+    /* Accessors */
+    .name = sp_priv_f_name,
+    .stem = sp_priv_f_stem,
+    .suffix = sp_priv_f_suffix,
+    .suffixes = sp_priv_f_suffixes,
+    .drive = sp_priv_f_drive,
+    .root = sp_priv_f_root,
+    .anchor = sp_priv_f_anchor,
+    .as_sv = sp_priv_f_as_sv,
+    .str = sp_priv_f_str,
+    .as_posix = sp_priv_f_as_posix,
+    .is_absolute = sp_priv_f_is_absolute,
+    .is_relative_to = sp_priv_f_is_relative_to,
+    .relative_to = sp_priv_f_relative_to,
+    .get = sp_priv_f_get
+};
+
+#endif /* SNAKEPATH_FLUENT */
 
 #ifdef __cplusplus
 }

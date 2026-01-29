@@ -81,7 +81,7 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     }
 }
 
-static bool build(BuildConfig cfg) {
+static bool build_source(BuildConfig cfg, const char *source, const char *extra_define) {
     Nob_Cmd cmd = {0};
 
     switch (cfg.compiler) {
@@ -109,6 +109,10 @@ static bool build(BuildConfig cfg) {
 
     append_warnings(&cmd, cfg.compiler);
 
+    if (extra_define) {
+        nob_cmd_append(&cmd, extra_define);
+    }
+
 #ifdef _WIN32
     if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
         nob_cmd_append(&cmd, "/Od", "/Zi");
@@ -124,10 +128,14 @@ static bool build(BuildConfig cfg) {
         nob_cmd_append(&cmd, "-o", cfg.output);
     }
 
-    nob_cmd_append(&cmd, "test.c");
+    nob_cmd_append(&cmd, source);
     bool result = nob_cmd_run_sync(cmd);
     nob_cmd_free(cmd);
     return result;
+}
+
+static bool build(BuildConfig cfg) {
+    return build_source(cfg, "test.c", NULL);
 }
 
 static bool run_test(const char *exe) {
@@ -188,6 +196,20 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < config_count; i++) {
         build_and_test(configs[i], &all_ok, false);
     }
+
+    /* Fluent API tests (C only - uses designated initializers) */
+    nob_log(NOB_INFO, "Building fluent API tests (MSVC)...");
+    BuildConfig fluent_msvc = {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"};
+    if (build_source(fluent_msvc, "test_fluent_api.c", NULL)) {
+        nob_log(NOB_INFO, "Running fluent API tests...");
+        if (!run_test("test_fluent_msvc.exe")) {
+            nob_log(NOB_ERROR, "Fluent API tests failed");
+            all_ok = false;
+        }
+    } else {
+        nob_log(NOB_ERROR, "Fluent API build failed");
+        all_ok = false;
+    }
 #else
     BuildConfig configs[] = {
         {COMPILER_GCC,     false, "GCC",                 "./test_gcc"},
@@ -207,6 +229,33 @@ int main(int argc, char **argv) {
     nob_log(NOB_INFO, "Running valgrind...");
     if (!run_valgrind("./test_gcc")) {
         nob_log(NOB_ERROR, "Valgrind check failed");
+        all_ok = false;
+    }
+
+    /* Fluent API tests (C only - uses designated initializers) */
+    nob_log(NOB_INFO, "Building fluent API tests (GCC)...");
+    BuildConfig fluent_gcc = {COMPILER_GCC, false, "GCC Fluent", "./test_fluent_gcc"};
+    if (build_source(fluent_gcc, "test_fluent_api.c", NULL)) {
+        nob_log(NOB_INFO, "Running fluent API tests...");
+        if (!run_test("./test_fluent_gcc")) {
+            nob_log(NOB_ERROR, "Fluent API tests failed");
+            all_ok = false;
+        }
+    } else {
+        nob_log(NOB_ERROR, "Fluent API build failed");
+        all_ok = false;
+    }
+
+    nob_log(NOB_INFO, "Building fluent API tests (Clang)...");
+    BuildConfig fluent_clang = {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"};
+    if (build_source(fluent_clang, "test_fluent_api.c", NULL)) {
+        nob_log(NOB_INFO, "Running fluent API tests (Clang)...");
+        if (!run_test("./test_fluent_clang")) {
+            nob_log(NOB_ERROR, "Fluent API tests (Clang) failed");
+            all_ok = false;
+        }
+    } else {
+        nob_log(NOB_ERROR, "Fluent API build (Clang) failed");
         all_ok = false;
     }
 #endif
