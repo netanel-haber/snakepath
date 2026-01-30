@@ -1157,11 +1157,11 @@ unsigned long sp_path_hash(const SpPath *p) {
     if (sp_priv_is_windows_flavor(p->flavor)) {
         /* Case-insensitive hash for Windows */
         for (size_t i = 0; i < len; i++) {
-            hash = ((hash << 5) + hash) + sp_priv_tolower(str[i]);
+            hash = ((hash << 5) + hash) + (unsigned char)sp_priv_tolower(str[i]);
         }
     } else {
         for (size_t i = 0; i < len; i++) {
-            hash = ((hash << 5) + hash) + str[i];
+            hash = ((hash << 5) + hash) + (unsigned char)str[i];
         }
     }
     return hash;
