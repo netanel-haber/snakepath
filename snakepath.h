@@ -27,11 +27,13 @@ extern "C" {
 #define SP_PRIV_OPTS(f) SpPathOpts{(f)}
 #define SP_PRIV_ZERO {}
 #define SP_PRIV_NULL nullptr
+#define SP_PRIV_CAST(type, val) static_cast<type>(val)
 #else
 #define SP_PRIV_STR(d, l) ((SpStr){.data = (d), .len = (l)})
 #define SP_PRIV_OPTS(f) ((SpPathOpts){.flavor = (f)})
 #define SP_PRIV_ZERO {0}
 #define SP_PRIV_NULL NULL
+#define SP_PRIV_CAST(type, val) ((type)(val))
 #endif
 
 #ifndef SP_PATH_MAX
@@ -180,7 +182,7 @@ static inline bool sp_path_is_error(const SpPath *p) {
     return p->len == 0 && p->buf[0] != SP_ERR_NONE;
 }
 static inline int sp_path_error_code(const SpPath *p) {
-    return p->len == 0 ? (int)(unsigned char)p->buf[0] : 0;
+    return p->len == 0 ? SP_PRIV_CAST(int, SP_PRIV_CAST(unsigned char, p->buf[0])) : 0;
 }
 
 /* ============ Helper Functions ============ */
@@ -1157,11 +1159,11 @@ unsigned long sp_path_hash(const SpPath *p) {
     if (sp_priv_is_windows_flavor(p->flavor)) {
         /* Case-insensitive hash for Windows */
         for (size_t i = 0; i < len; i++) {
-            hash = ((hash << 5) + hash) + (unsigned char)sp_priv_tolower(str[i]);
+            hash = ((hash << 5) + hash) + SP_PRIV_CAST(unsigned char, sp_priv_tolower(str[i]));
         }
     } else {
         for (size_t i = 0; i < len; i++) {
-            hash = ((hash << 5) + hash) + (unsigned char)str[i];
+            hash = ((hash << 5) + hash) + SP_PRIV_CAST(unsigned char, str[i]);
         }
     }
     return hash;
@@ -1170,7 +1172,7 @@ unsigned long sp_path_hash(const SpPath *p) {
 /* Simple glob pattern matching (supports * and ?) */
 static bool sp_priv_fnmatch(const char *pattern, size_t plen, const char *str, size_t slen, bool case_insensitive) {
     size_t pi = 0, si = 0;
-    size_t star_pi = (size_t)-1, star_si = 0;
+    size_t star_pi = SP_PRIV_CAST(size_t, -1), star_si = 0;
 
     while (si < slen) {
         if (pi < plen && pattern[pi] == '*') {
@@ -1181,7 +1183,7 @@ static bool sp_priv_fnmatch(const char *pattern, size_t plen, const char *str, s
                                      : pattern[pi] == str[si]))) {
             pi++;
             si++;
-        } else if (star_pi != (size_t)-1) {
+        } else if (star_pi != SP_PRIV_CAST(size_t, -1)) {
             pi = star_pi + 1;
             si = ++star_si;
         } else {
