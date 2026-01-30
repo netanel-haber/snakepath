@@ -474,6 +474,7 @@ class PurePosixPath(PurePath):
     """Pure path with POSIX semantics."""
     __slots__ = ()
     _flavor = SP_FLAVOR_POSIX
+    parser = __import__('posixpath')
 
     def __new__(cls, *args):
         return object.__new__(cls)
@@ -483,6 +484,7 @@ class PureWindowsPath(PurePath):
     """Pure path with Windows semantics."""
     __slots__ = ()
     _flavor = SP_FLAVOR_WINDOWS
+    parser = __import__('ntpath')
 
     def __new__(cls, *args):
         return object.__new__(cls)
