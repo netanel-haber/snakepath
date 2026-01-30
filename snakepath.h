@@ -1370,11 +1370,19 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
         } else {
             return 0;
         }
-    } else {
-        /* Regular absolute paths: /path or /C:/path -> file:///path or file:///C:/path */
+    } else if (path_len > 0 && path[0] == '/') {
+        /* POSIX absolute paths: /path -> file:///path */
         if (pos + 7 < buf_size) {
             memcpy(buf + pos, "file://", 7);
             pos += 7;
+        } else {
+            return 0;
+        }
+    } else {
+        /* Windows drive paths: C:/path -> file:///C:/path (need extra slash) */
+        if (pos + 8 < buf_size) {
+            memcpy(buf + pos, "file:///", 8);
+            pos += 8;
         } else {
             return 0;
         }
