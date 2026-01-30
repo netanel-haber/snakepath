@@ -359,7 +359,6 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
             if (i >= len) return i;  /* "//?/UNC/server" - no trailing sep */
 
             /* Include separator after server for incomplete paths */
-            size_t after_server = i;
             i++;  /* Past separator */
             if (i >= len) return i;  /* "//?/UNC/server/" - include trailing sep */
 
@@ -487,15 +486,15 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
         /* Check for //?/UNC paths which ARE complete UNC and need implicit root */
         if (is_device_ns && sp_priv_is_unc_device_path(buf, *len, flavor)) {
             /* //?/UNC paths: add implicit root if complete (has server+share) */
-            size_t i = 8;  /* Past "//?/UNC/" */
-            if (i < *len) {
+            size_t k = 8;  /* Past "//?/UNC/" */
+            if (k < *len) {
                 /* Find server */
-                while (i < *len && !sp_priv_is_sep(buf[i], flavor)) i++;
-                if (i < *len) {
-                    i++;  /* Past separator */
-                    size_t share_start = i;
-                    while (i < *len && !sp_priv_is_sep(buf[i], flavor)) i++;
-                    if (i > share_start && drive == *len && j + 1 < SP_PATH_MAX) {
+                while (k < *len && !sp_priv_is_sep(buf[k], flavor)) k++;
+                if (k < *len) {
+                    k++;  /* Past separator */
+                    size_t share_start = k;
+                    while (k < *len && !sp_priv_is_sep(buf[k], flavor)) k++;
+                    if (k > share_start && drive == *len && j + 1 < SP_PATH_MAX) {
                         /* Complete //?/UNC/server/share - add root separator */
                         buf[j++] = sep;
                     }
@@ -1618,7 +1617,7 @@ bool sp_is_reserved(const SpPath *p) {
         /* Skip trailing spaces - don't add them */
         if (c == ' ') continue;
         /* Normal ASCII uppercasing */
-        upper[len++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+        upper[len++] = (char)((c >= 'a' && c <= 'z') ? c - 32 : c);
     }
     upper[len] = '\0';
 
