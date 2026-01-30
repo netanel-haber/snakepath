@@ -213,45 +213,26 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
 /* ============ Fluent API ============ */
 #ifdef SNAKEPATH_FLUENT
 
-/* Internal struct - not for direct use. Use SPF/SPF_P/SPF_W macros. */
-struct sp_fluent_;
-typedef struct sp_fluent_ (*sp_fluent_void_fn_)(void);
-typedef struct sp_fluent_ (*sp_fluent_str_fn_)(const char *);
-typedef struct sp_fluent_ (*sp_fluent_path_fn_)(const SpPath *);
-typedef SpPath (*sp_fluent_finish_fn_)(void);
-typedef SpStr (*sp_fluent_sv_fn_)(void);
-typedef SpSuffixes (*sp_fluent_suffixes_fn_)(void);
-typedef const char *(*sp_fluent_cstr_fn_)(void);
-typedef bool (*sp_fluent_bool_fn_)(void);
-
 struct sp_fluent_ {
     void *_;
-    /* Chain terminators - return value and end chain */
-    sp_fluent_finish_fn_ path;
-    sp_fluent_sv_fn_ name;
-    sp_fluent_sv_fn_ stem;
-    sp_fluent_sv_fn_ suffix;
-    sp_fluent_suffixes_fn_ suffixes;
-    sp_fluent_sv_fn_ drive;
-    sp_fluent_sv_fn_ root;
-    sp_fluent_sv_fn_ anchor;
-    sp_fluent_cstr_fn_ str;
-    sp_fluent_bool_fn_ is_absolute;
-    /* Chainable methods */
-    sp_fluent_void_fn_ parent;
-    sp_fluent_str_fn_ join;
-    sp_fluent_str_fn_ with_name;
-    sp_fluent_str_fn_ with_stem;
-    sp_fluent_str_fn_ with_suffix;
-    sp_fluent_void_fn_ absolute;
-    sp_fluent_path_fn_ relative_to;
-    sp_fluent_path_fn_ relative_to_walk_up;
+    SpPath (*path)(void);
+    SpStr (*name)(void); SpStr (*stem)(void); SpStr (*suffix)(void);
+    SpSuffixes (*suffixes)(void);
+    SpStr (*drive)(void); SpStr (*root)(void); SpStr (*anchor)(void);
+    const char *(*str)(void);
+    bool (*is_absolute)(void);
+    struct sp_fluent_ (*parent)(void);
+    struct sp_fluent_ (*join)(const char *);
+    struct sp_fluent_ (*with_name)(const char *);
+    struct sp_fluent_ (*with_stem)(const char *);
+    struct sp_fluent_ (*with_suffix)(const char *);
+    struct sp_fluent_ (*absolute)(void);
+    struct sp_fluent_ (*relative_to)(const SpPath *);
+    struct sp_fluent_ (*relative_to_walk_up)(const SpPath *);
 };
+struct sp_fluent_ sp_fluent_init_(SpPath);
 
-struct sp_fluent_ sp_fluent_init_(SpPath p);
-
-/* Fluent path manipulation - chain methods and call .path() to get result
- * Example: SpPath p = SPF("/a/b").join("c").parent().path(); */
+/* SPF("/a").join("b").parent().str() */
 #define SPF(s)   sp_fluent_init_(sp_path(s))
 #define SPF_P(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_POSIX))
 #define SPF_W(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_WINDOWS))
