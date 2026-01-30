@@ -1,5 +1,4 @@
 snakepath
-
 C99 header-only pathlib library. POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor.
 
 ## Quick Start
@@ -18,32 +17,12 @@ SpPath parent = sp_parent(&p); // "a/b"
 const char *n = SPF_P("/a/b/c.txt")->parent()->name().data; // "b"
 ```
 
-## Build
+## Test/CI
 
 ```bash
 cc -o nob nob.c && ./nob
 ```
-
 Runs all compiler/test combinations automatically.
-
-## File Structure
-
-```
-snakepath.h              # Library (header-only, define SNAKEPATH_IMPLEMENTATION)
-nob.c                    # Build script
-nob.h                    # Build system (tsoding/nob.h)
-demo.c                   # Usage examples
-README.md                # This file
-
-tests/                   # All tests
-  test.c                 # Core API tests
-  test_fluent_api.c      # Fluent API tests
-  python_harness/        # Python bindings and test harness
-    snakepath/           # Python package
-      __init__.py        # Thin ctypes wrapper over C library
-    snakepath_lib.c      # FFI wrapper for Python bindings
-    run_cpython_tests.py # Runs CPython's pathlib test suite against snakepath
-```
 
 ## Boring API
 
@@ -122,7 +101,6 @@ SpStr name = SPF("a/b/c")->parent()->name();
 // PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
 const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
 
-// Get SpPath when you need it for further operations
 SpPath p = SPF_W("C:/Users")->join("docs")->path();
 SpPath child = sp_join_one(&p, "file.txt");
 ```
@@ -191,13 +169,6 @@ print(p.suffix)    # ''
 w = PureWindowsPath('C:/Users/test.txt')
 print(w.drive)     # 'C:'
 print(w.stem)      # 'test'
-```
-
-### Building
-
-```bash
-cd tests/python_harness
-gcc -shared -fPIC -fvisibility=hidden -O2 -I../.. -o libsnakepath.so snakepath_lib.c
 ```
 
 ### Testing
@@ -283,8 +254,69 @@ If you only want the final extension, use `sp_suffix()` which returns just `.gz`
 | `.as_uri()` | `sp_as_uri()` | - |
 | `Path.cwd()` | `sp_cwd()` | - |
 
-**Not implemented:** All I/O methods (`stat`, `exists`, `mkdir`, `read_*`, `write_*`, `glob`, etc.)
+**Not implemented:** Most I/O methods (`stat`, `exists`, `mkdir`, `read_*`, `write_*`, `glob`, etc.)
 
-## License
+## File Structure
 
-MIT
+```
+snakepath.h              # Library (header-only, define SNAKEPATH_IMPLEMENTATION)
+nob.c                    # Build script
+nob.h                    # Build system (tsoding/nob.h)
+demo.c                   # Usage examples
+README.md                # This file
+
+tests/                   # All tests
+  test.c                 # Core API tests
+  test_fluent_api.c      # Fluent API tests
+  python_harness/        # Python bindings and test harness
+    snakepath/           # Python package
+      __init__.py        # Thin ctypes wrapper over C library
+    snakepath_lib.c      # FFI wrapper for Python bindings
+    run_cpython_tests.py # Runs CPython's pathlib test suite against snakepath
+```
+
+```c
+≈≈÷≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈÷≈÷÷÷≈÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷≈÷÷÷÷÷÷÷÷÷÷÷÷÷÷+++++÷
+≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈÷≈÷≈÷≈     +÷+÷+÷+÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷÷+++++++
+≈≈  ≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈÷÷÷÷÷÷      ÷+÷÷÷++++÷÷+÷÷++++++++++++++++
+≈≈≈≈  ≈≈≈≈≈≈≈≈≈≈≈≈≈÷÷≈÷÷÷÷÷÷÷      +++++++++÷+÷+++++++++++÷÷+++
+≈÷≈≈≈≈  ≈≈≈≈≈≈≈ ≈≈≈÷÷÷÷÷÷÷÷++++           ÷+++++++++++++++÷++++
+÷≈÷≈÷÷≈  ≈≈≈≈≈ ≈≈≈≈÷÷÷÷÷÷÷÷÷+++++++++÷      +++++++++++++++++++
+÷÷÷÷÷÷÷≈  ≈≈≈≈≈≈≈≈≈÷≈÷÷÷÷÷÷++++++++++++++    ++++++++++++++++++
+÷÷÷÷÷÷÷÷÷  ÷÷÷≈≈≈≈÷≈÷÷÷+÷+++++++++++++++++     ++++++++++++++++
+÷÷÷÷÷÷÷÷÷÷  ÷÷÷÷÷÷÷÷÷÷++÷       +++++++++++÷    +++++++++++++++
++÷÷÷÷÷÷÷÷÷÷  ÷÷÷÷÷÷÷+÷             +++++++++÷   +++++++++++++++
+÷÷÷÷÷+÷÷÷÷÷÷  ÷÷÷÷÷÷÷                ÷++++++≈   +++++++++++++++
+÷÷÷+÷÷÷+÷÷÷÷÷ ≈÷÷÷÷++     ++++++++              +++++++++++++++
+÷÷÷÷÷+÷÷÷÷+÷÷  ≈÷÷÷÷÷    ÷+++++++++++         +++++++++++++++++
+÷+÷÷+÷+÷+÷÷÷÷  ÷÷÷÷÷÷     +++++++++++++++++++++++++++++++++++++
+÷÷÷÷÷÷÷÷÷÷+÷÷  ÷÷÷÷÷÷÷     ++++++++++++++++++++÷   ≈+++++++++++
+÷÷÷+÷++÷÷÷÷÷+  ÷÷÷÷÷+++      ++++++++++++++            ++++++++
+÷+÷÷+÷+÷+÷+÷÷  ÷++÷÷÷+++÷       ≈+++++++                 ++++++
+÷+÷÷÷++÷÷+++  ÷+÷÷÷+÷÷+++++                    ++++       +++++
+÷+÷++÷÷+÷++÷  +÷+÷+÷+++++++++              ÷+++++++++     +++++
+÷++++÷++÷÷+  ≈÷÷÷÷÷++++++++++++++++≈≈÷++++++++++++++≈     +++++
+÷÷÷÷÷÷++++   ++÷+÷++++++        ≈++++++++++++++++++≈      +++++
++++++++÷+≈  ÷++++++++               ++++++++++++++       ++++++
++++++++++   ++++++++                     ÷+++÷÷         +++++++
+++++++++÷  ≈+++++++       +++++÷             ÷        ≈++++++++
+++++++++   +++++++      +++++++++++≈                +++++++++++
++++÷++++   +++++++      ++++++++++++++++÷÷     ≈÷++++++++++++++
++++++++    ++++÷++÷      ++++++++++++++++++++++++++++++++++++++
++++++++    +++++÷++÷       ÷+++++++++++++++++++++++++++++++++++
++++++++   ≈++++++++++          ≈÷÷+++÷÷÷÷            ++++++++++
+++++++++   ++++++++++++≈                                +++++++
+++++++++≈   ÷++++++++++++÷                                +++++
+++++++++++    +++++++++++÷÷++++÷+÷+÷++++++++++++++++++     ++++
++++++++++++    ≈+++÷÷++++++++++++++++++++++++++++++++++    ++++
+++++++++++++÷    ++++++++++++++++++++++++++++++++++++++    ++++
+++++++++++++++    ++++++++++++++++++÷         +++++++     ÷++++
++++++++++++++++   ÷+++++++++++++++≈                      ++++++
+++++++++++++++++   ≈+++++++++++++     ++++++           ++++++++
++++++++++++++++++    +++++++++++    ≈++++++++++++++++++++++++++
+++++++++++++++++++     ÷++++++≈     +++++++++++++++++++++++++++
++++++++++++++++++++≈              ÷++++++++++++++++++++++++++++
+++++÷++++++÷+++++÷++++          +++++++++++++++++++++++++++++++
+÷+÷+÷÷÷÷+÷+÷÷++÷÷÷÷++++++++++++++++++++++++++++++++++++++++++++
+```
+Alt: https://pdimagearchive.org/images/6bccf45f-787d-488c-a37a-db49d858add9/
