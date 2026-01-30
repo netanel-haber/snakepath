@@ -10,6 +10,7 @@
 cpython_tests.test_pathlib.CompatiblePathTest.test_truediv
 
 # PathSubclassTest - filesystem operations
+cpython_tests.test_pathlib.PathSubclassTest.test_hardlink_to
 cpython_tests.test_pathlib.PathSubclassTest.test_absolute_common
 cpython_tests.test_pathlib.PathSubclassTest.test_cwd
 cpython_tests.test_pathlib.PathSubclassTest.test_empty_path
@@ -69,6 +70,7 @@ cpython_tests.test_pathlib.PathSubclassTest.test_with_segments
 cpython_tests.test_pathlib.PathSubclassTest.test_write_text_with_newlines
 
 # PathTest - filesystem operations
+cpython_tests.test_pathlib.PathTest.test_hardlink_to
 cpython_tests.test_pathlib.PathTest.test_absolute_common
 cpython_tests.test_pathlib.PathTest.test_concrete_class
 cpython_tests.test_pathlib.PathTest.test_cwd

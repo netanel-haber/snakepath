@@ -25,6 +25,8 @@ cpython_tests.test_pathlib.PosixPathAsPureTest.test_with_stem_common
 cpython_tests.test_pathlib.PosixPathAsPureTest.test_with_suffix_common
 
 # PosixPathTest - concrete POSIX path filesystem tests
+cpython_tests.test_pathlib.PosixPathTest.test_hardlink_to
+cpython_tests.test_pathlib.PosixPathTest.test_expanduser
 cpython_tests.test_pathlib.PosixPathTest.test_absolute
 cpython_tests.test_pathlib.PosixPathTest.test_absolute_common
 cpython_tests.test_pathlib.PosixPathTest.test_cwd
