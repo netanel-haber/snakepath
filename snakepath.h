@@ -221,6 +221,7 @@ struct sp_fluent_ {
     SpStr (*drive)(void); SpStr (*root)(void); SpStr (*anchor)(void);
     const char *(*str)(void);
     bool (*is_absolute)(void);
+    bool (*is_relative_to)(const SpPath *);
     struct sp_fluent_ (*parent)(void);
     struct sp_fluent_ (*join)(const char *);
     struct sp_fluent_ (*with_name)(const char *);
@@ -1760,6 +1761,7 @@ static SpStr sp_priv_f_root_(void);
 static SpStr sp_priv_f_anchor_(void);
 static const char *sp_priv_f_str_(void);
 static bool sp_priv_f_is_absolute_(void);
+static bool sp_priv_f_is_relative_to_(const SpPath *other);
 
 /* Forward declarations - chainable */
 static struct sp_fluent_ sp_priv_f_parent_(void);
@@ -1812,6 +1814,10 @@ static bool sp_priv_f_is_absolute_(void) {
     sp_priv_f_ctx_active = false;
     return sp_is_absolute(&sp_priv_f_ctx);
 }
+static bool sp_priv_f_is_relative_to_(const SpPath *other) {
+    sp_priv_f_ctx_active = false;
+    return sp_is_relative_to(&sp_priv_f_ctx, other);
+}
 
 /* Helper to create fluent struct with current context */
 static struct sp_fluent_ sp_priv_f_make_(void) {
@@ -1828,6 +1834,7 @@ static struct sp_fluent_ sp_priv_f_make_(void) {
         .anchor = sp_priv_f_anchor_,
         .str = sp_priv_f_str_,
         .is_absolute = sp_priv_f_is_absolute_,
+        .is_relative_to = sp_priv_f_is_relative_to_,
         /* Chainable */
         .parent = sp_priv_f_parent_,
         .join = sp_priv_f_join_,
