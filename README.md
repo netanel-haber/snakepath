@@ -1,19 +1,6 @@
 snakepath
 
-vibe slopcoding experiment: C99 STB style ~port of Python's standard pathlib module. Use at your own peril, assume a human hasn't reviewed any of this. Built with Claude Code and Cursor, with opus 4.5
-
-C99 header-only pathlib library. POSIX + Windows. No malloc.
-
-A pure-computation path manipulation library inspired by Python's `pathlib`. Provides all the path parsing, joining, and manipulation features without any filesystem I/O.
-
-## Features
-
-- **Header-only**: Single file, STB-style library
-- **No allocations**: Fixed-size buffers, no malloc/free
-- **Cross-platform**: POSIX and Windows path semantics
-- **Two APIs**: 
-  - **Boring API**: Traditional C functions (`sp_parent(&p)`)
-  - **Fluent API**: Python-like chaining (`SPF("a/b").parent().name()`)
+C99 header-only pathlib library. POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor.
 
 ## Quick Start
 
@@ -28,7 +15,7 @@ SpPath parent = sp_parent(&p); // "a/b"
 
 // Fluent API (define SNAKEPATH_FLUENT)
 #define SNAKEPATH_FLUENT
-const char *n = SPF_P("/a/b/c.txt").parent().name().data; // "b"
+const char *n = SPF_P("/a/b/c.txt")->parent()->name().data; // "b"
 ```
 
 ## Build
@@ -56,7 +43,6 @@ tests/                   # All tests
       __init__.py        # Thin ctypes wrapper over C library
     snakepath_lib.c      # FFI wrapper for Python bindings
     run_cpython_tests.py # Runs CPython's pathlib test suite against snakepath
-    skip.txt             # Exact list of tests to skip (unimplemented features)
 ```
 
 ## Boring API
@@ -179,7 +165,6 @@ Define before including:
 
 ```c
 #define SP_PATH_MAX 4096      // Max path length
-#define SP_MAX_PARTS 256      // Max path components
 #define SP_MAX_SUFFIXES 16    // Max file extensions
 ```
 
@@ -224,7 +209,7 @@ python tests/python_harness/run_cpython_tests.py
 ```
 
 - Test runner: [`tests/python_harness/run_cpython_tests.py`](tests/python_harness/run_cpython_tests.py)
-- Skip list: [`tests/python_harness/skip.txt`](tests/python_harness/skip.txt) - exact tests to skip for unimplemented features
+- Expected failures: Defined as `EXPECTED_FAILURES` dict in the test runner for unimplemented features
 
 ## Gotchas
 
@@ -268,131 +253,38 @@ Python behaves identically:
 
 If you only want the final extension, use `sp_suffix()` which returns just `.gz`.
 
-## Code Style
+## Pathlib Mapping
 
-- `sp_` prefix for public API
-- `sp_priv_` prefix for internal helpers
-- `SpPath`, `SpStr` structs (CamelCase)
-- `SP_FLAVOR_*`, `SP_PATH_MAX` constants (SCREAMING_CASE)
-- C99 compatible, no C11/C++ features in core library
-- `-Wall -Wextra -Wpedantic -Werror`
+| Python | Boring API | Fluent |
+|--------|-----------|--------|
+| `.parts` | `sp_parts_begin/next()` | - |
+| `.drive` | `sp_drive()` | `.drive()` |
+| `.root` | `sp_root()` | `.root()` |
+| `.anchor` | `sp_anchor()` | `.anchor()` |
+| `.parents` | `sp_parents_begin/next()` | - |
+| `.parent` | `sp_parent()` | `.parent()` |
+| `.name` | `sp_name()` | `.name()` |
+| `.suffix` | `sp_suffix()` | `.suffix()` |
+| `.suffixes` | `sp_suffixes()` | `.suffixes()` |
+| `.stem` | `sp_stem()` | `.stem()` |
+| `.as_posix()` | `sp_as_posix()` | - |
+| `.is_absolute()` | `sp_is_absolute()` | `.is_absolute()` |
+| `.is_relative_to()` | `sp_is_relative_to()` | `.is_relative_to()` |
+| `.joinpath()` | `sp_join_one()` | `.join()` |
+| `.match()` | `sp_match()` | - |
+| `.relative_to()` | `sp_relative_to()` | `.relative_to()` |
+| `.with_name()` | `sp_with_name()` | `.with_name()` |
+| `.with_stem()` | `sp_with_stem()` | `.with_stem()` |
+| `.with_suffix()` | `sp_with_suffix()` | `.with_suffix()` |
+| `/` operator | `sp_join_one()` | `.join()` |
+| `str(p)` | `sp_str()` | `.str()` |
+| `==` | `sp_path_eq()` | - |
+| `.absolute()` | `sp_absolute()` | `.absolute()` |
+| `.as_uri()` | `sp_as_uri()` | - |
+| `Path.cwd()` | `sp_cwd()` | - |
 
----
-
-# Pathlib Functionality Checklist
-
-Complete mapping of Python's pathlib to snakepath. Use status markers to track implementation progress.
-
-## Status Key
-
-| Status | Meaning |
-|--------|---------|
-| `BORING_DONE` | Implemented in boring API (`sp_*` functions) |
-| `FLUENT_DONE` | Implemented in fluent API |
-| `FLUENT_TODO` | Needs fluent API wrapper |
-| `NOT_PLANNED` | Out of scope (I/O, platform-specific) |
-| `TODO` | Not yet implemented anywhere |
-
----
-
-## Pure Path Properties (No I/O)
-
-| Python | Boring API | Fluent API | Status |
-|--------|-----------|------------|--------|
-| `PurePath.parts` | `sp_parts_begin()` / `sp_parts_next()` | - | BORING_DONE, FLUENT_TODO |
-| `PurePath.drive` | `sp_drive()` | `.drive()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.root` | `sp_root()` | `.root()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.anchor` | `sp_anchor()` | `.anchor()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.parents` | `sp_parents_begin()` / `sp_parents_next()` | - | BORING_DONE, FLUENT_TODO |
-| `PurePath.parent` | `sp_parent()` | `.parent()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.name` | `sp_name()` | `.name()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.suffix` | `sp_suffix()` | `.suffix()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.suffixes` | `sp_suffixes()` | `.suffixes()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.stem` | `sp_stem()` | `.stem()` | BORING_DONE, FLUENT_DONE |
-
----
-
-## Pure Path Methods (No I/O)
-
-| Python | Boring API | Fluent API | Status |
-|--------|-----------|------------|--------|
-| `PurePath.as_posix()` | `sp_as_posix()` | - | BORING_DONE, FLUENT_TODO |
-| `PurePath.is_absolute()` | `sp_is_absolute()` | `.is_absolute()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.is_relative_to()` | `sp_is_relative_to()` | `.is_relative_to()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.joinpath()` | `sp_joinpath()` / `sp_join_one()` | `.join()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.match()` | - | - | NOT_PLANNED |
-| `PurePath.full_match()` | - | - | NOT_PLANNED |
-| `PurePath.relative_to()` | `sp_relative_to()` | `.relative_to()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.with_name()` | `sp_with_name()` | `.with_name()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.with_stem()` | `sp_with_stem()` | `.with_stem()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.with_suffix()` | `sp_with_suffix()` | `.with_suffix()` | BORING_DONE, FLUENT_DONE |
-| `PurePath.with_segments()` | - | - | NOT_PLANNED |
-| `/` operator | `sp_join_one()` | `.join()` | BORING_DONE, FLUENT_DONE |
-| `str(p)` | `sp_str()` | `.str()` | BORING_DONE, FLUENT_DONE |
-| `==` comparison | `sp_path_eq()` | - | BORING_DONE, FLUENT_TODO |
-
----
-
-## Concrete Path Methods (I/O) - NOT IMPLEMENTED
-
-These require filesystem access and are out of scope for this pure-computation library.
-
-| Python | Status | Notes |
-|--------|--------|-------|
-| `Path.cwd()` | NOT_PLANNED | Requires `getcwd()` |
-| `Path.home()` | NOT_PLANNED | Requires `getenv()`/`getpwuid()` |
-| `Path.stat()` | NOT_PLANNED | Requires `stat()` |
-| `Path.chmod()` | NOT_PLANNED | Requires `chmod()` |
-| `Path.exists()` | NOT_PLANNED | Requires `stat()` |
-| `Path.expanduser()` | NOT_PLANNED | Requires `getenv()`/`getpwuid()` |
-| `Path.glob()` | NOT_PLANNED | Requires `opendir()`/`readdir()` |
-| `Path.rglob()` | NOT_PLANNED | Requires recursive dir scan |
-| `Path.group()` | NOT_PLANNED | Requires `getgrgid()` |
-| `Path.is_dir()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_file()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_mount()` | NOT_PLANNED | Requires `statvfs()` |
-| `Path.is_symlink()` | NOT_PLANNED | Requires `lstat()` |
-| `Path.is_socket()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_fifo()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_block_device()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_char_device()` | NOT_PLANNED | Requires `stat()` |
-| `Path.is_junction()` | NOT_PLANNED | Windows-specific |
-| `Path.iterdir()` | NOT_PLANNED | Requires `opendir()`/`readdir()` |
-| `Path.walk()` | NOT_PLANNED | Requires recursive dir scan |
-| `Path.lchmod()` | NOT_PLANNED | Requires `lchmod()` |
-| `Path.lstat()` | NOT_PLANNED | Requires `lstat()` |
-| `Path.mkdir()` | NOT_PLANNED | Requires `mkdir()` |
-| `Path.open()` | NOT_PLANNED | Requires `fopen()` |
-| `Path.owner()` | NOT_PLANNED | Requires `getpwuid()` |
-| `Path.read_bytes()` | NOT_PLANNED | Requires `fread()` |
-| `Path.read_text()` | NOT_PLANNED | Requires `fread()` |
-| `Path.readlink()` | NOT_PLANNED | Requires `readlink()` |
-| `Path.rename()` | NOT_PLANNED | Requires `rename()` |
-| `Path.replace()` | NOT_PLANNED | Requires `rename()` |
-| `Path.absolute()` | NOT_PLANNED | Requires `getcwd()` |
-| `Path.resolve()` | NOT_PLANNED | Requires `realpath()` |
-| `Path.rmdir()` | NOT_PLANNED | Requires `rmdir()` |
-| `Path.samefile()` | NOT_PLANNED | Requires `stat()` |
-| `Path.symlink_to()` | NOT_PLANNED | Requires `symlink()` |
-| `Path.hardlink_to()` | NOT_PLANNED | Requires `link()` |
-| `Path.touch()` | NOT_PLANNED | Requires `utime()`/`creat()` |
-| `Path.unlink()` | NOT_PLANNED | Requires `unlink()` |
-| `Path.write_bytes()` | NOT_PLANNED | Requires `fwrite()` |
-| `Path.write_text()` | NOT_PLANNED | Requires `fwrite()` |
-| `Path.copy()` | NOT_PLANNED | Requires file copy |
-| `Path.copy_into()` | NOT_PLANNED | Requires file copy |
-| `Path.move()` | NOT_PLANNED | Requires `rename()`/copy |
-| `Path.move_into()` | NOT_PLANNED | Requires `rename()`/copy |
-| `Path.as_uri()` | NOT_PLANNED | URI encoding |
-| `Path.from_uri()` | NOT_PLANNED | URI parsing |
-
----
-
-## Test Targets
-
-**Linux**: `test_gcc`, `test_clang`, `test_gcc_san`, `test_clang_san`, `test_gpp`, `test_clangpp` + valgrind
-**Windows**: `test_msvc.exe`, `test_msvc_cpp.exe`
+**Not implemented:** All I/O methods (`stat`, `exists`, `mkdir`, `read_*`, `write_*`, `glob`, etc.)
 
 ## License
 
-Public domain / MIT (choose whichever works for your project).
+MIT
