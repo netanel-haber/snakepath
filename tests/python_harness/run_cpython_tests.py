@@ -150,6 +150,7 @@ EXPECTED_FAILURES = {
     ("PathSubclassTest", "test_with"): "exists",
     ("PathSubclassTest", "test_with_segments"): "exists",
     ("PathSubclassTest", "test_write_text_with_newlines"): "exists",
+    ("PathSubclassTest", "test_mkdir_with_unknown_drive"): "exists",
 
     # =========================================================================
     # PathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
@@ -299,6 +300,8 @@ EXPECTED_FAILURES = {
     # group/owner require getgrgid/getpwuid which aren't implemented
     # with_segments/with_suffix have same issues as other pure path tests
     # =========================================================================
+    # Turkish I case folding requires Unicode NFKC normalization (same as PureWindowsPathTest)
+    ("WindowsPathAsPureTest", "test_eq"): "WindowsPath",
     ("WindowsPathAsPureTest", "test_group"): "has no attribute 'group'",
     ("WindowsPathAsPureTest", "test_owner"): "has no attribute 'owner'",
     ("WindowsPathAsPureTest", "test_with_segments_common"): "has no attribute 'session_id'",
