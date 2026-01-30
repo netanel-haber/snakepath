@@ -9,6 +9,7 @@
 #ifndef SNAKEPATH_H
 #define SNAKEPATH_H
 
+#include <assert.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -64,6 +65,17 @@ typedef enum {
     SP_FLAVOR_POSIX,
     SP_FLAVOR_WINDOWS
 } SpFlavor;
+
+/* Assertion macros for runtime invariant checking */
+#define SP_ASSERT_PATH(p) assert((p) != NULL && "path pointer must not be NULL")
+#define SP_ASSERT_FLAVOR(f) assert(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
+#define SP_ASSERT_PATH_INVARIANT(p) do { \
+    SP_ASSERT_PATH(p); \
+    assert((p)->len > 0 && "path must not be empty"); \
+    assert((p)->len < SP_PATH_MAX && "path length exceeds buffer size"); \
+    assert((p)->buf[(p)->len] == '\0' && "path buffer not null-terminated"); \
+    SP_ASSERT_FLAVOR((p)->flavor); \
+} while(0)
 
 /* String view - non-owning slice */
 typedef struct {
@@ -156,13 +168,16 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other);
 
 bool sp_is_absolute(const SpPath *p);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
-bool sp_is_empty(const SpPath *p);
 
 /* ============ Helper Functions ============ */
 static inline bool sp_sv_eq(SpStr a, SpStr b) {
+    assert((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert((b.len == 0 || b.data != NULL) && "SpStr with non-zero len must have valid data");
     return a.len == b.len && memcmp(a.data, b.data, a.len) == 0;
 }
 static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
+    assert((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert(b != NULL && "string pointer must not be NULL");
     size_t blen = strlen(b);
     return a.len == blen && memcmp(a.data, b, a.len) == 0;
 }
@@ -346,6 +361,7 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
 }
 
 SpPath sp_path_new(const char *s, SpPathOpts opts) {
+    SP_ASSERT_FLAVOR(opts.flavor);
     SpPath p = SP_PRIV_ZERO;
     p.flavor = opts.flavor;
     if (s) {
@@ -355,10 +371,18 @@ SpPath sp_path_new(const char *s, SpPathOpts opts) {
         p.buf[p.len] = '\0';
         sp_priv_normalize(p.buf, &p.len, p.flavor);
     }
+    /* Normalize empty path to "." (matches Python pathlib behavior) */
+    if (p.len == 0) {
+        p.buf[0] = '.';
+        p.buf[1] = '\0';
+        p.len = 1;
+    }
     return p;
 }
 
 SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
+    SP_ASSERT_FLAVOR(flavor);
+    assert((sv.len == 0 || sv.data != NULL) && "SpStr with non-zero len must have valid data");
     SpPath p = SP_PRIV_ZERO;
     p.flavor = flavor;
     p.len = sv.len;
@@ -368,23 +392,35 @@ SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
     }
     p.buf[p.len] = '\0';
     sp_priv_normalize(p.buf, &p.len, p.flavor);
+    /* Normalize empty path to "." (matches Python pathlib behavior) */
+    if (p.len == 0) {
+        p.buf[0] = '.';
+        p.buf[1] = '\0';
+        p.len = 1;
+    }
     return p;
 }
 
 SpPath sp_path_copy(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpPath r = *p;
     return r;
 }
 
 const char *sp_str(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     return p->buf;
 }
 
 SpStr sp_as_sv(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     return SP_PRIV_STR(p->buf, p->len);
 }
 
 void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    assert(out != NULL && "output buffer must not be NULL");
+    assert(out_size > 0 && "output buffer size must be positive");
     size_t i;
     size_t n = p->len < out_size - 1 ? p->len : out_size - 1;
     for (i = 0; i < n; i++) {
@@ -394,27 +430,34 @@ void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
 }
 
 SpStr sp_drive(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     size_t dlen = sp_priv_drive_len(p->buf, p->len, p->flavor);
+    assert(dlen <= p->len && "drive length must not exceed path length");
     return SP_PRIV_STR(p->buf, dlen);
 }
 
 SpStr sp_root(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     size_t start = sp_priv_drive_len(p->buf, p->len, p->flavor);
     size_t rlen = sp_priv_root_len(p->buf, p->len, p->flavor);
+    assert(start + rlen <= p->len && "root must not exceed path bounds");
     return SP_PRIV_STR(p->buf + start, rlen);
 }
 
 SpStr sp_anchor(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     size_t alen = sp_priv_anchor_len(p->buf, p->len, p->flavor);
+    assert(alen <= p->len && "anchor length must not exceed path length");
     return SP_PRIV_STR(p->buf, alen);
 }
 
 SpStr sp_name(const SpPath *p) {
-    if (p->len == 0) return SP_PRIV_STR(p->buf, 0);
+    SP_ASSERT_PATH_INVARIANT(p);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (anchor == p->len) return SP_PRIV_STR(p->buf + p->len, 0);
     size_t i = p->len;
     while (i > anchor && !sp_priv_is_sep(p->buf[i-1], p->flavor)) i--;
+    assert(i <= p->len && "name start position must be within bounds");
     return SP_PRIV_STR(p->buf + i, p->len - i);
 }
 
@@ -435,6 +478,7 @@ SpStr sp_stem(const SpPath *p) {
 }
 
 SpSuffixes sp_suffixes(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpSuffixes r = SP_PRIV_ZERO;
     SpStr name = sp_name(p);
     if (name.len == 0) return r;
@@ -455,10 +499,12 @@ SpSuffixes sp_suffixes(const SpPath *p) {
             break;
         }
     }
+    assert(r.count <= SP_MAX_SUFFIXES && "suffixes count must not exceed maximum");
     return r;
 }
 
 SpPath sp_parent(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (p->len <= anchor) return sp_path_copy(p);
     size_t i = p->len;
@@ -468,6 +514,7 @@ SpPath sp_parent(const SpPath *p) {
         return sp_path_new(".", SP_PRIV_OPTS(p->flavor));
     }
     if (i <= anchor) i = anchor;
+    assert(i < SP_PATH_MAX && "parent length must be within bounds");
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
     r.len = i;
@@ -477,6 +524,7 @@ SpPath sp_parent(const SpPath *p) {
 }
 
 SpPartsIter sp_parts_begin(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpPartsIter it = SP_PRIV_ZERO;
     it.path = p;
     it.pos = 0;
@@ -486,6 +534,10 @@ SpPartsIter sp_parts_begin(const SpPath *p) {
 }
 
 bool sp_parts_next(SpPartsIter *it, SpStr *out) {
+    assert(it != NULL && "iterator must not be NULL");
+    assert(it->path != NULL && "iterator path must not be NULL");
+    assert(out != NULL && "output SpStr must not be NULL");
+    assert(it->pos <= it->path->len && "iterator position must be within bounds");
     const SpPath *p = it->path;
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (it->include_anchor && !it->anchor_done) {
@@ -503,12 +555,14 @@ bool sp_parts_next(SpPartsIter *it, SpStr *out) {
     while (it->pos < p->len && !sp_priv_is_sep(p->buf[it->pos], p->flavor)) {
         it->pos++;
     }
+    assert(start < it->pos && "part must have non-zero length");
     out->data = p->buf + start;
     out->len = it->pos - start;
     return true;
 }
 
 size_t sp_parts_count(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpPartsIter it = sp_parts_begin(p);
     SpStr part;
     size_t count = 0;
@@ -517,6 +571,7 @@ size_t sp_parts_count(const SpPath *p) {
 }
 
 SpParentsIter sp_parents_begin(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpParentsIter it = SP_PRIV_ZERO;
     it.current = sp_parent(p);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
@@ -525,6 +580,8 @@ SpParentsIter sp_parents_begin(const SpPath *p) {
 }
 
 bool sp_parents_next(SpParentsIter *it, SpPath *out) {
+    assert(it != NULL && "iterator must not be NULL");
+    assert(out != NULL && "output path must not be NULL");
     if (it->done) return false;
     *out = it->current;
     SpPath next = sp_parent(&it->current);
@@ -537,6 +594,7 @@ bool sp_parents_next(SpParentsIter *it, SpPath *out) {
 }
 
 SpPath sp_join_one(const SpPath *base, const char *other) {
+    SP_ASSERT_PATH_INVARIANT(base);
     if (!other || !*other) return sp_path_copy(base);
     size_t olen = strlen(other);
     SpFlavor flavor = base->flavor;
@@ -605,6 +663,8 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
 }
 
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
+    SP_ASSERT_PATH_INVARIANT(base);
+    assert(parts != NULL && "parts array must not be NULL");
     SpPath r = sp_path_copy(base);
     for (size_t i = 0; parts[i] != NULL; i++) {
         r = sp_join_one(&r, parts[i]);
@@ -613,15 +673,21 @@ SpPath sp_join_impl(const SpPath *base, const char **parts) {
 }
 
 SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(base);
+    SP_ASSERT_PATH_INVARIANT(other);
     return sp_join_one(base, other->buf);
 }
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    assert(name != NULL && "name must not be NULL");
     SpPath parent = sp_parent(p);
     return sp_join_one(&parent, name);
 }
 
 SpPath sp_with_stem(const SpPath *p, const char *stem) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    assert(stem != NULL && "stem must not be NULL");
     SpStr suffix = sp_suffix(p);
     char name[SP_PATH_MAX];
     size_t slen = strlen(stem);
@@ -635,18 +701,23 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
 }
 
 SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    assert(suffix != NULL && "suffix must not be NULL");
     SpStr stem = sp_stem(p);
     char name[SP_PATH_MAX];
     size_t suflen = strlen(suffix);
     size_t stemlen = stem.len;
     if (stemlen + suflen >= SP_PATH_MAX) stemlen = SP_PATH_MAX - suflen - 1;
-    memcpy(name, stem.data, stemlen);
+    if (stemlen > 0) {
+        memcpy(name, stem.data, stemlen);
+    }
     memcpy(name + stemlen, suffix, suflen);
     name[stemlen + suflen] = '\0';
     return sp_with_name(p, name);
 }
 
 bool sp_is_absolute(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpStr root = sp_root(p);
     if (root.len > 0) {
         if (sp_priv_is_windows_flavor(p->flavor)) {
@@ -658,6 +729,8 @@ bool sp_is_absolute(const SpPath *p) {
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
     SpPartsIter it_p = sp_parts_begin(p);
     SpPartsIter it_o = sp_parts_begin(other);
     SpStr part_p, part_o;
@@ -669,6 +742,8 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
 }
 
 SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
     if (!sp_is_relative_to(p, other)) {
         SpPath empty = SP_PRIV_ZERO;
         return empty;
@@ -683,6 +758,7 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
     r.flavor = p->flavor;
     bool first = true;
     while (sp_parts_next(&it_p, &part)) {
+        assert(part.data != NULL && "part data must be valid");
         if (!first) {
             if (r.len + 1 < SP_PATH_MAX) r.buf[r.len++] = sp_priv_sep(p->flavor);
         }
@@ -698,17 +774,17 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
         r.buf[1] = '\0';
         r.len = 1;
     }
+    assert(r.len < SP_PATH_MAX && "result length must be within bounds");
     return r;
 }
 
 bool sp_path_eq(const SpPath *a, const SpPath *b) {
+    SP_ASSERT_PATH_INVARIANT(a);
+    SP_ASSERT_PATH_INVARIANT(b);
     if (a->len != b->len) return false;
     return memcmp(a->buf, b->buf, a->len) == 0;
 }
 
-bool sp_is_empty(const SpPath *p) {
-    return p->len == 0;
-}
 
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
@@ -719,6 +795,9 @@ static SP_TLS char sp_priv_f_posix_buf[SP_PATH_MAX];
 
 /* Initialize the fluent context */
 void sp_fluent_init(SpPath p) {
+    assert(p.len < SP_PATH_MAX && "path length must be within bounds");
+    assert(p.buf[p.len] == '\0' && "path must be null-terminated");
+    SP_ASSERT_FLAVOR(p.flavor);
     sp_priv_f_ctx = p;
 }
 
@@ -730,24 +809,28 @@ static SpFluent sp_priv_f_parent(void) {
 }
 
 static SpFluent sp_priv_f_join(const char *s) {
+    assert(s != NULL && "join argument must not be NULL");
     sp_priv_f_ctx = sp_join_one(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_name(const char *s) {
+    assert(s != NULL && "name argument must not be NULL");
     sp_priv_f_ctx = sp_with_name(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_stem(const char *s) {
+    assert(s != NULL && "stem argument must not be NULL");
     sp_priv_f_ctx = sp_with_stem(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_suffix(const char *s) {
+    assert(s != NULL && "suffix argument must not be NULL");
     sp_priv_f_ctx = sp_with_suffix(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
@@ -800,10 +883,12 @@ static bool sp_priv_f_is_absolute(void) {
 }
 
 static bool sp_priv_f_is_relative_to(const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(other);
     return sp_is_relative_to(&sp_priv_f_ctx, other);
 }
 
 static SpPath sp_priv_f_relative_to(const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(other);
     return sp_relative_to(&sp_priv_f_ctx, other);
 }
 

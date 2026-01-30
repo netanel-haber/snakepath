@@ -192,6 +192,25 @@ Define before including:
 
 ## Gotchas
 
+### Empty paths normalize to `"."`
+
+Like Python's pathlib, an empty path string normalizes to `"."` (current directory):
+
+```c
+SpPath p = sp_path("");
+printf("%s\n", sp_str(&p));  // prints "."
+```
+
+Python behaves identically ([docs](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath)):
+
+```python
+>>> from pathlib import PurePath
+>>> PurePath('')
+PurePosixPath('.')
+```
+
+This means paths can never be empty—the minimum valid path is `"."`.
+
 ### `sp_suffixes()` returns all dot-separated segments
 
 Like Python's `pathlib.Path.suffixes`, this function returns **all** segments after dots in the filename—not just "real" file extensions. This means version numbers get included:
