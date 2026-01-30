@@ -131,13 +131,13 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #include "snakepath.h"
 
 // Path('a/b/c').parent.name -> "b"
-SpStr name = SPF("a/b/c").parent().name();
+SpStr name = SPF("a/b/c")->parent()->name();
 
 // PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
-const char *s = SPF_P("/etc").join("init.d").join("apache2").str();
+const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
 
 // Get SpPath when you need it for further operations
-SpPath p = SPF_W("C:/Users").join("docs").path();
+SpPath p = SPF_W("C:/Users")->join("docs")->path();
 SpPath child = sp_join_one(&p, "file.txt");
 ```
 
@@ -151,19 +151,19 @@ SpPath child = sp_join_one(&p, "file.txt");
 
 ### Chainable
 
-`.parent()` `.join("x")` `.with_name("x")` `.with_stem("x")` `.with_suffix(".x")` `.absolute()` `.relative_to(&p)` `.relative_to_walk_up(&p)`
+`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
 
 ### Terminators
 
 | Method | Returns |
 |--------|---------|
-| `.path()` | `SpPath` |
-| `.str()` | `const char*` |
-| `.name()` `.stem()` `.suffix()` | `SpStr` |
-| `.drive()` `.root()` `.anchor()` | `SpStr` |
-| `.suffixes()` | `SpSuffixes` |
-| `.is_absolute()` | `bool` |
-| `.is_relative_to(&p)` | `bool` |
+| `->path()` | `SpPath` |
+| `->str()` | `const char*` |
+| `->name()` `->stem()` `->suffix()` | `SpStr` |
+| `->drive()` `->root()` `->anchor()` | `SpStr` |
+| `->suffixes()` | `SpSuffixes` |
+| `->is_absolute()` | `bool` |
+| `->is_relative_to(&p)` | `bool` |
 
 ## Core Types
 

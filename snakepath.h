@@ -215,6 +215,7 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
 
 typedef struct sp_fluent_ SpFluent_;
 struct sp_fluent_ {
+    /* Terminators - end chain and return value */
     SpPath (*path)(void);
     SpStr (*name)(void); SpStr (*stem)(void); SpStr (*suffix)(void);
     SpSuffixes (*suffixes)(void);
@@ -222,18 +223,19 @@ struct sp_fluent_ {
     const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
-    SpFluent_ (*parent)(void);
-    SpFluent_ (*join)(const char *);
-    SpFluent_ (*with_name)(const char *);
-    SpFluent_ (*with_stem)(const char *);
-    SpFluent_ (*with_suffix)(const char *);
-    SpFluent_ (*absolute)(void);
-    SpFluent_ (*relative_to)(const SpPath *);
-    SpFluent_ (*relative_to_walk_up)(const SpPath *);
+    /* Chainable - return pointer to avoid stack copies */
+    SpFluent_ *(*parent)(void);
+    SpFluent_ *(*join)(const char *);
+    SpFluent_ *(*with_name)(const char *);
+    SpFluent_ *(*with_stem)(const char *);
+    SpFluent_ *(*with_suffix)(const char *);
+    SpFluent_ *(*absolute)(void);
+    SpFluent_ *(*relative_to)(const SpPath *);
+    SpFluent_ *(*relative_to_walk_up)(const SpPath *);
 };
-SpFluent_ sp_fluent_init_(SpPath);
+SpFluent_ *sp_fluent_init_(SpPath);
 
-/* SPF("/a").join("b").parent().str() */
+/* SPF("/a")->join("b")->parent()->str() */
 #define SPF(s)   sp_fluent_init_(sp_path(s))
 #define SPF_P(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_POSIX))
 #define SPF_W(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_WINDOWS))
@@ -1760,15 +1762,15 @@ static const char *sp_priv_f_str_(void);
 static bool sp_priv_f_is_absolute_(void);
 static bool sp_priv_f_is_relative_to_(const SpPath *other);
 
-/* Forward declarations - chainable */
-static SpFluent_ sp_priv_f_parent_(void);
-static SpFluent_ sp_priv_f_join_(const char *s);
-static SpFluent_ sp_priv_f_with_name_(const char *s);
-static SpFluent_ sp_priv_f_with_stem_(const char *s);
-static SpFluent_ sp_priv_f_with_suffix_(const char *s);
-static SpFluent_ sp_priv_f_absolute_(void);
-static SpFluent_ sp_priv_f_relative_to_(const SpPath *other);
-static SpFluent_ sp_priv_f_relative_to_walk_up_(const SpPath *other);
+/* Forward declarations - chainable (return pointer to avoid stack copies) */
+static SpFluent_ *sp_priv_f_parent_(void);
+static SpFluent_ *sp_priv_f_join_(const char *s);
+static SpFluent_ *sp_priv_f_with_name_(const char *s);
+static SpFluent_ *sp_priv_f_with_stem_(const char *s);
+static SpFluent_ *sp_priv_f_with_suffix_(const char *s);
+static SpFluent_ *sp_priv_f_absolute_(void);
+static SpFluent_ *sp_priv_f_relative_to_(const SpPath *other);
+static SpFluent_ *sp_priv_f_relative_to_walk_up_(const SpPath *other);
 
 /* Terminator implementations - end chain and return value */
 static SpPath sp_priv_f_path_(void) {
@@ -1839,61 +1841,61 @@ static SpFluent_ sp_priv_f_instance = {
 
 
 /* Initialize the fluent context */
-SpFluent_ sp_fluent_init_(SpPath p) {
-    assert(!sp_priv_f_ctx_active && "fluent chain already active - did you forget to call .path()?");
+SpFluent_ *sp_fluent_init_(SpPath p) {
+    assert(!sp_priv_f_ctx_active && "fluent chain already active - did you forget to call ->path()?");
     assert(p.len < SP_PATH_MAX && "path length must be within bounds");
     assert(p.buf[p.len] == '\0' && "path must be null-terminated");
     SP_ASSERT_FLAVOR(p.flavor);
     sp_priv_f_ctx_active = true;
     sp_priv_f_ctx = p;
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-/* Chainable method implementations */
-static SpFluent_ sp_priv_f_parent_(void) {
+/* Chainable method implementations - return pointer to avoid MSVC stack overflow */
+static SpFluent_ *sp_priv_f_parent_(void) {
     sp_priv_f_ctx = sp_parent(&sp_priv_f_ctx);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_join_(const char *s) {
+static SpFluent_ *sp_priv_f_join_(const char *s) {
     assert(s != NULL && "join argument must not be NULL");
     sp_priv_f_ctx = sp_join_one(&sp_priv_f_ctx, s);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_with_name_(const char *s) {
+static SpFluent_ *sp_priv_f_with_name_(const char *s) {
     assert(s != NULL && "name argument must not be NULL");
     sp_priv_f_ctx = sp_with_name(&sp_priv_f_ctx, s);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_with_stem_(const char *s) {
+static SpFluent_ *sp_priv_f_with_stem_(const char *s) {
     assert(s != NULL && "stem argument must not be NULL");
     sp_priv_f_ctx = sp_with_stem(&sp_priv_f_ctx, s);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_with_suffix_(const char *s) {
+static SpFluent_ *sp_priv_f_with_suffix_(const char *s) {
     assert(s != NULL && "suffix argument must not be NULL");
     sp_priv_f_ctx = sp_with_suffix(&sp_priv_f_ctx, s);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_absolute_(void) {
+static SpFluent_ *sp_priv_f_absolute_(void) {
     sp_priv_f_ctx = sp_absolute(&sp_priv_f_ctx);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_relative_to_(const SpPath *other) {
+static SpFluent_ *sp_priv_f_relative_to_(const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(other);
     sp_priv_f_ctx = sp_relative_to(&sp_priv_f_ctx, other);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
-static SpFluent_ sp_priv_f_relative_to_walk_up_(const SpPath *other) {
+static SpFluent_ *sp_priv_f_relative_to_walk_up_(const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(other);
     sp_priv_f_ctx = sp_relative_to_walk_up(&sp_priv_f_ctx, other);
-    return sp_priv_f_instance;
+    return &sp_priv_f_instance;
 }
 
 #endif /* SNAKEPATH_FLUENT */

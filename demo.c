@@ -47,7 +47,7 @@ int main(void) {
         SpPath src = sp_path(repo_files[i]);
         if (!sp_sv_eq_cstr(sp_suffix(&src), ".h")) continue;
 
-        SpStr new_name = SPF(repo_files[i]).with_suffix(".hpp").name();
+        SpStr new_name = SPF(repo_files[i])->with_suffix(".hpp")->name();
         printf("  %s -> %.*s\n", repo_files[i], (int)new_name.len, new_name.data);
     }
 
@@ -90,11 +90,11 @@ int main(void) {
     printf("\n=== CHAINED TRANSFORMATIONS ===\n\n");
 
     const char *result = SPF_P("/home/nhaber/snakepath/test.c")
-        .parent()
-        .join("build")
-        .join("release")
-        .with_name("libsnakepath.so")
-        .str();
+        ->parent()
+        ->join("build")
+        ->join("release")
+        ->with_name("libsnakepath.so")
+        ->str();
 
     printf("  %s\n", result);
 
