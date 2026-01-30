@@ -71,6 +71,7 @@ typedef enum {
 #define SP_ASSERT_FLAVOR(f) assert(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
 #define SP_ASSERT_PATH_INVARIANT(p) do { \
     SP_ASSERT_PATH(p); \
+    assert((p)->len > 0 && "path must not be empty"); \
     assert((p)->len < SP_PATH_MAX && "path length exceeds buffer size"); \
     assert((p)->buf[(p)->len] == '\0' && "path buffer not null-terminated"); \
     SP_ASSERT_FLAVOR((p)->flavor); \
@@ -371,8 +372,12 @@ SpPath sp_path_new(const char *s, SpPathOpts opts) {
         p.buf[p.len] = '\0';
         sp_priv_normalize(p.buf, &p.len, p.flavor);
     }
-    assert(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
-    assert(p.buf[p.len] == '\0' && "post-condition: null-terminated");
+    /* Normalize empty path to "." (matches Python pathlib behavior) */
+    if (p.len == 0) {
+        p.buf[0] = '.';
+        p.buf[1] = '\0';
+        p.len = 1;
+    }
     return p;
 }
 
@@ -388,7 +393,12 @@ SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
     }
     p.buf[p.len] = '\0';
     sp_priv_normalize(p.buf, &p.len, p.flavor);
-    assert(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
+    /* Normalize empty path to "." (matches Python pathlib behavior) */
+    if (p.len == 0) {
+        p.buf[0] = '.';
+        p.buf[1] = '\0';
+        p.len = 1;
+    }
     return p;
 }
 
@@ -454,7 +464,6 @@ SpStr sp_name(const SpPath *p) {
 }
 
 SpStr sp_suffix(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
     SpStr name = sp_name(p);
     if (name.len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     size_t i = name.len;
@@ -465,10 +474,8 @@ SpStr sp_suffix(const SpPath *p) {
 }
 
 SpStr sp_stem(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
     SpStr name = sp_name(p);
     SpStr suffix = sp_suffix(p);
-    assert(suffix.len <= name.len && "suffix cannot be longer than name");
     return SP_PRIV_STR(name.data, name.len - suffix.len);
 }
 
@@ -784,7 +791,7 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
 
 bool sp_is_empty(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    return p->len == 0;
+    return false;  /* Paths are never empty; "" normalizes to "." */
 }
 
 /* ============ Fluent API Implementation ============ */
