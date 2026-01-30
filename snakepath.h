@@ -1817,31 +1817,32 @@ static bool sp_priv_f_is_relative_to_(const SpPath *other) {
 }
 
 /* Helper to create fluent struct with current context */
+/* Note: Explicit assignment instead of compound literal for MSVC compatibility */
 static struct sp_fluent_ sp_priv_f_make_(void) {
-    return (struct sp_fluent_){
-        ._ = NULL,
-        /* Terminators */
-        .path = sp_priv_f_path_,
-        .name = sp_priv_f_name_,
-        .stem = sp_priv_f_stem_,
-        .suffix = sp_priv_f_suffix_,
-        .suffixes = sp_priv_f_suffixes_,
-        .drive = sp_priv_f_drive_,
-        .root = sp_priv_f_root_,
-        .anchor = sp_priv_f_anchor_,
-        .str = sp_priv_f_str_,
-        .is_absolute = sp_priv_f_is_absolute_,
-        .is_relative_to = sp_priv_f_is_relative_to_,
-        /* Chainable */
-        .parent = sp_priv_f_parent_,
-        .join = sp_priv_f_join_,
-        .with_name = sp_priv_f_with_name_,
-        .with_stem = sp_priv_f_with_stem_,
-        .with_suffix = sp_priv_f_with_suffix_,
-        .absolute = sp_priv_f_absolute_,
-        .relative_to = sp_priv_f_relative_to_,
-        .relative_to_walk_up = sp_priv_f_relative_to_walk_up_,
-    };
+    struct sp_fluent_ f;
+    f._ = NULL;
+    /* Terminators */
+    f.path = sp_priv_f_path_;
+    f.name = sp_priv_f_name_;
+    f.stem = sp_priv_f_stem_;
+    f.suffix = sp_priv_f_suffix_;
+    f.suffixes = sp_priv_f_suffixes_;
+    f.drive = sp_priv_f_drive_;
+    f.root = sp_priv_f_root_;
+    f.anchor = sp_priv_f_anchor_;
+    f.str = sp_priv_f_str_;
+    f.is_absolute = sp_priv_f_is_absolute_;
+    f.is_relative_to = sp_priv_f_is_relative_to_;
+    /* Chainable */
+    f.parent = sp_priv_f_parent_;
+    f.join = sp_priv_f_join_;
+    f.with_name = sp_priv_f_with_name_;
+    f.with_stem = sp_priv_f_with_stem_;
+    f.with_suffix = sp_priv_f_with_suffix_;
+    f.absolute = sp_priv_f_absolute_;
+    f.relative_to = sp_priv_f_relative_to_;
+    f.relative_to_walk_up = sp_priv_f_relative_to_walk_up_;
+    return f;
 }
 
 /* Initialize the fluent context */
