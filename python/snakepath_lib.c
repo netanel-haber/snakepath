@@ -51,6 +51,11 @@ WRAP_PATH_CSTR(join_one)
 /* Path + Path -> Path */
 WRAP_PATH_PATH(joinpath)
 WRAP_PATH_PATH(relative_to)
+WRAP_PATH_PATH(relative_to_walk_up)
+
+SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
+    return sp_relative_to_is_error(p) ? 1 : 0;
+}
 
 /* Path -> bool */
 WRAP_BOOL_UNARY(is_absolute)
@@ -58,6 +63,14 @@ WRAP_BOOL_UNARY(is_absolute)
 /* Path + Path -> bool */
 WRAP_BOOL_BINARY(is_relative_to)
 WRAP_BOOL_BINARY(path_eq)
+
+/* Additional functions */
+SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
+SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
+SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern) { return sp_match(p, pattern); }
+SP_EXPORT int sp_is_reserved_wrap(const SpPath *p) { return sp_is_reserved(p) ? 1 : 0; }
+SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
+SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
 
 /* Special cases */
 
@@ -93,3 +106,13 @@ SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
 SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
 SP_EXPORT size_t sp_path_max(void) { return SP_PATH_MAX; }
 SP_EXPORT size_t sp_max_suffixes(void) { return SP_MAX_SUFFIXES; }
+
+/* Error codes */
+SP_EXPORT int sp_err_none(void) { return SP_ERR_NONE; }
+SP_EXPORT int sp_err_not_relative(void) { return SP_ERR_NOT_RELATIVE; }
+SP_EXPORT int sp_err_no_name(void) { return SP_ERR_NO_NAME; }
+SP_EXPORT int sp_err_invalid_arg(void) { return SP_ERR_INVALID_ARG; }
+SP_EXPORT int sp_match_yes(void) { return SP_MATCH_YES; }
+SP_EXPORT int sp_match_no(void) { return SP_MATCH_NO; }
+SP_EXPORT int sp_match_err_empty(void) { return SP_MATCH_ERR_EMPTY; }
+SP_EXPORT int sp_match_err_invalid(void) { return SP_MATCH_ERR_INVALID; }

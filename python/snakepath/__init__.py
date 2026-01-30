@@ -37,6 +37,16 @@ SP_FLAVOR_NATIVE = 0
 SP_FLAVOR_POSIX = 1
 SP_FLAVOR_WINDOWS = 2
 
+# Error codes (from C library)
+SP_ERR_NONE = _lib.sp_err_none()
+SP_ERR_NOT_RELATIVE = _lib.sp_err_not_relative()
+SP_ERR_NO_NAME = _lib.sp_err_no_name()
+SP_ERR_INVALID_ARG = _lib.sp_err_invalid_arg()
+SP_MATCH_YES = _lib.sp_match_yes()
+SP_MATCH_NO = _lib.sp_match_no()
+SP_MATCH_ERR_EMPTY = _lib.sp_match_err_empty()
+SP_MATCH_ERR_INVALID = _lib.sp_match_err_invalid()
+
 
 class _SpPath(Structure):
     """C SpPath structure"""
@@ -128,6 +138,12 @@ _lib.sp_with_suffix_wrap.restype = None
 _lib.sp_relative_to_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_relative_to_wrap.restype = None
 
+_lib.sp_relative_to_walk_up_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
+_lib.sp_relative_to_walk_up_wrap.restype = None
+
+_lib.sp_relative_to_is_error_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_relative_to_is_error_wrap.restype = c_int
+
 _lib.sp_is_relative_to_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_is_relative_to_wrap.restype = c_int
 
@@ -136,6 +152,24 @@ _lib.sp_is_absolute_wrap.restype = c_int
 
 _lib.sp_path_eq_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_path_eq_wrap.restype = c_int
+
+_lib.sp_path_cmp_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
+_lib.sp_path_cmp_wrap.restype = c_int
+
+_lib.sp_path_hash_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_path_hash_wrap.restype = ctypes.c_ulong
+
+_lib.sp_match_wrap.argtypes = [POINTER(_SpPath), c_char_p]
+_lib.sp_match_wrap.restype = c_int
+
+_lib.sp_is_reserved_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_reserved_wrap.restype = c_int
+
+_lib.sp_path_is_error_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_path_is_error_wrap.restype = c_int
+
+_lib.sp_path_error_code_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_path_error_code_wrap.restype = c_int
 
 _lib.sp_as_posix_wrap.argtypes = [POINTER(_SpPath), c_char_p, c_size_t]
 _lib.sp_as_posix_wrap.restype = None
@@ -199,6 +233,8 @@ class PurePath:
 
     __slots__ = ('_sp',)
     _flavor = SP_FLAVOR_NATIVE
+    # Native parser (posixpath on Unix, ntpath on Windows)
+    parser = __import__('posixpath') if os.name != 'nt' else __import__('ntpath')
 
     def __new__(cls, *args):
         if cls is PurePath:
@@ -210,7 +246,7 @@ class PurePath:
         self._sp = _SpPath()
 
         if not args:
-            path_str = b'.'
+            path_str = b''
         elif len(args) == 1:
             arg = args[0]
             if isinstance(arg, PurePath):
@@ -239,7 +275,7 @@ class PurePath:
         return _decode(_lib.sp_str_wrap(byref(self._sp)))
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({str(self)!r})"
+        return f"{self.__class__.__name__}({self.as_posix()!r})"
 
     def __fspath__(self):
         return str(self)
@@ -253,27 +289,27 @@ class PurePath:
         return bool(_lib.sp_path_eq_wrap(byref(self._sp), byref(other._sp)))
 
     def __hash__(self):
-        return hash(str(self))
+        return _lib.sp_path_hash_wrap(byref(self._sp))
 
     def __lt__(self, other):
         if not isinstance(other, PurePath):
             return NotImplemented
-        return str(self) < str(other)
+        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) < 0
 
     def __le__(self, other):
         if not isinstance(other, PurePath):
             return NotImplemented
-        return str(self) <= str(other)
+        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) <= 0
 
     def __gt__(self, other):
         if not isinstance(other, PurePath):
             return NotImplemented
-        return str(self) > str(other)
+        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) > 0
 
     def __ge__(self, other):
         if not isinstance(other, PurePath):
             return NotImplemented
-        return str(self) >= str(other)
+        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
 
     def __truediv__(self, other):
         return self.joinpath(other)
@@ -357,18 +393,29 @@ class PurePath:
         return bool(_lib.sp_is_absolute_wrap(byref(self._sp)))
 
     def is_relative_to(self, other):
+        if isinstance(other, bytes):
+            raise TypeError("argument should be a str or os.PathLike object, not bytes")
         if not isinstance(other, PurePath):
             other = self.__class__(other)
         return bool(_lib.sp_is_relative_to_wrap(byref(self._sp), byref(other._sp)))
 
-    def relative_to(self, other):
+    def relative_to(self, other, walk_up=False):
+        if isinstance(other, bytes):
+            raise TypeError("argument should be a str or os.PathLike object, not bytes")
         if not isinstance(other, PurePath):
             other = self.__class__(other)
-        if not self.is_relative_to(other):
-            raise ValueError(f"{str(self)!r} is not relative to {str(other)!r}")
+
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
-        _lib.sp_relative_to_wrap(byref(self._sp), byref(other._sp), byref(result._sp))
+
+        if walk_up:
+            _lib.sp_relative_to_walk_up_wrap(byref(self._sp), byref(other._sp), byref(result._sp))
+        else:
+            _lib.sp_relative_to_wrap(byref(self._sp), byref(other._sp), byref(result._sp))
+
+        if _lib.sp_relative_to_is_error_wrap(byref(result._sp)):
+            raise ValueError(f"{str(self)!r} is not relative to {str(other)!r}")
+
         return result
 
     def joinpath(self, *others):
@@ -391,10 +438,10 @@ class PurePath:
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_name_wrap(byref(self._sp), _encode(name), byref(result._sp))
-        # C returns empty path (len=0) on validation error
-        if result._sp.len == 0:
-            if not self.name or self.name == '.':
-                raise ValueError(f"{self!r} has an empty name")
+        err = _lib.sp_path_error_code_wrap(byref(result._sp))
+        if err == SP_ERR_NO_NAME:
+            raise ValueError(f"{self!r} has an empty name")
+        if err == SP_ERR_INVALID_ARG:
             raise ValueError(f"Invalid name {name!r}")
         return result
 
@@ -404,10 +451,10 @@ class PurePath:
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_stem_wrap(byref(self._sp), _encode(stem), byref(result._sp))
-        # C returns empty path (len=0) on validation error
-        if result._sp.len == 0:
-            if not self.name or self.name == '.':
-                raise ValueError(f"{self!r} has an empty name")
+        err = _lib.sp_path_error_code_wrap(byref(result._sp))
+        if err == SP_ERR_NO_NAME:
+            raise ValueError(f"{self!r} has an empty name")
+        if err == SP_ERR_INVALID_ARG:
             raise ValueError(f"Invalid stem {stem!r}")
         return result
 
@@ -417,57 +464,26 @@ class PurePath:
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_suffix_wrap(byref(self._sp), _encode(suffix), byref(result._sp))
-        # C returns empty path (len=0) on validation error
-        if result._sp.len == 0:
-            if not self.name or self.name == '.':
-                raise ValueError(f"{self!r} has an empty name")
+        err = _lib.sp_path_error_code_wrap(byref(result._sp))
+        if err == SP_ERR_NO_NAME:
+            raise ValueError(f"{self!r} has an empty name")
+        if err == SP_ERR_INVALID_ARG:
             raise ValueError(f"Invalid suffix {suffix!r}")
         return result
 
     def match(self, pattern):
         """Match this path against a glob pattern."""
-        import fnmatch
         pattern = str(pattern)
-        if not pattern:
+        result = _lib.sp_match_wrap(byref(self._sp), _encode(pattern))
+        if result == SP_MATCH_ERR_EMPTY:
             raise ValueError("empty pattern")
-
-        # Normalize both
-        path_str = str(self)
-
-        # If pattern has no separator, match against name only
-        sep = '\\' if self._flavor == SP_FLAVOR_WINDOWS else '/'
-        if sep not in pattern and '/' not in pattern:
-            return fnmatch.fnmatch(self.name, pattern)
-
-        # Match from the right
-        path_parts = path_str.replace('\\', '/').split('/')
-        pattern_parts = pattern.replace('\\', '/').split('/')
-
-        if len(pattern_parts) > len(path_parts):
-            return False
-
-        # Match from right to left
-        for i in range(1, len(pattern_parts) + 1):
-            if not fnmatch.fnmatch(path_parts[-i], pattern_parts[-i]):
-                return False
-
-        return True
+        if result == SP_MATCH_ERR_INVALID:
+            raise ValueError(f"Invalid pattern: {pattern!r}")
+        return result == SP_MATCH_YES
 
     def is_reserved(self):
         """Return True if the path is reserved under Windows."""
-        if self._flavor != SP_FLAVOR_WINDOWS:
-            return False
-
-        name = self.name.upper()
-        # Remove extension
-        if '.' in name:
-            name = name.split('.')[0]
-
-        reserved = {'CON', 'PRN', 'AUX', 'NUL',
-                   'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-                   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'}
-
-        return name in reserved
+        return bool(_lib.sp_is_reserved_wrap(byref(self._sp)))
 
 
 class PurePosixPath(PurePath):
