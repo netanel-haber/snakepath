@@ -77,7 +77,7 @@ SKIP_METHODS = {
     'test_full_match_windows',
     # match() case_sensitive kwarg not implemented
     'test_match_common',  # Uses case_sensitive=
-    'test_match_windows', # Uses case_sensitive=
+    'test_match_windows',  # Uses case_sensitive=
     # _parse_path internal method not implemented
     'test_parse_path_common',
     'test_parse_path_posix',
@@ -85,15 +85,9 @@ SKIP_METHODS = {
     'test_parse_windows_path',
     # pickle/unpickle not implemented
     'test_unpicking_3_13',
-    # with_segments() method not implemented
-    'test_constructor_nested',
+    # with_segments() method not implemented (for foreign flavour nesting)
     'test_constructor_nested_foreign_flavour',
-    'test_div_nested',
-    'test_join_nested',
-    # Internal parser comparisons (we expose parser but not as fully compatible)
-    'test_concrete_class',
-    'test_concrete_parser',
-    'test_different_parsers_unequal',
+    # Internal parser ordering (we don't implement TypeError for mixed comparisons)
     'test_different_parsers_unordered',
     # bytes() constructor not implemented
     'test_bytes',
