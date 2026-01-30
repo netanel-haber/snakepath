@@ -5,16 +5,17 @@ Downloads test file from CPython's test directory.
 """
 
 import sys
-import os
 import unittest
 import urllib.request
+from pathlib import Path
 
 # Add our module to path FIRST (snakepath package is in this directory)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+THIS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(THIS_DIR))
 
 import snakepath
 
-TEST_DIR = os.path.join(os.path.dirname(__file__), "cpython_tests")
+TEST_DIR = THIS_DIR / "cpython_tests"
 # Use Python 3.12 branch to match our Python version
 CPYTHON_BRANCH = "3.12"
 CPYTHON_RAW = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test"
@@ -386,26 +387,24 @@ EXPECTED_FAILURES = {
 
 def download_file(url, dest):
     """Download a file."""
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as r:
         content = r.read()
-    with open(dest, 'wb') as f:
-        f.write(content)
+    dest.write_bytes(content)
 
 
 def setup_tests():
     """Download test file if needed."""
-    os.makedirs(TEST_DIR, exist_ok=True)
+    TEST_DIR.mkdir(exist_ok=True)
 
     # Create package __init__.py
-    init_path = os.path.join(TEST_DIR, "__init__.py")
-    if not os.path.exists(init_path):
-        with open(init_path, "w") as f:
-            f.write("")
+    init_path = TEST_DIR / "__init__.py"
+    if not init_path.exists():
+        init_path.touch()
 
     # Download test file
-    dest = os.path.join(TEST_DIR, TEST_FILE)
-    if not os.path.exists(dest):
+    dest = TEST_DIR / TEST_FILE
+    if not dest.exists():
         print("Downloading CPython pathlib test...")
         print(f"  {TEST_FILE}")
         url = f"{CPYTHON_RAW}/{TEST_FILE}"
@@ -460,7 +459,7 @@ def setup_pathlib_patch():
     import tempfile
     import shutil
     os_helper = types.ModuleType('test.support.os_helper')
-    os_helper.TESTFN = os.path.join(tempfile.gettempdir(), 'test_pathlib_tmp')
+    os_helper.TESTFN = str(Path(tempfile.gettempdir()) / 'test_pathlib_tmp')
     os_helper.FS_NONASCII = '\xe9'
     class FakePath:
         def __init__(self, path): self.path = path
@@ -486,7 +485,7 @@ def run_tests():
     setup_pathlib_patch()
 
     # Add test dir to path
-    sys.path.insert(0, os.path.dirname(TEST_DIR))
+    sys.path.insert(0, str(TEST_DIR.parent))
 
     print("\n" + "=" * 70)
     print("Running CPython pathlib tests against snakepath")
