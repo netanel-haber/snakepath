@@ -240,7 +240,7 @@ static bool run_python_tests(void) {
     }
 #endif
 
-    nob_cmd_append(&cmd, python, "python/tests/test_comprehensive.py");
+    nob_cmd_append(&cmd, python, "python/tests/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
