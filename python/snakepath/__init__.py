@@ -218,14 +218,20 @@ class PurePath:
                 return
             path_str = _encode(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
         else:
-            # Join multiple args
-            parts = []
-            for arg in args:
+            # Join multiple args using C library's join (handles absolute paths correctly)
+            first = args[0]
+            if isinstance(first, PurePath):
+                first_str = str(first)
+            else:
+                first_str = os.fspath(first) if hasattr(os, 'fspath') else str(first)
+            _lib.sp_path_new_wrap(_encode(first_str), self._flavor, byref(self._sp))
+            for arg in args[1:]:
                 if isinstance(arg, PurePath):
-                    parts.append(str(arg))
+                    arg_str = str(arg)
                 else:
-                    parts.append(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
-            path_str = _encode(os.path.join(*parts) if parts else '.')
+                    arg_str = os.fspath(arg) if hasattr(os, 'fspath') else str(arg)
+                _lib.sp_join_one_wrap(byref(self._sp), _encode(arg_str), byref(self._sp))
+            return
 
         _lib.sp_path_new_wrap(path_str, self._flavor, byref(self._sp))
 
