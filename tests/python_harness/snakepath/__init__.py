@@ -236,6 +236,11 @@ class PurePath:
     # Native parser (posixpath on Unix, ntpath on Windows)
     parser = __import__('posixpath') if os.name != 'nt' else __import__('ntpath')
 
+    @property
+    def _flavour(self):
+        """British spelling alias for CPython tests - returns parser module."""
+        return self.parser
+
     def __new__(cls, *args):
         if cls is PurePath:
             # Auto-select based on platform

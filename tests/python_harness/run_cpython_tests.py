@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Run CPython's pathlib test suite against snakepath.
-Downloads test files from CPython's test_pathlib directory.
+Downloads test file from CPython's test directory.
 """
 
 import sys
@@ -15,23 +15,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import snakepath
 
 TEST_DIR = os.path.join(os.path.dirname(__file__), "cpython_tests")
-CPYTHON_RAW = "https://raw.githubusercontent.com/python/cpython/main/Lib/test/test_pathlib"
+# Use Python 3.12 branch to match our Python version
+CPYTHON_BRANCH = "3.12"
+CPYTHON_RAW = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test"
 
-# Test files to download (only pure path tests - skip filesystem operation tests)
-TEST_FILES = [
-    "test_pathlib.py",
-    "test_join.py",
-    "test_join_posix.py",
-    "test_join_windows.py",
-]
-
-# Support files to download
-SUPPORT_FILES = [
-    "support/__init__.py",
-    "support/lexical_path.py",
-    "support/local_path.py",
-    "support/zip_path.py",
-]
+# Test file to download (Python 3.12 has single test_pathlib.py)
+TEST_FILE = "test_pathlib.py"
 
 
 def load_skip_list():
@@ -57,7 +46,7 @@ def download_file(url, dest):
 
 
 def setup_tests():
-    """Download test files if needed."""
+    """Download test file if needed."""
     os.makedirs(TEST_DIR, exist_ok=True)
 
     # Create package __init__.py
@@ -66,27 +55,20 @@ def setup_tests():
         with open(init_path, "w") as f:
             f.write("")
 
-    # Download all files
-    all_files = TEST_FILES + SUPPORT_FILES
-    need_download = any(
-        not os.path.exists(os.path.join(TEST_DIR, f)) for f in all_files
-    )
-
-    if need_download:
-        print("Downloading CPython pathlib tests...")
-        for filename in all_files:
-            dest = os.path.join(TEST_DIR, filename)
-            if not os.path.exists(dest):
-                print(f"  {filename}")
-                url = f"{CPYTHON_RAW}/{filename}"
-                download_file(url, dest)
+    # Download test file
+    dest = os.path.join(TEST_DIR, TEST_FILE)
+    if not os.path.exists(dest):
+        print("Downloading CPython pathlib test...")
+        print(f"  {TEST_FILE}")
+        url = f"{CPYTHON_RAW}/{TEST_FILE}"
+        download_file(url, dest)
 
 
 def setup_pathlib_patch():
     """Patch pathlib module to use snakepath."""
     import types
 
-    # Create pathlib as a proper package
+    # Create pathlib module with snakepath classes
     pathlib_pkg = types.ModuleType('pathlib')
     pathlib_pkg.PurePath = snakepath.PurePath
     pathlib_pkg.PurePosixPath = snakepath.PurePosixPath
@@ -96,44 +78,28 @@ def setup_pathlib_patch():
     pathlib_pkg.WindowsPath = snakepath.WindowsPath
     sys.modules['pathlib'] = pathlib_pkg
 
-    # Stub pathlib._os
-    pathlib_os = types.ModuleType('pathlib._os')
-    pathlib_os.vfspath = lambda p: str(p)
-    sys.modules['pathlib._os'] = pathlib_os
-
-    # Stub pathlib.types with minimal _JoinablePath and PathInfo
-    pathlib_types = types.ModuleType('pathlib.types')
-    class _JoinablePath:
-        """Stub for pathlib.types._JoinablePath"""
-        pass
-    class PathInfo:
-        """Stub for pathlib.types.PathInfo"""
-        pass
-    pathlib_types._JoinablePath = _JoinablePath
-    pathlib_types._PathParser = object  # Stub
-    pathlib_types.PathInfo = PathInfo
-    sys.modules['pathlib.types'] = pathlib_types
-
-    # Stub test.support (for test_pathlib.py, test_join.py)
+    # Stub test.support
     test_pkg = types.ModuleType('test')
     sys.modules['test'] = test_pkg
 
     test_support = types.ModuleType('test.support')
     test_support.is_emscripten = False
     test_support.is_wasi = False
-    test_support.is_wasm32 = False
+    test_support.verbose = False
     test_support.cpython_only = lambda f: f
-    test_support.infinite_recursion = lambda depth=None: __import__('contextlib').nullcontext()
+    test_support.is_android = False
 
-    # Add assertStartsWith/assertEndsWith to unittest.TestCase
-    def assertStartsWith(self, s, prefix, msg=None):
-        if not s.startswith(prefix):
-            self.fail(msg or f"{s!r} doesn't start with {prefix!r}")
-    def assertEndsWith(self, s, suffix, msg=None):
-        if not s.endswith(suffix):
-            self.fail(msg or f"{s!r} doesn't end with {suffix!r}")
-    unittest.TestCase.assertStartsWith = assertStartsWith
-    unittest.TestCase.assertEndsWith = assertEndsWith
+    # Context manager for recursion limit
+    import contextlib
+    @contextlib.contextmanager
+    def set_recursion_limit(limit):
+        old = sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(limit)
+            yield
+        finally:
+            sys.setrecursionlimit(old)
+    test_support.set_recursion_limit = set_recursion_limit
 
     class ImportHelper:
         @staticmethod
@@ -153,35 +119,16 @@ def setup_pathlib_patch():
     os_helper.FakePath = FakePath
     os_helper.can_symlink = lambda: False
     os_helper.rmtree = lambda p: None
-    os_helper._longpath = lambda p: p
-    # Skip decorators - return unittest.skip
+    # Skip decorators
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")
     os_helper.skip_unless_working_chmod = unittest.skip("chmod not tested")
+    os_helper.skip_unless_symlink = unittest.skip("symlink not tested")
     os_helper.skip_if_dac_override = lambda f: f
-    os_helper.skip_unless_hardlink = unittest.skip("hardlink not tested")
     class EnvironmentVarGuard:
         def __enter__(self): return {}
         def __exit__(self, *args): pass
     os_helper.EnvironmentVarGuard = EnvironmentVarGuard
-    os_helper.change_cwd = lambda p: __import__('contextlib').nullcontext()
-    os_helper.subst_drive = lambda p: __import__('contextlib').nullcontext('Z:')
     sys.modules['test.support.os_helper'] = os_helper
-
-    # Stub test.support.threading_helper
-    threading_helper = types.ModuleType('test.support.threading_helper')
-    threading_helper.requires_working_threading = lambda: lambda f: f
-    sys.modules['test.support.threading_helper'] = threading_helper
-
-
-def is_pure_path_class(name):
-    """Check if a test class tests pure path functionality (no filesystem ops)."""
-    # Classes that test pure path operations
-    if 'Pure' in name:
-        return True
-    # Join test classes that work with pure paths
-    if name in ('PosixPathJoinTest', 'PurePosixPathJoinTest', 'PureWindowsPathJoinTest'):
-        return True
-    return False
 
 
 def run_tests():
@@ -196,7 +143,7 @@ def run_tests():
     sys.path.insert(0, os.path.dirname(TEST_DIR))
 
     print("\n" + "=" * 70)
-    print("Running CPython pathlib PURE PATH tests against snakepath")
+    print("Running CPython pathlib tests against snakepath")
     print("=" * 70 + "\n")
 
     # Discover and filter tests
@@ -205,36 +152,34 @@ def run_tests():
     loaded_count = 0
     skipped_count = 0
 
-    for filename in sorted(TEST_FILES):
-        module_name = f"cpython_tests.{filename[:-3]}"
+    module_name = f"cpython_tests.{TEST_FILE[:-3]}"
 
-        try:
-            __import__(module_name)
-            module = sys.modules[module_name]
+    try:
+        __import__(module_name)
+        module = sys.modules[module_name]
 
-            for name in dir(module):
-                obj = getattr(module, name)
-                if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
-                    if obj is unittest.TestCase:
+        for name in dir(module):
+            obj = getattr(module, name)
+            if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
+                if obj is unittest.TestCase:
+                    continue
+
+                class_loaded = False
+                for method_name in loader.getTestCaseNames(obj):
+                    full_name = f"{module_name}.{name}.{method_name}"
+                    if full_name in skip_set:
+                        skipped_count += 1
                         continue
-                    if not is_pure_path_class(name):
-                        continue
+                    suite.addTest(obj(method_name))
+                    class_loaded = True
 
-                    class_loaded = False
-                    for method_name in loader.getTestCaseNames(obj):
-                        full_name = f"{module_name}.{name}.{method_name}"
-                        if full_name in skip_set:
-                            skipped_count += 1
-                            continue
-                        suite.addTest(obj(method_name))
-                        class_loaded = True
-
-                    if class_loaded:
-                        if not any(f"  LOAD: {name}" in str(x) for x in []):
-                            print(f"  LOAD: {name}")
-                        loaded_count += 1
-        except Exception as e:
-            print(f"  ERROR loading {filename}: {e}")
+                if class_loaded:
+                    print(f"  LOAD: {name}")
+                    loaded_count += 1
+    except Exception as e:
+        print(f"  ERROR loading {TEST_FILE}: {e}")
+        import traceback
+        traceback.print_exc()
 
     print(f"\nLoaded {loaded_count} test classes, skipped {skipped_count} individual tests\n")
 
