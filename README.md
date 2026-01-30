@@ -42,12 +42,21 @@ Runs all compiler/test combinations automatically.
 ## File Structure
 
 ```
-snakepath.h   # Library (header-only, define SNAKEPATH_IMPLEMENTATION)
-test.c        # Core API tests
-test_fluent_api.c    # Fluent API tests  
-nob.c         # Build script
-nob.h         # Build system (tsoding/nob.h)
-README.md     # This file
+snakepath.h              # Library (header-only, define SNAKEPATH_IMPLEMENTATION)
+nob.c                    # Build script
+nob.h                    # Build system (tsoding/nob.h)
+demo.c                   # Usage examples
+README.md                # This file
+
+tests/                   # All tests
+  test.c                 # Core API tests
+  test_fluent_api.c      # Fluent API tests
+  python_harness/        # Python bindings and test harness
+    snakepath/           # Python package
+      __init__.py        # Thin ctypes wrapper over C library
+    snakepath_lib.c      # FFI wrapper for Python bindings
+    run_cpython_tests.py # Runs CPython's pathlib test suite against snakepath
+    skip.txt             # Exact list of tests to skip (unimplemented features)
 ```
 
 ## Boring API
@@ -189,6 +198,41 @@ Define before including:
 | Separator | `/` | `\` (normalizes `/`) |
 | Drive | None | `C:` or UNC `\\server\share` |
 | Absolute | Has root `/` | Has drive + root `C:\` |
+
+## Python Bindings
+
+Thin ctypes wrapper providing `PurePath`, `PurePosixPath`, and `PureWindowsPath` classes compatible with Python's pathlib interface.
+
+```python
+from snakepath import PurePosixPath, PureWindowsPath
+
+p = PurePosixPath('/usr/local/bin')
+print(p.name)      # 'bin'
+print(p.parent)    # PurePosixPath('/usr/local')
+print(p.suffix)    # ''
+
+w = PureWindowsPath('C:/Users/test.txt')
+print(w.drive)     # 'C:'
+print(w.stem)      # 'test'
+```
+
+### Building
+
+```bash
+cd tests/python_harness
+gcc -shared -fPIC -fvisibility=hidden -O2 -I../.. -o libsnakepath.so snakepath_lib.c
+```
+
+### Testing
+
+Tests run CPython's official pathlib test suite against snakepath:
+
+```bash
+python tests/python_harness/run_cpython_tests.py
+```
+
+- Test runner: [`tests/python_harness/run_cpython_tests.py`](tests/python_harness/run_cpython_tests.py)
+- Skip list: [`tests/python_harness/skip.txt`](tests/python_harness/skip.txt) - exact tests to skip for unimplemented features
 
 ## Gotchas
 

@@ -1,13 +1,22 @@
 nob
 nob.old
-test_gcc
-test_clang
-test_gcc_san
-test_clang_san
-test_gpp
-test_clangpp
 *.o
 *.dSYM/
 demo
-test_fluent_clang
-test_fluent_gcc
+
+# Python
+__pycache__/
+*.pyc
+
+# Tests
+tests/python_harness/cpython_tests/
+tests/python_harness/libsnakepath.so
+tests/python_harness/snakepath.dll
+tests/test_gcc
+tests/test_clang
+tests/test_gcc_san
+tests/test_clang_san
+tests/test_gpp
+tests/test_clangpp
+tests/test_fluent_*
+tests/test_msvc*

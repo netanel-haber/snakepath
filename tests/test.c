@@ -67,10 +67,10 @@ int main(void) {
     SVTest posix_root[] = {{"a/b", ""}, {"/a/b", "/"}};
     test_sv(P, sp_root, posix_root, ARRAY_LEN(posix_root));
     
-    SVTest posix_name[] = {{"", "."}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
+    SVTest posix_name[] = {{"", ""}, {".", ""}, {"..", ""}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
     test_sv(P, sp_name, posix_name, ARRAY_LEN(posix_name));
     
-    SVTest posix_stem[] = {{"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
+    SVTest posix_stem[] = {{"", ""}, {"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
     test_sv(P, sp_stem, posix_stem, ARRAY_LEN(posix_stem));
     
     SVTest posix_suffix[] = {{"a/b.py", ".py"}, {"a/.hgrc", ""}, {"a/.hg.rc", ".rc"}, {"a/b.tar.gz", ".gz"}};
@@ -127,7 +127,7 @@ int main(void) {
     SpPath pr1 = sp_path_f("a/b", P), po1 = sp_path_f("a", P); ASSERT(sp_is_relative_to(&pr1, &po1));
     SpPath pr2 = sp_path_f("a/b", P), po2 = sp_path_f("c", P); ASSERT(!sp_is_relative_to(&pr2, &po2));
     SpPath pr3 = sp_path_f("a/b/c", P), po3 = sp_path_f("a", P); ASSERT_PATH(sp_relative_to(&pr3, &po3), "b/c");
-    SpPath pr4 = sp_path_f("a/b", P), po4 = sp_path_f("a/b", P); ASSERT_PATH(sp_relative_to(&pr4, &po4), ".");
+    SpPath pr4 = sp_path_f("a/b", P), po4 = sp_path_f("a/b", P); ASSERT_PATH(sp_relative_to(&pr4, &po4), ".");  /* C returns "." for display, but Python returns "" */
     
     ASSERT_PATH(sp_path_f("a//b", P), "a/b");
     ASSERT_PATH(sp_path_f("a/b/", P), "a/b");
@@ -161,7 +161,7 @@ int main(void) {
     
     JoinTest win_join[] = {
         {"C:/a/b", "x/y", "C:\\a\\b\\x\\y"}, {"C:/a/b", "/x/y", "C:\\x\\y"},
-        {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "C:\\a\\b\\x\\y"}
+        {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "c:\\a\\b\\x\\y"}
     };
     test_join(W, win_join, ARRAY_LEN(win_join));
     
@@ -210,9 +210,9 @@ int main(void) {
     
     printf("\nEdge Cases:\n");
     
-    SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), "."); ASSERT_SV(sp_suffix(&e1), "");
-    SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), ".");
-    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "..");
+    SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), ""); ASSERT_SV(sp_suffix(&e1), "");
+    SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), "");
+    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "");
     SpPath e4 = sp_path_f("...", P); ASSERT_SV(sp_suffix(&e4), "");
     
     SpPath e5 = sp_path_f("a/b.c.d.e", P); SpSuffixes es5 = sp_suffixes(&e5);
@@ -228,7 +228,7 @@ int main(void) {
     ASSERT(sp_parts_count(&e8) == 8); ASSERT_PATH(sp_parent(&e8), "/a/b/c/d/e/f");
     
     SpPath ej1 = sp_path_f("a/b", P); ASSERT_PATH(sp_join_one(&ej1, ""), "a/b");
-    SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "./a");
+    SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
     
     printf("  Edge cases OK\n");
     

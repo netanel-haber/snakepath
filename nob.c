@@ -110,6 +110,16 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #endif
     }
 
+    /* Include root directory for header files */
+#ifdef _WIN32
+    if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
+        nob_cmd_append(&cmd, "/I.");
+    } else
+#endif
+    {
+        nob_cmd_append(&cmd, "-I.");
+    }
+
     append_warnings(&cmd, cfg.compiler);
 
     if (extra_define) {
@@ -171,17 +181,78 @@ static bool run_valgrind(const char *exe) {
 
 static const char *all_artifacts[] = {
 #ifdef _WIN32
-    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "demo.exe",
+    "tests/test_msvc.exe", "tests/test_msvc_cpp.exe", "tests/test_fluent_msvc.exe", "demo.exe",
     /* PDB and obj files from MSVC */
-    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "demo.pdb",
-    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "demo.obj",
+    "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
+    "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "demo.obj",
+    "tests/python_harness/snakepath.dll",
 #else
-    "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
-    "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
+    "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",
+    "tests/test_gpp", "tests/test_clangpp", "tests/test_fluent_gcc", "tests/test_fluent_clang",
     "demo",
+    "tests/python_harness/libsnakepath.so",
 #endif
     NULL
 };
+
+/* Build Python shared library */
+static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
+    Nob_Cmd cmd = {0};
+
+#ifdef _WIN32
+    if (compiler == COMPILER_MSVC) {
+        nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
+        nob_cmd_append(&cmd, "/W4", "/I.");
+        nob_cmd_append(&cmd, "/Fe:tests/python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+    } else {
+        nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
+        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2", "-I.");
+        nob_cmd_append(&cmd, "-fvisibility=hidden");
+        nob_cmd_append(&cmd, "-o", "tests/python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+    }
+#else
+    const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
+    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2", "-I.");
+    nob_cmd_append(&cmd, "-Wall", "-Wextra");
+    nob_cmd_append(&cmd, "-fvisibility=hidden");
+    nob_cmd_append(&cmd, "-o", "tests/python_harness/libsnakepath.so");
+    nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+#endif
+
+    bool result;
+    if (procs) {
+        result = nob_cmd_run(&cmd, .async = procs);
+    } else {
+        result = nob_cmd_run(&cmd);
+    }
+    return result;
+}
+
+/* Run Python tests */
+static bool run_python_tests(void) {
+    Nob_Cmd cmd = {0};
+
+    /* Find Python interpreter */
+    const char *python = NULL;
+#ifdef _WIN32
+    python = "python";
+#else
+    /* Try common Python names */
+    if (nob_file_exists("/usr/bin/python3")) {
+        python = "python3";
+    } else if (nob_file_exists("/usr/bin/python")) {
+        python = "python";
+    } else {
+        /* Try PATH */
+        python = "python3";
+    }
+#endif
+
+    nob_cmd_append(&cmd, python, "tests/python_harness/run_cpython_tests.py");
+    return nob_cmd_run(&cmd);
+}
 
 static bool clean_artifacts(void) {
     bool all_ok = true;
@@ -212,9 +283,23 @@ int main(int argc, char **argv) {
                 nob_log(NOB_ERROR, "Clean failed.");
                 return 1;
             }
+        } else if (strcmp(subcmd, "python") == 0) {
+            /* Build and test Python bindings only */
+            nob_log(NOB_INFO, "=== Building Python bindings ===");
+            if (!build_python_lib(COMPILER_CLANG, NULL)) {
+                nob_log(NOB_ERROR, "Failed to build Python library");
+                return 1;
+            }
+            nob_log(NOB_INFO, "=== Running Python tests ===");
+            if (!run_python_tests()) {
+                nob_log(NOB_ERROR, "Python tests failed");
+                return 1;
+            }
+            nob_log(NOB_INFO, "Python bindings built and tested successfully!");
+            return 0;
         } else {
             nob_log(NOB_ERROR, "Unknown subcommand: %s", subcmd);
-            nob_log(NOB_INFO, "Usage: ./nob [clean]");
+            nob_log(NOB_INFO, "Usage: ./nob [clean|python]");
             return 1;
         }
     }
@@ -226,26 +311,26 @@ int main(int argc, char **argv) {
 
 #ifdef _WIN32
     BuildConfig test_configs[] = {
-        {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
-        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
+        {COMPILER_MSVC,     false, "MSVC (C)",   "tests/test_msvc.exe"},
+        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "tests/test_msvc_cpp.exe"},
     };
     BuildConfig fluent_configs[] = {
-        {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
+        {COMPILER_MSVC, false, "MSVC Fluent", "tests/test_fluent_msvc.exe"},
     };
     BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "demo.exe"};
     const char *demo_output = "demo.exe";
 #else
     BuildConfig test_configs[] = {
-        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
-        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
-        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./test_clang_san"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
+        {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
+        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./tests/test_gcc_san"},
+        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./tests/test_clang_san"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
     };
     BuildConfig fluent_configs[] = {
-        {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
-        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
+        {COMPILER_GCC,   false, "GCC Fluent",   "./tests/test_fluent_gcc"},
+        {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
     };
     BuildConfig demo_config = {COMPILER_GCC, false, "Demo", "./demo"};
     const char *demo_output = "./demo";
@@ -259,16 +344,24 @@ int main(int argc, char **argv) {
 
     for (size_t i = 0; i < test_count; i++) {
         nob_log(NOB_INFO, "  Starting build: %s", test_configs[i].name);
-        build_source_async(test_configs[i], "test.c", NULL, &procs);
+        build_source_async(test_configs[i], "tests/test.c", NULL, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
         nob_log(NOB_INFO, "  Starting build: %s", fluent_configs[i].name);
-        build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
+        build_source_async(fluent_configs[i], "tests/test_fluent_api.c", NULL, &procs);
     }
 
     nob_log(NOB_INFO, "  Starting build: %s", demo_config.name);
     build_source_async(demo_config, "demo.c", NULL, &procs);
+
+    /* Build Python shared library */
+    nob_log(NOB_INFO, "  Starting build: Python bindings");
+#ifdef _WIN32
+    build_python_lib(COMPILER_MSVC, &procs);
+#else
+    build_python_lib(COMPILER_CLANG, &procs);
+#endif
 
     /* Wait for all builds to complete */
     if (!nob_procs_wait(procs)) {
@@ -298,16 +391,25 @@ int main(int argc, char **argv) {
     }
     procs.count = 0;
 
-#ifndef _WIN32
-    /* Phase 3: Valgrind (must be sequential, slow) */
-    nob_log(NOB_INFO, "=== Running valgrind ===");
-    if (!run_valgrind("./test_gcc")) {
-        nob_log(NOB_ERROR, "Valgrind check failed");
+    /* Phase 3: Python tests */
+    nob_log(NOB_INFO, "=== Running Python tests ===");
+    if (!run_python_tests()) {
+        nob_log(NOB_ERROR, "Python tests failed");
         all_ok = false;
+    }
+
+#ifndef _WIN32
+    /* Phase 4: Valgrind (must be sequential, slow) */
+    if (all_ok) {
+        nob_log(NOB_INFO, "=== Running valgrind ===");
+        if (!run_valgrind("./tests/test_gcc")) {
+            nob_log(NOB_ERROR, "Valgrind check failed");
+            all_ok = false;
+        }
     }
 #endif
 
-    /* Phase 4: Run demo to show it works */
+    /* Phase 5: Run demo to show it works */
     nob_log(NOB_INFO, "=== Running demo ===");
     if (!run_test_async(demo_output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
