@@ -4,17 +4,20 @@ POSIX + Windows. No malloc.
 Vibe-coded with Claude Code + Cursor.
 
 ```c
+(curl -so snakepath.h https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h && cc -xc - -o demo <<'EOF'
+#define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
-
-SpPath p = sp_path("/home/user/docs/report.txt");
-sp_name(&p);    // "report.txt"
-sp_stem(&p);    // "report"
-sp_suffix(&p);  // ".txt"
-sp_parent(&p);  // "/home/user/docs"
-
-// Fluent API
-SPF("/etc")->join("nginx")->join("nginx.conf")->str();
+#include <stdio.h>
+int main() {
+    SpPath boring = sp_path("/foo/bar.txt");
+    printf("BORING API: %s\n", sp_name(&boring).data);
+    printf("BORING API: %s\n", sp_stem(&boring).data);
+    const char* fluent = SPF("/etc")->join("nginx")->join("nginx.conf")->str();
+    printf("FLUENT API: %s\n", fluent);
+}
+EOF
+) && ./demo && rm demo snakepath.h
 ```
 
 ## Build & Test
