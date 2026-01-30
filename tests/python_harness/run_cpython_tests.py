@@ -24,15 +24,28 @@ TEST_FILE = "test_pathlib.py"
 
 
 def load_skip_list():
-    """Load skip list from skip.txt file."""
-    skip_file = os.path.join(os.path.dirname(__file__), "skip.txt")
+    """Load skip list from platform-specific skip files."""
+    base_dir = os.path.dirname(__file__)
     skip_set = set()
-    if os.path.exists(skip_file):
-        with open(skip_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    skip_set.add(line)
+
+    # Always load common skips
+    skip_files = ["skip_common.txt"]
+
+    # Add platform-specific skips
+    if os.name == 'nt':
+        skip_files.append("skip_windows.txt")
+    else:
+        skip_files.append("skip_posix.txt")
+
+    for filename in skip_files:
+        skip_file = os.path.join(base_dir, filename)
+        if os.path.exists(skip_file):
+            with open(skip_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        skip_set.add(line)
+
     return skip_set
 
 
