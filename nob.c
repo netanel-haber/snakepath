@@ -144,10 +144,6 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
     return result;
 }
 
-static bool build_source(BuildConfig cfg, const char *source, const char *extra_define) {
-    return build_source_async(cfg, source, extra_define, NULL);
-}
-
 static bool run_test_async(const char *exe, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, exe);
@@ -158,10 +154,6 @@ static bool run_test_async(const char *exe, Nob_Procs *procs) {
         result = nob_cmd_run(&cmd);
     }
     return result;
-}
-
-static bool run_test(const char *exe) {
-    return run_test_async(exe, NULL);
 }
 
 #ifndef _WIN32
@@ -317,7 +309,7 @@ int main(int argc, char **argv) {
 
     /* Phase 4: Run demo to show it works */
     nob_log(NOB_INFO, "=== Running demo ===");
-    if (!run_test(demo_output)) {
+    if (!run_test_async(demo_output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
         all_ok = false;
     }
