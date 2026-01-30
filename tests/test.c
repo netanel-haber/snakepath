@@ -67,7 +67,7 @@ int main(void) {
     SVTest posix_root[] = {{"a/b", ""}, {"/a/b", "/"}};
     test_sv(P, sp_root, posix_root, ARRAY_LEN(posix_root));
     
-    SVTest posix_name[] = {{"", ""}, {".", ""}, {"..", ""}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
+    SVTest posix_name[] = {{"", ""}, {".", ""}, {"..", ".."}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
     test_sv(P, sp_name, posix_name, ARRAY_LEN(posix_name));
     
     SVTest posix_stem[] = {{"", ""}, {"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
@@ -212,7 +212,7 @@ int main(void) {
     
     SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), ""); ASSERT_SV(sp_suffix(&e1), "");
     SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), "");
-    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "");
+    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "..");
     SpPath e4 = sp_path_f("...", P); ASSERT_SV(sp_suffix(&e4), "");
     
     SpPath e5 = sp_path_f("a/b.c.d.e", P); SpSuffixes es5 = sp_suffixes(&e5);
