@@ -110,6 +110,16 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #endif
     }
 
+    /* Include root directory for header files */
+#ifdef _WIN32
+    if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
+        nob_cmd_append(&cmd, "/I.");
+    } else
+#endif
+    {
+        nob_cmd_append(&cmd, "-I.");
+    }
+
     append_warnings(&cmd, cfg.compiler);
 
     if (extra_define) {
@@ -171,14 +181,14 @@ static bool run_valgrind(const char *exe) {
 
 static const char *all_artifacts[] = {
 #ifdef _WIN32
-    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "demo.exe",
+    "tests/test_msvc.exe", "tests/test_msvc_cpp.exe", "tests/test_fluent_msvc.exe", "demo.exe",
     /* PDB and obj files from MSVC */
-    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "demo.pdb",
-    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "demo.obj",
+    "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
+    "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "demo.obj",
     "python/snakepath.dll",
 #else
-    "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
-    "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
+    "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",
+    "tests/test_gpp", "tests/test_clangpp", "tests/test_fluent_gcc", "tests/test_fluent_clang",
     "demo",
     "python/libsnakepath.so",
 #endif
@@ -240,7 +250,7 @@ static bool run_python_tests(void) {
     }
 #endif
 
-    nob_cmd_append(&cmd, python, "python/tests/run_cpython_tests.py");
+    nob_cmd_append(&cmd, python, "tests/python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -301,26 +311,26 @@ int main(int argc, char **argv) {
 
 #ifdef _WIN32
     BuildConfig test_configs[] = {
-        {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
-        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
+        {COMPILER_MSVC,     false, "MSVC (C)",   "tests/test_msvc.exe"},
+        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "tests/test_msvc_cpp.exe"},
     };
     BuildConfig fluent_configs[] = {
-        {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
+        {COMPILER_MSVC, false, "MSVC Fluent", "tests/test_fluent_msvc.exe"},
     };
     BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "demo.exe"};
     const char *demo_output = "demo.exe";
 #else
     BuildConfig test_configs[] = {
-        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
-        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
-        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./test_clang_san"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
+        {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
+        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./tests/test_gcc_san"},
+        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./tests/test_clang_san"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
     };
     BuildConfig fluent_configs[] = {
-        {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
-        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
+        {COMPILER_GCC,   false, "GCC Fluent",   "./tests/test_fluent_gcc"},
+        {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
     };
     BuildConfig demo_config = {COMPILER_GCC, false, "Demo", "./demo"};
     const char *demo_output = "./demo";
@@ -334,12 +344,12 @@ int main(int argc, char **argv) {
 
     for (size_t i = 0; i < test_count; i++) {
         nob_log(NOB_INFO, "  Starting build: %s", test_configs[i].name);
-        build_source_async(test_configs[i], "test.c", NULL, &procs);
+        build_source_async(test_configs[i], "tests/test.c", NULL, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
         nob_log(NOB_INFO, "  Starting build: %s", fluent_configs[i].name);
-        build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
+        build_source_async(fluent_configs[i], "tests/test_fluent_api.c", NULL, &procs);
     }
 
     nob_log(NOB_INFO, "  Starting build: %s", demo_config.name);
@@ -392,7 +402,7 @@ int main(int argc, char **argv) {
     /* Phase 4: Valgrind (must be sequential, slow) */
     if (all_ok) {
         nob_log(NOB_INFO, "=== Running valgrind ===");
-        if (!run_valgrind("./test_gcc")) {
+        if (!run_valgrind("./tests/test_gcc")) {
             nob_log(NOB_ERROR, "Valgrind check failed");
             all_ok = false;
         }
