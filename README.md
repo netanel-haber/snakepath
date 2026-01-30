@@ -154,17 +154,17 @@ SpPath pics = sp_join_one(&base, "Pictures");
 
 ### Chainable Methods
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `.parent()` | SpFluentPath | Parent directory |
-| `.join("x")` | SpFluentPath | Join with component |
-| `.with_name("x")` | SpFluentPath | Replace name |
-| `.with_stem("x")` | SpFluentPath | Replace stem |
-| `.with_suffix(".x")` | SpFluentPath | Replace suffix |
-| `.absolute()` | SpFluentPath | Make path absolute |
-| `.relative_to(&base)` | SpFluentPath | Relative path from base |
-| `.relative_to_walk_up(&base)` | SpFluentPath | Relative path with `..` |
-| `.path()` | SpPath | **Finish chain and get result** |
+| Method | Description |
+|--------|-------------|
+| `.parent()` | Parent directory |
+| `.join("x")` | Join with component |
+| `.with_name("x")` | Replace name |
+| `.with_stem("x")` | Replace stem |
+| `.with_suffix(".x")` | Replace suffix |
+| `.absolute()` | Make path absolute |
+| `.relative_to(&base)` | Relative path from base |
+| `.relative_to_walk_up(&base)` | Relative path with `..` |
+| `.path()` | **Finish chain → returns `SpPath`** |
 
 ### Accessing Results
 
