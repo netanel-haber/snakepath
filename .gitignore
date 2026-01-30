@@ -6,8 +6,15 @@ test_gcc_san
 test_clang_san
 test_gpp
 test_clangpp
+test_c
 *.o
 *.dSYM/
 demo
 test_fluent_clang
 test_fluent_gcc
+
+# Python
+python/libsnakepath.so
+python/snakepath.dll
+__pycache__/
+*.pyc

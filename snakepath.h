@@ -560,8 +560,8 @@ SpParentsIter sp_parents_begin(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpParentsIter it = SP_PRIV_ZERO;
     it.current = sp_parent(p);
-    size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
-    it.done = (p->len <= anchor);
+    /* If parent equals self, there are no parents (e.g., '.', '/') */
+    it.done = sp_path_eq(p, &it.current);
     return it;
 }
 
@@ -704,14 +704,21 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
 
 bool sp_is_absolute(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
+    SpStr drive = sp_drive(p);
     SpStr root = sp_root(p);
-    if (root.len > 0) {
-        if (sp_priv_is_windows_flavor(p->flavor)) {
-            return sp_drive(p).len > 0;
+
+    if (sp_priv_is_windows_flavor(p->flavor)) {
+        /* Windows: absolute requires drive + root, OR UNC path */
+        if (drive.len >= 2 && sp_priv_is_sep(drive.data[0], p->flavor) &&
+            sp_priv_is_sep(drive.data[1], p->flavor)) {
+            /* UNC path is always absolute */
+            return true;
         }
-        return true;
+        /* Regular drive: need both drive and root */
+        return drive.len > 0 && root.len > 0;
     }
-    return false;
+    /* POSIX: absolute if has root */
+    return root.len > 0;
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
