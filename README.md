@@ -1,4 +1,4 @@
-snakepath
+Snakepath 
 C99 header-only pathlib library. POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor.
 
 ## Quick Start
