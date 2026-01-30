@@ -23,10 +23,6 @@ TEST_FILES = [
     "test_join.py",
     "test_join_posix.py",
     "test_join_windows.py",
-    # Skip filesystem operation tests - they require _ReadablePath and other internal APIs
-    # "test_copy.py",
-    # "test_read.py",
-    # "test_write.py",
 ]
 
 # Support files to download
@@ -37,64 +33,18 @@ SUPPORT_FILES = [
     "support/zip_path.py",
 ]
 
-# Classes to skip (filesystem ops, internal APIs)
-SKIP_CLASSES = {
-    'Lexical',           # Internal API
-    'UnsupportedOperationTest',  # Internal
-    'LazyImportTest',    # Internal
-    'CopyTest',          # Filesystem operations
-    'ReadTest',          # Filesystem operations
-    'WriteTest',         # Filesystem operations
-    'ZipPathTest',       # Filesystem operations
-    'LocalPathTest',     # Filesystem operations
-}
 
-# Exact class names to skip
-SKIP_EXACT = {
-    'PathJoinTest',         # From test_join.py - tests internal API
-    'PurePathJoinTest',     # From test_join.py - tests internal API
-    'PathTest',             # Filesystem operations
-    'PosixPathTest',        # Filesystem operations
-    'WindowsPathTest',      # Filesystem operations
-    'PathSubclassTest',     # Filesystem operations
-    'PathWalkTest',         # Filesystem operations
-    'PurePathSubclassTest', # Tests subclassing internals
-    'CompatiblePathTest',   # Tests CompatPath internal class
-}
-
-# Test methods to skip (unimplemented features ONLY)
-# These test methods that are genuinely not implemented in snakepath
-SKIP_METHODS = {
-    # as_uri() method not implemented
-    'test_as_uri_common',
-    'test_as_uri_non_ascii',
-    'test_as_uri_posix',
-    'test_as_uri_windows',
-    # full_match() method not implemented
-    'test_full_match_case_sensitive',
-    'test_full_match_common',
-    'test_full_match_posix',
-    'test_full_match_windows',
-    # match() case_sensitive kwarg not implemented
-    'test_match_common',  # Uses case_sensitive=
-    'test_match_windows',  # Uses case_sensitive=
-    # _parse_path internal method not implemented
-    'test_parse_path_common',
-    'test_parse_path_posix',
-    'test_parse_path_windows',
-    'test_parse_windows_path',
-    # pickle/unpickle not implemented
-    'test_unpicking_3_13',
-    # with_segments() method not implemented (for foreign flavour nesting)
-    'test_constructor_nested_foreign_flavour',
-    # Internal parser ordering (we don't implement TypeError for mixed comparisons)
-    'test_different_parsers_unordered',
-    # bytes() constructor not implemented
-    'test_bytes',
-    'test_bytes_exc_message',
-    # Unicode case folding for Windows (complex locale-aware comparison)
-    'test_eq_windows',
-}
+def load_skip_list():
+    """Load skip list from skip.txt file."""
+    skip_file = os.path.join(os.path.dirname(__file__), "skip.txt")
+    skip_set = set()
+    if os.path.exists(skip_file):
+        with open(skip_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    skip_set.add(line)
+    return skip_set
 
 
 def download_file(url, dest):
@@ -223,13 +173,14 @@ def setup_pathlib_patch():
     sys.modules['test.support.threading_helper'] = threading_helper
 
 
-def should_skip_class(name):
-    """Check if a test class should be skipped."""
-    if name in SKIP_EXACT:
+def is_pure_path_class(name):
+    """Check if a test class tests pure path functionality (no filesystem ops)."""
+    # Classes that test pure path operations
+    if 'Pure' in name:
         return True
-    for skip in SKIP_CLASSES:
-        if skip in name:
-            return True
+    # Join test classes that work with pure paths
+    if name in ('PosixPathJoinTest', 'PurePosixPathJoinTest', 'PureWindowsPathJoinTest'):
+        return True
     return False
 
 
@@ -237,6 +188,9 @@ def run_tests():
     """Run CPython tests against snakepath."""
     setup_tests()
     setup_pathlib_patch()
+
+    # Load skip list
+    skip_set = load_skip_list()
 
     # Add test dir to path
     sys.path.insert(0, os.path.dirname(TEST_DIR))
@@ -251,7 +205,6 @@ def run_tests():
     loaded_count = 0
     skipped_count = 0
 
-    skipped_methods = 0
     for filename in sorted(TEST_FILES):
         module_name = f"cpython_tests.{filename[:-3]}"
 
@@ -264,22 +217,26 @@ def run_tests():
                 if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
                     if obj is unittest.TestCase:
                         continue
-                    if should_skip_class(name):
-                        print(f"  SKIP: {name}")
-                        skipped_count += 1
+                    if not is_pure_path_class(name):
                         continue
-                    print(f"  LOAD: {name}")
-                    # Filter out unimplemented method tests
+
+                    class_loaded = False
                     for method_name in loader.getTestCaseNames(obj):
-                        if method_name in SKIP_METHODS:
-                            skipped_methods += 1
+                        full_name = f"{module_name}.{name}.{method_name}"
+                        if full_name in skip_set:
+                            skipped_count += 1
                             continue
                         suite.addTest(obj(method_name))
-                    loaded_count += 1
+                        class_loaded = True
+
+                    if class_loaded:
+                        if not any(f"  LOAD: {name}" in str(x) for x in []):
+                            print(f"  LOAD: {name}")
+                        loaded_count += 1
         except Exception as e:
             print(f"  ERROR loading {filename}: {e}")
 
-    print(f"\nLoaded {loaded_count} test classes, skipped {skipped_count} classes, {skipped_methods} methods (unimplemented)\n")
+    print(f"\nLoaded {loaded_count} test classes, skipped {skipped_count} individual tests\n")
 
     # Run
     runner = unittest.TextTestRunner(verbosity=2)

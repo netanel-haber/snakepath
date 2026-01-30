@@ -1,0 +1,85 @@
+# Tests to skip - unimplemented features only
+# Format: module.class.method (one per line)
+# Lines starting with # are comments
+
+# as_uri() method not implemented
+cpython_tests.test_pathlib.PurePathTest.test_as_uri_common
+cpython_tests.test_pathlib.PurePathTest.test_as_uri_non_ascii
+cpython_tests.test_pathlib.PurePathTest.test_as_uri_posix
+cpython_tests.test_pathlib.PurePosixPathTest.test_as_uri_common
+cpython_tests.test_pathlib.PurePosixPathTest.test_as_uri_non_ascii
+cpython_tests.test_pathlib.PurePosixPathTest.test_as_uri_posix
+cpython_tests.test_pathlib.PureWindowsPathTest.test_as_uri_common
+cpython_tests.test_pathlib.PureWindowsPathTest.test_as_uri_windows
+
+# full_match() method not implemented
+cpython_tests.test_pathlib.PurePathTest.test_full_match_case_sensitive
+cpython_tests.test_pathlib.PurePosixPathTest.test_full_match_case_sensitive
+cpython_tests.test_pathlib.PureWindowsPathTest.test_full_match_case_sensitive
+
+# match() case_sensitive kwarg not implemented
+cpython_tests.test_pathlib.PurePathTest.test_match_common
+cpython_tests.test_pathlib.PurePosixPathTest.test_match_common
+cpython_tests.test_pathlib.PureWindowsPathTest.test_match_common
+cpython_tests.test_pathlib.PureWindowsPathTest.test_match_windows
+
+# _parse_path internal method not implemented
+cpython_tests.test_pathlib.PurePathTest.test_parse_path_common
+cpython_tests.test_pathlib.PurePathTest.test_parse_path_posix
+cpython_tests.test_pathlib.PurePathTest.test_parse_windows_path
+cpython_tests.test_pathlib.PurePosixPathTest.test_parse_path_common
+cpython_tests.test_pathlib.PurePosixPathTest.test_parse_path_posix
+cpython_tests.test_pathlib.PurePosixPathTest.test_parse_windows_path
+cpython_tests.test_pathlib.PureWindowsPathTest.test_parse_path_common
+cpython_tests.test_pathlib.PureWindowsPathTest.test_parse_path_windows
+
+# pickle/unpickle not implemented
+cpython_tests.test_pathlib.PurePathTest.test_unpicking_3_13
+cpython_tests.test_pathlib.PurePosixPathTest.test_unpicking_3_13
+cpython_tests.test_pathlib.PureWindowsPathTest.test_unpicking_3_13
+
+# with_segments() for foreign flavour nesting not implemented
+cpython_tests.test_pathlib.PureWindowsPathTest.test_constructor_nested_foreign_flavour
+
+# bytes() constructor not implemented (different exception type)
+cpython_tests.test_pathlib.PurePathTest.test_bytes
+cpython_tests.test_pathlib.PurePathTest.test_bytes_exc_message
+cpython_tests.test_pathlib.PurePosixPathTest.test_bytes
+cpython_tests.test_pathlib.PurePosixPathTest.test_bytes_exc_message
+cpython_tests.test_pathlib.PureWindowsPathTest.test_bytes
+cpython_tests.test_pathlib.PureWindowsPathTest.test_bytes_exc_message
+
+# TypeError for cross-parser comparison not implemented
+cpython_tests.test_pathlib.PurePathTest.test_different_parsers_unordered
+cpython_tests.test_pathlib.PurePosixPathTest.test_different_parsers_unordered
+cpython_tests.test_pathlib.PureWindowsPathTest.test_different_parsers_unordered
+
+# Unicode case folding for Windows (complex locale-aware comparison)
+cpython_tests.test_pathlib.PureWindowsPathTest.test_eq_windows
+
+# PurePathSubclassTest - tests internal subclassing behavior
+cpython_tests.test_pathlib.PurePathSubclassTest.test_as_uri_common
+cpython_tests.test_pathlib.PurePathSubclassTest.test_as_uri_non_ascii
+cpython_tests.test_pathlib.PurePathSubclassTest.test_as_uri_posix
+cpython_tests.test_pathlib.PurePathSubclassTest.test_bytes
+cpython_tests.test_pathlib.PurePathSubclassTest.test_bytes_exc_message
+cpython_tests.test_pathlib.PurePathSubclassTest.test_different_parsers_unordered
+cpython_tests.test_pathlib.PurePathSubclassTest.test_full_match_case_sensitive
+cpython_tests.test_pathlib.PurePathSubclassTest.test_match_common
+cpython_tests.test_pathlib.PurePathSubclassTest.test_parse_path_common
+cpython_tests.test_pathlib.PurePathSubclassTest.test_parse_path_posix
+cpython_tests.test_pathlib.PurePathSubclassTest.test_parse_windows_path
+cpython_tests.test_pathlib.PurePathSubclassTest.test_unpicking_3_13
+cpython_tests.test_pathlib.PurePathSubclassTest.test_pickling_common
+
+# PurePathJoinTest - tests internal _JoinablePath API not fully implemented
+cpython_tests.test_join.PurePathJoinTest.test_full_match
+cpython_tests.test_join.PurePathJoinTest.test_parts_multithreaded
+cpython_tests.test_join.PurePathJoinTest.test_with_segments
+cpython_tests.test_join.PurePathJoinTest.test_is_joinable
+cpython_tests.test_join.PurePathJoinTest.test_is_relative_to
+cpython_tests.test_join.PurePathJoinTest.test_parent
+cpython_tests.test_join.PurePathJoinTest.test_parents
+cpython_tests.test_join.PurePathJoinTest.test_relative_to
+cpython_tests.test_join.PurePathJoinTest.test_stem
+cpython_tests.test_join.PurePathJoinTest.test_suffixes
