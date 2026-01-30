@@ -694,7 +694,6 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
     if (slen + suffix.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suffix.len - 1;
     memcpy(name, stem, slen);
     if (suffix.len > 0) {
-        assert(suffix.data != NULL && "suffix data must be valid when len > 0");
         memcpy(name + slen, suffix.data, suffix.len);
     }
     name[slen + suffix.len] = '\0';
@@ -710,7 +709,6 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     size_t stemlen = stem.len;
     if (stemlen + suflen >= SP_PATH_MAX) stemlen = SP_PATH_MAX - suflen - 1;
     if (stemlen > 0) {
-        assert(stem.data != NULL && "stem data must be valid when len > 0");
         memcpy(name, stem.data, stemlen);
     }
     memcpy(name + stemlen, suffix, suflen);
