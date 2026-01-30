@@ -1,6 +1,0 @@
-# Tests to skip ONLY on POSIX systems (Linux, macOS)
-# Format: module.class.method (one per line)
-# Lines starting with # are comments
-#
-# TEMPORARILY CLEARED - all tests enabled to identify actual failures
-# Original backup: skip_posix.txt.bak

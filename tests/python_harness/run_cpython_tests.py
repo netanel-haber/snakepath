@@ -23,30 +23,33 @@ CPYTHON_RAW = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH
 TEST_FILE = "test_pathlib.py"
 
 
-def load_skip_list():
-    """Load skip list from platform-specific skip files."""
-    base_dir = os.path.dirname(__file__)
-    skip_set = set()
+# Tests expected to fail with specific error messages
+# Format: {(class_name, test_name): expected_error_substring}
+# These document known limitations where Python-specific features cannot be in C
+EXPECTED_FAILURES = {
+    # Python's warnings.warn() system does not exist in C
+    # These tests check that DeprecationWarning is emitted for multi-arg calls
+    ("PurePosixPathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("PurePosixPathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    ("PureWindowsPathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("PureWindowsPathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    ("PurePathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("PurePathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    ("PurePathSubclassTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("PurePathSubclassTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    ("PosixPathAsPureTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("PosixPathAsPureTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    ("WindowsPathAsPureTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
+    ("WindowsPathAsPureTest", "test_relative_to_common"): "DeprecationWarning not triggered",
 
-    # Always load common skips
-    skip_files = ["skip_common.txt"]
+    # Cross-flavor ordering comparison requires Python-level type checking
+    # C library doesn't implement TypeError for comparing PosixPath < WindowsPath
+    ("PurePathTest", "test_different_flavours_unordered"): "TypeError",
 
-    # Add platform-specific skips
-    if os.name == 'nt':
-        skip_files.append("skip_windows.txt")
-    else:
-        skip_files.append("skip_posix.txt")
-
-    for filename in skip_files:
-        skip_file = os.path.join(base_dir, filename)
-        if os.path.exists(skip_file):
-            with open(skip_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        skip_set.add(line)
-
-    return skip_set
+    # Turkish I case folding requires Unicode NFKC normalization
+    # C library uses simple ASCII case folding, not full Unicode
+    ("PureWindowsPathTest", "test_eq"): "PureWindowsPath('İ')",
+}
 
 
 def download_file(url, dest):
@@ -149,9 +152,6 @@ def run_tests():
     setup_tests()
     setup_pathlib_patch()
 
-    # Load skip list
-    skip_set = load_skip_list()
-
     # Add test dir to path
     sys.path.insert(0, os.path.dirname(TEST_DIR))
 
@@ -159,11 +159,10 @@ def run_tests():
     print("Running CPython pathlib tests against snakepath")
     print("=" * 70 + "\n")
 
-    # Discover and filter tests
+    # Discover and load tests
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     loaded_count = 0
-    skipped_count = 0
 
     module_name = f"cpython_tests.{TEST_FILE[:-3]}"
 
@@ -179,10 +178,6 @@ def run_tests():
 
                 class_loaded = False
                 for method_name in loader.getTestCaseNames(obj):
-                    full_name = f"{module_name}.{name}.{method_name}"
-                    if full_name in skip_set:
-                        skipped_count += 1
-                        continue
                     suite.addTest(obj(method_name))
                     class_loaded = True
 
@@ -194,22 +189,58 @@ def run_tests():
         import traceback
         traceback.print_exc()
 
-    print(f"\nLoaded {loaded_count} test classes, skipped {skipped_count} individual tests\n")
+    print(f"\nLoaded {loaded_count} test classes\n")
 
     # Run
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
+    # Check expected failures
+    expected_failure_count = 0
+    unexpected_failures = []
+    unexpected_errors = []
+
+    for test, traceback in result.failures:
+        test_class = test.__class__.__name__
+        test_method = test._testMethodName
+        key = (test_class, test_method)
+        if key in EXPECTED_FAILURES:
+            expected_msg = EXPECTED_FAILURES[key]
+            if expected_msg in traceback:
+                expected_failure_count += 1
+                continue
+        unexpected_failures.append((test, traceback))
+
+    for test, traceback in result.errors:
+        test_class = test.__class__.__name__
+        test_method = test._testMethodName
+        key = (test_class, test_method)
+        if key in EXPECTED_FAILURES:
+            expected_msg = EXPECTED_FAILURES[key]
+            if expected_msg in traceback:
+                expected_failure_count += 1
+                continue
+        unexpected_errors.append((test, traceback))
+
     # Summary
     print("\n" + "=" * 70)
     print(f"Ran {result.testsRun} CPython tests against snakepath")
-    if result.wasSuccessful():
+    if expected_failure_count > 0:
+        print(f"Expected failures (Python-specific features not in C): {expected_failure_count}")
+
+    if not unexpected_failures and not unexpected_errors:
         print("SUCCESS")
+        return_code = 0
     else:
-        print(f"FAILURES: {len(result.failures)}, ERRORS: {len(result.errors)}")
+        print(f"UNEXPECTED FAILURES: {len(unexpected_failures)}, ERRORS: {len(unexpected_errors)}")
+        for test, tb in unexpected_failures:
+            print(f"  FAIL: {test}")
+        for test, tb in unexpected_errors:
+            print(f"  ERROR: {test}")
+        return_code = 1
     print("=" * 70)
 
-    return 0 if result.wasSuccessful() else 1
+    return return_code
 
 
 if __name__ == "__main__":

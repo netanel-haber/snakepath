@@ -1,9 +1,0 @@
-# Tests to skip on ALL platforms
-# Format: module.class.method (one per line)
-# Lines starting with # are comments
-
-# Unimplemented: Cross-flavor ordering comparison requires Python-level type checking
-cpython_tests.test_pathlib.PurePathTest.test_different_flavours_unordered
-
-# Unimplemented: Turkish I case folding requires Unicode NFKC normalization
-cpython_tests.test_pathlib.PureWindowsPathTest.test_eq
