@@ -46,12 +46,9 @@ int main(void) {
     for (int i = 0; repo_files[i]; i++) {
         SpPath src = sp_path(repo_files[i]);
         if (!sp_sv_eq_cstr(sp_suffix(&src), ".h")) continue;
-        
-        const char *renamed = SPF(repo_files[i])
-            .with_suffix(".hpp")
-            .name()
-            .data;
-        printf("  %s -> %s\n", repo_files[i], renamed);
+
+        SpStr new_name = SPF(repo_files[i])->with_suffix(".hpp")->name();
+        printf("  %s -> %.*s\n", repo_files[i], (int)new_name.len, new_name.data);
     }
 
     printf("\n=== ITERATE PARENT DIRECTORIES ===\n\n");
@@ -93,12 +90,12 @@ int main(void) {
     printf("\n=== CHAINED TRANSFORMATIONS ===\n\n");
 
     const char *result = SPF_P("/home/nhaber/snakepath/test.c")
-        .parent()
-        .join("build")
-        .join("release")
-        .with_name("libsnakepath.so")
-        .str();
-    
+        ->parent()
+        ->join("build")
+        ->join("release")
+        ->with_name("libsnakepath.so")
+        ->str();
+
     printf("  %s\n", result);
 
     printf("\n=== ITERATE PATH PARTS ===\n\n");

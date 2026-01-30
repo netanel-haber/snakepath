@@ -130,48 +130,40 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 
-// Python: Path('a/b/c').parent.name
-// C:      SPF("a/b/c").parent().name()
+// Path('a/b/c').parent.name -> "b"
+SpStr name = SPF("a/b/c")->parent()->name();
 
-// Python: PurePosixPath('/etc').joinpath('init.d', 'apache2')
-// C:      SPF_P("/etc").join("init.d").join("apache2")
+// PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
+const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
 
-// Get the underlying path
-const SpPath *p = SPF("a/b").parent().get();
+// Get SpPath when you need it for further operations
+SpPath p = SPF_W("C:/Users")->join("docs")->path();
+SpPath child = sp_join_one(&p, "file.txt");
 ```
 
-### Path Creation Macros
+### Macros
 
-| Macro | Python Equivalent | Description |
-|-------|-------------------|-------------|
-| `SPF("path")` | `Path('path')` | Native platform |
-| `SPF_P("path")` | `PurePosixPath('path')` | POSIX semantics |
-| `SPF_W("path")` | `PureWindowsPath('path')` | Windows semantics |
+| Macro | Python |
+|-------|--------|
+| `SPF("path")` | `Path('path')` |
+| `SPF_P("path")` | `PurePosixPath('path')` |
+| `SPF_W("path")` | `PureWindowsPath('path')` |
 
-### Chainable Methods
+### Chainable
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `.parent()` | SpFluent | Parent directory |
-| `.join("x")` | SpFluent | Join with component |
-| `.with_name("x")` | SpFluent | Replace name |
-| `.with_stem("x")` | SpFluent | Replace stem |
-| `.with_suffix(".x")` | SpFluent | Replace suffix |
+`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
 
-### Accessor Methods
+### Terminators
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `.name()` | SpStr | Final component |
-| `.stem()` | SpStr | Name without suffix |
-| `.suffix()` | SpStr | File extension |
-| `.suffixes()` | SpSuffixes | All extensions |
-| `.drive()` | SpStr | Drive letter |
-| `.root()` | SpStr | Root separator |
-| `.anchor()` | SpStr | Drive + root |
-| `.str()` | const char* | Path as string |
-| `.is_absolute()` | bool | Check if absolute |
-| `.get()` | const SpPath* | Underlying path |
+| Method | Returns |
+|--------|---------|
+| `->path()` | `SpPath` |
+| `->str()` | `const char*` |
+| `->name()` `->stem()` `->suffix()` | `SpStr` |
+| `->drive()` `->root()` `->anchor()` | `SpStr` |
+| `->suffixes()` | `SpSuffixes` |
+| `->is_absolute()` | `bool` |
+| `->is_relative_to(&p)` | `bool` |
 
 ## Core Types
 
@@ -324,7 +316,7 @@ Complete mapping of Python's pathlib to snakepath. Use status markers to track i
 
 | Python | Boring API | Fluent API | Status |
 |--------|-----------|------------|--------|
-| `PurePath.as_posix()` | `sp_as_posix()` | `.as_posix()` | BORING_DONE, FLUENT_DONE |
+| `PurePath.as_posix()` | `sp_as_posix()` | - | BORING_DONE, FLUENT_TODO |
 | `PurePath.is_absolute()` | `sp_is_absolute()` | `.is_absolute()` | BORING_DONE, FLUENT_DONE |
 | `PurePath.is_relative_to()` | `sp_is_relative_to()` | `.is_relative_to()` | BORING_DONE, FLUENT_DONE |
 | `PurePath.joinpath()` | `sp_joinpath()` / `sp_join_one()` | `.join()` | BORING_DONE, FLUENT_DONE |

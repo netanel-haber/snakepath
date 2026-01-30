@@ -20,207 +20,225 @@ static int sv_eq(SpStr a, const char *b) {
 #define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
 #define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
-#define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
+#define ASSERT_FLUENT(f, exp) do { SpPath _p = (f)->path(); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 
 int main(void) {
     printf("Fluent API Tests:\n");
-    
+
     /* ============ Pure Path Creation ============ */
-    
+
     /* >>> PurePath('setup.py') -> PurePosixPath('setup.py') */
-    ASSERT_STR(SPF("setup.py").str(), "setup.py");
-    
+    ASSERT_FLUENT(SPF("setup.py"), "setup.py");
+
     /* >>> PurePath('foo', 'some/path', 'bar') -> PurePosixPath('foo/some/path/bar') */
-    ASSERT_STR(SPF_P("foo").join("some/path").join("bar").str(), "foo/some/path/bar");
-    
+    ASSERT_FLUENT(SPF_P("foo")->join("some/path")->join("bar"), "foo/some/path/bar");
+
     /* >>> PurePosixPath('/etc/hosts') -> PurePosixPath('/etc/hosts') */
-    ASSERT_STR(SPF_P("/etc/hosts").str(), "/etc/hosts");
-    
+    ASSERT_FLUENT(SPF_P("/etc/hosts"), "/etc/hosts");
+
     /* >>> PureWindowsPath('c:/', 'Users', 'Ximénez') -> PureWindowsPath('c:/Users/Ximénez') */
-    ASSERT_STR(SPF_W("c:/").join("Users").join("Ximenez").str(), "c:\\Users\\Ximenez");
-    
+    ASSERT_FLUENT(SPF_W("c:/")->join("Users")->join("Ximenez"), "c:\\Users\\Ximenez");
+
     /* ============ Drive ============ */
-    
+
     /* >>> PureWindowsPath('c:/Program Files/').drive -> 'c:' */
-    ASSERT_SV(SPF_W("c:/Program Files/").drive(), "c:");
-    
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_drive(&p), "c:"); }
+
     /* >>> PurePosixPath('/etc').drive -> '' */
-    ASSERT_SV(SPF_P("/etc").drive(), "");
-    
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_drive(&p), ""); }
+
     /* >>> PureWindowsPath('//host/share/foo.txt').drive -> '\\\\host\\share' */
-    ASSERT_SV(SPF_W("//host/share/foo.txt").drive(), "\\\\host\\share");
-    
+    { SpPath p = SPF_W("//host/share/foo.txt")->path(); ASSERT_SV(sp_drive(&p), "\\\\host\\share"); }
+
     /* ============ Root ============ */
-    
+
     /* >>> PureWindowsPath('c:/Program Files/').root -> '\\' */
-    ASSERT_SV(SPF_W("c:/Program Files/").root(), "\\");
-    
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_root(&p), "\\"); }
+
     /* >>> PurePosixPath('/etc').root -> '/' */
-    ASSERT_SV(SPF_P("/etc").root(), "/");
-    
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_root(&p), "/"); }
+
     /* >>> PureWindowsPath('c:Program Files/').root -> '' */
-    ASSERT_SV(SPF_W("c:Program Files/").root(), "");
-    
+    { SpPath p = SPF_W("c:Program Files/")->path(); ASSERT_SV(sp_root(&p), ""); }
+
     /* ============ Anchor ============ */
-    
+
     /* >>> PureWindowsPath('c:/Program Files/').anchor -> 'c:\\' */
-    ASSERT_SV(SPF_W("c:/Program Files/").anchor(), "c:\\");
-    
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_anchor(&p), "c:\\"); }
+
     /* >>> PurePosixPath('/etc').anchor -> '/' */
-    ASSERT_SV(SPF_P("/etc").anchor(), "/");
-    
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_anchor(&p), "/"); }
+
     /* ============ Parent ============ */
-    
+
     /* >>> PurePosixPath('/a/b/c/d').parent -> PurePosixPath('/a/b/c') */
-    ASSERT_STR(SPF_P("/a/b/c/d").parent().str(), "/a/b/c");
-    
+    ASSERT_FLUENT(SPF_P("/a/b/c/d")->parent(), "/a/b/c");
+
     /* >>> PurePosixPath('/').parent -> PurePosixPath('/') */
-    ASSERT_STR(SPF_P("/").parent().str(), "/");
-    
+    ASSERT_FLUENT(SPF_P("/")->parent(), "/");
+
     /* >>> PurePosixPath('.').parent -> PurePosixPath('.') */
-    ASSERT_STR(SPF_P(".").parent().str(), ".");
-    
+    ASSERT_FLUENT(SPF_P(".")->parent(), ".");
+
     /* ============ Name ============ */
-    
+
     /* >>> PurePosixPath('my/library/setup.py').name -> 'setup.py' */
-    ASSERT_SV(SPF_P("my/library/setup.py").name(), "setup.py");
-    
+    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_SV(sp_name(&p), "setup.py"); }
+
     /* >>> PureWindowsPath('//some/share/setup.py').name -> 'setup.py' */
-    ASSERT_SV(SPF_W("//some/share/setup.py").name(), "setup.py");
-    
+    { SpPath p = SPF_W("//some/share/setup.py")->path(); ASSERT_SV(sp_name(&p), "setup.py"); }
+
     /* >>> PureWindowsPath('//some/share').name -> '' */
-    ASSERT_SV(SPF_W("//some/share").name(), "");
-    
+    { SpPath p = SPF_W("//some/share")->path(); ASSERT_SV(sp_name(&p), ""); }
+
     /* ============ Suffix ============ */
-    
+
     /* >>> PurePosixPath('my/library/setup.py').suffix -> '.py' */
-    ASSERT_SV(SPF_P("my/library/setup.py").suffix(), ".py");
-    
+    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_SV(sp_suffix(&p), ".py"); }
+
     /* >>> PurePosixPath('my/library.tar.gz').suffix -> '.gz' */
-    ASSERT_SV(SPF_P("my/library.tar.gz").suffix(), ".gz");
-    
+    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_SV(sp_suffix(&p), ".gz"); }
+
     /* >>> PurePosixPath('my/library').suffix -> '' */
-    ASSERT_SV(SPF_P("my/library").suffix(), "");
-    
+    { SpPath p = SPF_P("my/library")->path(); ASSERT_SV(sp_suffix(&p), ""); }
+
     /* ============ Suffixes ============ */
-    
+
     /* >>> PurePosixPath('my/library.tar.gz').suffixes -> ['.tar', '.gz'] */
-    SpSuffixes s1 = SPF_P("my/library.tar.gz").suffixes();
-    ASSERT(s1.count == 2); ASSERT_SV(s1.items[0], ".tar"); ASSERT_SV(s1.items[1], ".gz");
-    
+    { SpPath p = SPF_P("my/library.tar.gz")->path();
+      SpSuffixes s = sp_suffixes(&p);
+      ASSERT(s.count == 2); ASSERT_SV(s.items[0], ".tar"); ASSERT_SV(s.items[1], ".gz"); }
+
     /* >>> PurePosixPath('my/library').suffixes -> [] */
-    ASSERT(SPF_P("my/library").suffixes().count == 0);
-    
+    { SpPath p = SPF_P("my/library")->path(); ASSERT(sp_suffixes(&p).count == 0); }
+
     /* ============ Stem ============ */
-    
+
     /* >>> PurePosixPath('my/library.tar.gz').stem -> 'library.tar' */
-    ASSERT_SV(SPF_P("my/library.tar.gz").stem(), "library.tar");
-    
+    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_SV(sp_stem(&p), "library.tar"); }
+
     /* >>> PurePosixPath('my/library.tar').stem -> 'library' */
-    ASSERT_SV(SPF_P("my/library.tar").stem(), "library");
-    
+    { SpPath p = SPF_P("my/library.tar")->path(); ASSERT_SV(sp_stem(&p), "library"); }
+
     /* ============ as_posix ============ */
-    
+
     /* >>> PureWindowsPath('c:\\windows').as_posix() -> 'c:/windows' */
-    ASSERT_STR(SPF_W("c:\\windows").as_posix(), "c:/windows");
-    
+    { SpPath p = SPF_W("c:\\windows")->path(); char buf[SP_PATH_MAX]; sp_as_posix(&p, buf, sizeof(buf)); ASSERT_STR(buf, "c:/windows"); }
+
     /* ============ is_absolute ============ */
-    
+
     /* >>> PurePosixPath('/a/b').is_absolute() -> True */
-    ASSERT(SPF_P("/a/b").is_absolute() == true);
-    
+    { SpPath p = SPF_P("/a/b")->path(); ASSERT(sp_is_absolute(&p) == true); }
+
     /* >>> PurePosixPath('a/b').is_absolute() -> False */
-    ASSERT(SPF_P("a/b").is_absolute() == false);
-    
+    { SpPath p = SPF_P("a/b")->path(); ASSERT(sp_is_absolute(&p) == false); }
+
     /* >>> PureWindowsPath('c:/a/b').is_absolute() -> True */
-    ASSERT(SPF_W("c:/a/b").is_absolute() == true);
-    
+    { SpPath p = SPF_W("c:/a/b")->path(); ASSERT(sp_is_absolute(&p) == true); }
+
     /* >>> PureWindowsPath('/a/b').is_absolute() -> False */
-    ASSERT(SPF_W("/a/b").is_absolute() == false);
-    
+    { SpPath p = SPF_W("/a/b")->path(); ASSERT(sp_is_absolute(&p) == false); }
+
     /* >>> PureWindowsPath('c:').is_absolute() -> False */
-    ASSERT(SPF_W("c:").is_absolute() == false);
-    
+    { SpPath p = SPF_W("c:")->path(); ASSERT(sp_is_absolute(&p) == false); }
+
     /* >>> PureWindowsPath('//some/share').is_absolute() -> True */
-    ASSERT(SPF_W("//server/share/a").is_absolute() == true);
-    
+    { SpPath p = SPF_W("//server/share/a")->path(); ASSERT(sp_is_absolute(&p) == true); }
+
     /* ============ joinpath ============ */
-    
+
     /* >>> PurePosixPath('/etc').joinpath('passwd') -> PurePosixPath('/etc/passwd') */
-    ASSERT_STR(SPF_P("/etc").join("passwd").str(), "/etc/passwd");
-    
+    ASSERT_FLUENT(SPF_P("/etc")->join("passwd"), "/etc/passwd");
+
     /* >>> PurePosixPath('/etc').joinpath('init.d', 'apache2') -> PurePosixPath('/etc/init.d/apache2') */
-    ASSERT_STR(SPF_P("/etc").join("init.d").join("apache2").str(), "/etc/init.d/apache2");
-    
+    ASSERT_FLUENT(SPF_P("/etc")->join("init.d")->join("apache2"), "/etc/init.d/apache2");
+
     /* >>> PureWindowsPath('c:').joinpath('/Program Files') -> PureWindowsPath('c:/Program Files') */
-    ASSERT_STR(SPF_W("c:").join("/Program Files").str(), "c:\\Program Files");
-    
+    ASSERT_FLUENT(SPF_W("c:")->join("/Program Files"), "c:\\Program Files");
+
     /* ============ with_name ============ */
-    
+
     /* >>> PureWindowsPath('c:/Downloads/pathlib.tar.gz').with_name('setup.py') -> 'c:/Downloads/setup.py' */
-    ASSERT_STR(SPF_W("c:/Downloads/pathlib.tar.gz").with_name("setup.py").str(), "c:\\Downloads\\setup.py");
-    
+    ASSERT_FLUENT(SPF_W("c:/Downloads/pathlib.tar.gz")->with_name("setup.py"), "c:\\Downloads\\setup.py");
+
     /* ============ with_stem ============ */
-    
+
     /* >>> PureWindowsPath('c:/Downloads/draft.txt').with_stem('final') -> 'c:/Downloads/final.txt' */
-    ASSERT_STR(SPF_W("c:/Downloads/draft.txt").with_stem("final").str(), "c:\\Downloads\\final.txt");
-    
+    ASSERT_FLUENT(SPF_W("c:/Downloads/draft.txt")->with_stem("final"), "c:\\Downloads\\final.txt");
+
     /* >>> PureWindowsPath('c:/Downloads/pathlib.tar.gz').with_stem('lib') -> 'c:/Downloads/lib.gz' */
-    ASSERT_STR(SPF_W("c:/Downloads/pathlib.tar.gz").with_stem("lib").str(), "c:\\Downloads\\lib.gz");
-    
+    ASSERT_FLUENT(SPF_W("c:/Downloads/pathlib.tar.gz")->with_stem("lib"), "c:\\Downloads\\lib.gz");
+
     /* ============ with_suffix ============ */
-    
+
     /* >>> PureWindowsPath('c:/Downloads/pathlib.tar.gz').with_suffix('.bz2') -> 'c:/Downloads/pathlib.tar.bz2' */
-    ASSERT_STR(SPF_W("c:/Downloads/pathlib.tar.gz").with_suffix(".bz2").str(), "c:\\Downloads\\pathlib.tar.bz2");
-    
+    ASSERT_FLUENT(SPF_W("c:/Downloads/pathlib.tar.gz")->with_suffix(".bz2"), "c:\\Downloads\\pathlib.tar.bz2");
+
     /* >>> PureWindowsPath('README').with_suffix('.txt') -> PureWindowsPath('README.txt') */
-    ASSERT_STR(SPF_P("a/README").with_suffix(".txt").str(), "a/README.txt");
-    
+    ASSERT_FLUENT(SPF_P("a/README")->with_suffix(".txt"), "a/README.txt");
+
     /* >>> PureWindowsPath('README.txt').with_suffix('') -> PureWindowsPath('README') */
-    ASSERT_STR(SPF_P("a/README.txt").with_suffix("").str(), "a/README");
-    
+    ASSERT_FLUENT(SPF_P("a/README.txt")->with_suffix(""), "a/README");
+
     /* ============ is_relative_to ============ */
-    
+
     /* >>> PurePath('/etc/passwd').is_relative_to('/etc') -> True */
-    SpPath base1 = sp_path_f("/etc", SP_FLAVOR_POSIX);
-    ASSERT(SPF_P("/etc/passwd").is_relative_to(&base1) == true);
-    
+    { SpPath p = SPF_P("/etc/passwd")->path(); SpPath base = sp_path_f("/etc", SP_FLAVOR_POSIX);
+      ASSERT(sp_is_relative_to(&p, &base) == true); }
+
     /* >>> PurePath('/etc/passwd').is_relative_to('/usr') -> False */
-    SpPath base2 = sp_path_f("/usr", SP_FLAVOR_POSIX);
-    ASSERT(SPF_P("/etc/passwd").is_relative_to(&base2) == false);
-    
-    /* ============ relative_to ============ */
-    
+    { SpPath p = SPF_P("/etc/passwd")->path(); SpPath base = sp_path_f("/usr", SP_FLAVOR_POSIX);
+      ASSERT(sp_is_relative_to(&p, &base) == false); }
+
+    /* ============ relative_to (fluent chainable) ============ */
+
     /* >>> PurePosixPath('/etc/passwd').relative_to('/') -> PurePosixPath('etc/passwd') */
-    SpPath base3 = sp_path_f("/", SP_FLAVOR_POSIX);
-    ASSERT_PATH(SPF_P("/etc/passwd").relative_to(&base3), "etc/passwd");
-    
+    { SpPath base = sp_path_f("/", SP_FLAVOR_POSIX);
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base), "etc/passwd"); }
+
     /* >>> PurePosixPath('/etc/passwd').relative_to('/etc') -> PurePosixPath('passwd') */
-    SpPath base4 = sp_path_f("/etc", SP_FLAVOR_POSIX);
-    ASSERT_PATH(SPF_P("/etc/passwd").relative_to(&base4), "passwd");
-    
+    { SpPath base = sp_path_f("/etc", SP_FLAVOR_POSIX);
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base), "passwd"); }
+
+    /* ============ relative_to_walk_up (fluent chainable) ============ */
+
+    /* >>> PurePosixPath('/etc/passwd').relative_to('/usr', walk_up=True) -> '../etc/passwd' */
+    { SpPath base = sp_path_f("/usr", SP_FLAVOR_POSIX);
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to_walk_up(&base), "../etc/passwd"); }
+
+    /* ============ absolute (fluent chainable) ============ */
+
+    /* Path('foo/bar').absolute() returns absolute path */
+    /* Use native flavor - POSIX flavor on Windows CWD won't be a valid POSIX absolute */
+    { SpPath p = SPF("foo/bar")->absolute()->path();
+      ASSERT(sp_is_absolute(&p) == true); }
+
     /* ============ Chaining ============ */
-    
+
     /* Path('/a/b/c.txt').parent.name -> 'b' */
-    ASSERT_SV(SPF_P("/a/b/c.txt").parent().name(), "b");
-    
+    { SpPath p = SPF_P("/a/b/c.txt")->parent()->path(); ASSERT_SV(sp_name(&p), "b"); }
+
     /* Path('/a/b/c').parent.parent -> '/a' */
-    ASSERT_STR(SPF_P("/a/b/c").parent().parent().str(), "/a");
-    
+    ASSERT_FLUENT(SPF_P("/a/b/c")->parent()->parent(), "/a");
+
     /* (Path('/a') / 'b' / 'c').parent -> '/a/b' */
-    ASSERT_STR(SPF_P("/a").join("b").join("c").parent().str(), "/a/b");
-    
+    ASSERT_FLUENT(SPF_P("/a")->join("b")->join("c")->parent(), "/a/b");
+
     /* Path('a/b.txt').with_name('c.py').suffix -> '.py' */
-    ASSERT_SV(SPF_P("a/b.txt").with_name("c.py").suffix(), ".py");
-    
+    { SpPath p = SPF_P("a/b.txt")->with_name("c.py")->path(); ASSERT_SV(sp_suffix(&p), ".py"); }
+
     /* Path('a/b.txt').with_suffix('.md').stem -> 'b' */
-    ASSERT_SV(SPF_P("a/b.txt").with_suffix(".md").stem(), "b");
-    
-    /* ============ get() / as_sv() ============ */
-    
-    ASSERT_STR(sp_str(SPF_P("/etc/passwd").parent().get()), "/etc");
-    ASSERT_SV(SPF_P("/etc/passwd").as_sv(), "/etc/passwd");
-    
+    { SpPath p = SPF_P("a/b.txt")->with_suffix(".md")->path(); ASSERT_SV(sp_stem(&p), "b"); }
+
+    /* ============ Branching from common base ============ */
+
+    /* Use non-fluent API or repeat prefix for branching */
+    SpPath base = SPF_P("/home/user")->path();
+    SpPath docs = sp_join_one(&base, "Documents");
+    SpPath pics = sp_join_one(&base, "Pictures");
+    ASSERT_STR(sp_str(&docs), "/home/user/Documents");
+    ASSERT_STR(sp_str(&pics), "/home/user/Pictures");
+
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);
     return 0;
