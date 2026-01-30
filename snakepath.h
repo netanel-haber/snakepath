@@ -38,10 +38,6 @@ extern "C" {
 #define SP_PATH_MAX 4096
 #endif
 
-#ifndef SP_MAX_PARTS
-#define SP_MAX_PARTS 256
-#endif
-
 #ifndef SP_MAX_SUFFIXES
 #define SP_MAX_SUFFIXES 16
 #endif
@@ -49,14 +45,8 @@ extern "C" {
 /* Platform detection */
 #if defined(_WIN32) || defined(_WIN64)
 #define SP_WINDOWS 1
-#define SP_SEP '\\'
-#define SP_SEP_STR "\\"
-#define SP_ALTSEP '/'
 #else
 #define SP_POSIX 1
-#define SP_SEP '/'
-#define SP_SEP_STR "/"
-#define SP_ALTSEP '\0'
 #endif
 
 /* Flavors for explicit platform behavior */
@@ -241,11 +231,7 @@ struct SpFluent {
 };
 
 /* Global fluent instance (declared, defined in implementation) */
-#ifdef SNAKEPATH_IMPLEMENTATION
 extern SpFluent spf;
-#else
-extern SpFluent spf;
-#endif
 
 /* Path creation macros */
 #define SPF(s)   (sp_fluent_init(sp_path(s)), spf)
@@ -484,7 +470,7 @@ SpSuffixes sp_suffixes(const SpPath *p) {
     if (name.len == 0) return r;
     size_t i = 0;
     /* Skip leading dot (hidden file) */
-    if (name.len > 0 && name.data[0] == '.') i = 1;
+    if (name.data[0] == '.') i = 1;
     while (i < name.len && r.count < SP_MAX_SUFFIXES) {
         size_t dot = i;
         while (dot < name.len && name.data[dot] != '.') dot++;
