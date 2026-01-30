@@ -170,8 +170,12 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
+/* Multi-segment variants (parts is NULL-terminated array of strings) */
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
 bool sp_is_absolute(const SpPath *p);
+size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
 int sp_path_cmp(const SpPath *a, const SpPath *b);
 unsigned long sp_path_hash(const SpPath *p);
@@ -1321,6 +1325,95 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
 
     r.buf[r.len] = '\0';
     return r;
+}
+
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Join parts into a temporary path */
+    SpPath empty = SP_PRIV_ZERO;
+    empty.flavor = p->flavor;
+    SpPath other = sp_join_impl(&empty, parts);
+    return sp_is_relative_to(p, &other);
+}
+
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Join parts into a temporary path */
+    SpPath empty = SP_PRIV_ZERO;
+    empty.flavor = p->flavor;
+    SpPath other = sp_join_impl(&empty, parts);
+    return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
+}
+
+size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (buf_size == 0) return 0;
+    buf[0] = '\0';
+
+    /* Only absolute paths can be expressed as URIs */
+    if (!sp_is_absolute(p)) return 0;
+
+    /* Get POSIX representation */
+    char posix_buf[SP_PATH_MAX];
+    sp_as_posix(p, posix_buf, SP_PATH_MAX);
+    const char *path = posix_buf;
+    size_t path_len = strlen(path);
+
+    /* Calculate required buffer size and build URI */
+    size_t pos = 0;
+
+    /* UNC paths: //server/share -> file://server/share */
+    if (path_len >= 2 && path[0] == '/' && path[1] == '/') {
+        if (pos + 5 < buf_size) {
+            memcpy(buf + pos, "file:", 5);
+            pos += 5;
+        } else {
+            return 0;
+        }
+    } else {
+        /* Regular absolute paths: /path or /C:/path -> file:///path or file:///C:/path */
+        if (pos + 7 < buf_size) {
+            memcpy(buf + pos, "file://", 7);
+            pos += 7;
+        } else {
+            return 0;
+        }
+    }
+
+    /* URL-encode the path (RFC 3986) */
+    for (size_t i = 0; i < path_len; i++) {
+        unsigned char c = SP_PRIV_CAST(unsigned char, path[i]);
+        /* Unreserved characters: don't encode */
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '.' ||
+            c == '_' || c == '~' || c == '/') {
+            if (pos + 1 < buf_size) {
+                buf[pos++] = SP_PRIV_CAST(char, c);
+            } else {
+                return 0;
+            }
+        } else if (c == ':' && i > 0 && path[i-1] != '/') {
+            /* Allow ':' after drive letter (e.g., C:) but encode otherwise */
+            if (pos + 1 < buf_size) {
+                buf[pos++] = ':';
+            } else {
+                return 0;
+            }
+        } else {
+            /* Percent-encode */
+            if (pos + 3 < buf_size) {
+                static const char hex[] = "0123456789ABCDEF";
+                buf[pos++] = '%';
+                buf[pos++] = hex[c >> 4];
+                buf[pos++] = hex[c & 0x0F];
+            } else {
+                return 0;
+            }
+        }
+    }
+
+    buf[pos] = '\0';
+    return pos;
 }
 
 bool sp_path_eq(const SpPath *a, const SpPath *b) {

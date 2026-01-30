@@ -57,6 +57,19 @@ SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
     return sp_relative_to_is_error(p) ? 1 : 0;
 }
 
+/* Multi-segment variants */
+SP_EXPORT int sp_is_relative_to_parts_wrap(const SpPath *p, const char **parts) {
+    return sp_is_relative_to_parts(p, parts) ? 1 : 0;
+}
+
+SP_EXPORT void sp_relative_to_parts_wrap(const SpPath *p, const char **parts, int walk_up, SpPath *out) {
+    *out = sp_relative_to_parts(p, parts, walk_up != 0);
+}
+
+SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
+    return sp_as_uri(p, buf, buf_size);
+}
+
 /* Path -> bool */
 WRAP_BOOL_UNARY(is_absolute)
 
