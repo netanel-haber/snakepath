@@ -16,5 +16,6 @@ test_fluent_gcc
 # Python
 python/libsnakepath.so
 python/snakepath.dll
+python/tests/cpython_tests/
 __pycache__/
 *.pyc
