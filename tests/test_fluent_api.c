@@ -209,7 +209,8 @@ int main(void) {
     /* ============ absolute (fluent chainable) ============ */
 
     /* Path('foo/bar').absolute() returns absolute path */
-    { SpPath p = SPF_P("foo/bar")->absolute()->path();
+    /* Use native flavor - POSIX flavor on Windows CWD won't be a valid POSIX absolute */
+    { SpPath p = SPF("foo/bar")->absolute()->path();
       ASSERT(sp_is_absolute(&p) == true); }
 
     /* ============ Chaining ============ */
