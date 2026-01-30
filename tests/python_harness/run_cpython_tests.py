@@ -154,7 +154,7 @@ EXPECTED_FAILURES = {
     # =========================================================================
     # PathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
     # =========================================================================
-    ("PathTest", "test_absolute_common"): "has no attribute 'absolute'",
+    ("PathTest", "test_absolute_common"): "exists",
     ("PathTest", "test_concrete_class"): "exists",
     ("PathTest", "test_cwd"): "exists",
     ("PathTest", "test_empty_path"): "exists",
@@ -219,7 +219,7 @@ EXPECTED_FAILURES = {
     # PosixPathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
     # =========================================================================
     ("PosixPathTest", "test_absolute"): "exists",
-    ("PosixPathTest", "test_absolute_common"): "has no attribute 'absolute'",
+    ("PosixPathTest", "test_absolute_common"): "exists",
     ("PosixPathTest", "test_cwd"): "exists",
     ("PosixPathTest", "test_empty_path"): "exists",
     ("PosixPathTest", "test_exists"): "exists",
@@ -293,6 +293,87 @@ EXPECTED_FAILURES = {
     ("WalkTests", "test_walk_many_open_files"): "exists",
     ("WalkTests", "test_walk_prune"): "exists",
     ("WalkTests", "test_walk_topdown"): "exists",
+
+    # =========================================================================
+    # WindowsPathAsPureTest - runs only on Windows, tests pure path operations
+    # group/owner require getgrgid/getpwuid which aren't implemented
+    # with_segments/with_suffix have same issues as other pure path tests
+    # =========================================================================
+    ("WindowsPathAsPureTest", "test_group"): "has no attribute 'group'",
+    ("WindowsPathAsPureTest", "test_owner"): "has no attribute 'owner'",
+    ("WindowsPathAsPureTest", "test_with_segments_common"): "has no attribute 'session_id'",
+    ("WindowsPathAsPureTest", "test_with_suffix_common"): "expected str, not tuple",
+
+    # =========================================================================
+    # WindowsPathTest - concrete Path tests on Windows, require filesystem I/O
+    # =========================================================================
+    ("WindowsPathTest", "test_absolute"): "exists",
+    ("WindowsPathTest", "test_absolute_common"): "exists",
+    ("WindowsPathTest", "test_cwd"): "exists",
+    ("WindowsPathTest", "test_empty_path"): "exists",
+    ("WindowsPathTest", "test_exists"): "exists",
+    ("WindowsPathTest", "test_expanduser"): "exists",
+    ("WindowsPathTest", "test_expanduser_common"): "exists",
+    ("WindowsPathTest", "test_glob"): "exists",
+    ("WindowsPathTest", "test_glob_above_recursion_limit"): "exists",
+    ("WindowsPathTest", "test_glob_case_sensitive"): "exists",
+    ("WindowsPathTest", "test_glob_common"): "exists",
+    ("WindowsPathTest", "test_glob_dotdot"): "exists",
+    ("WindowsPathTest", "test_glob_many_open_files"): "exists",
+    ("WindowsPathTest", "test_group"): "exists",
+    ("WindowsPathTest", "test_hardlink_to"): "exists",
+    ("WindowsPathTest", "test_home"): "exists",
+    ("WindowsPathTest", "test_is_block_device_false"): "exists",
+    ("WindowsPathTest", "test_is_char_device_false"): "exists",
+    ("WindowsPathTest", "test_is_char_device_true"): "exists",
+    ("WindowsPathTest", "test_is_dir"): "exists",
+    ("WindowsPathTest", "test_is_fifo_false"): "exists",
+    ("WindowsPathTest", "test_is_fifo_true"): "exists",
+    ("WindowsPathTest", "test_is_file"): "exists",
+    ("WindowsPathTest", "test_is_junction"): "exists",
+    ("WindowsPathTest", "test_is_mount"): "exists",
+    ("WindowsPathTest", "test_is_socket_false"): "exists",
+    ("WindowsPathTest", "test_is_socket_true"): "exists",
+    ("WindowsPathTest", "test_is_symlink"): "exists",
+    ("WindowsPathTest", "test_iterdir"): "exists",
+    ("WindowsPathTest", "test_iterdir_nodir"): "exists",
+    ("WindowsPathTest", "test_lstat_nosymlink"): "exists",
+    ("WindowsPathTest", "test_mkdir"): "exists",
+    ("WindowsPathTest", "test_mkdir_concurrent_parent_creation"): "exists",
+    ("WindowsPathTest", "test_mkdir_exist_ok"): "exists",
+    ("WindowsPathTest", "test_mkdir_exist_ok_root"): "exists",
+    ("WindowsPathTest", "test_mkdir_exist_ok_with_parent"): "exists",
+    ("WindowsPathTest", "test_mkdir_no_parents_file"): "exists",
+    ("WindowsPathTest", "test_mkdir_parents"): "exists",
+    ("WindowsPathTest", "test_mkdir_with_child_file"): "exists",
+    ("WindowsPathTest", "test_mkdir_with_unknown_drive"): "exists",
+    ("WindowsPathTest", "test_open_common"): "exists",
+    ("WindowsPathTest", "test_owner"): "exists",
+    ("WindowsPathTest", "test_parts_interning"): "exists",
+    ("WindowsPathTest", "test_passing_kwargs_deprecated"): "exists",
+    ("WindowsPathTest", "test_pickling_common"): "exists",
+    ("WindowsPathTest", "test_read_write_bytes"): "exists",
+    ("WindowsPathTest", "test_read_write_text"): "exists",
+    ("WindowsPathTest", "test_rename"): "exists",
+    ("WindowsPathTest", "test_replace"): "exists",
+    ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"): "exists",
+    ("WindowsPathTest", "test_rglob"): "exists",
+    ("WindowsPathTest", "test_rglob_common"): "exists",
+    ("WindowsPathTest", "test_rmdir"): "exists",
+    ("WindowsPathTest", "test_samefile"): "exists",
+    ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"): "exists",
+    ("WindowsPathTest", "test_touch_common"): "exists",
+    ("WindowsPathTest", "test_touch_nochange"): "exists",
+    ("WindowsPathTest", "test_unlink"): "exists",
+    ("WindowsPathTest", "test_unlink_missing_ok"): "exists",
+    ("WindowsPathTest", "test_with"): "exists",
+    ("WindowsPathTest", "test_with_segments"): "exists",
+    ("WindowsPathTest", "test_write_text_with_newlines"): "exists",
+
+    # =========================================================================
+    # PathTest Windows-specific tests
+    # =========================================================================
+    ("PathTest", "test_mkdir_with_unknown_drive"): "exists",
 }
 
 
