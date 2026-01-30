@@ -161,7 +161,7 @@ int main(void) {
     
     JoinTest win_join[] = {
         {"C:/a/b", "x/y", "C:\\a\\b\\x\\y"}, {"C:/a/b", "/x/y", "C:\\x\\y"},
-        {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "C:\\a\\b\\x\\y"}
+        {"C:/a/b", "D:/x/y", "D:\\x\\y"}, {"C:/a/b", "c:x/y", "c:\\a\\b\\x\\y"}
     };
     test_join(W, win_join, ARRAY_LEN(win_join));
     

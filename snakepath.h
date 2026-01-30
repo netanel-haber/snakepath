@@ -450,10 +450,17 @@ SpStr sp_name(const SpPath *p) {
 SpStr sp_suffix(const SpPath *p) {
     SpStr name = sp_name(p);
     if (name.len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    /* Special cases: names consisting only of dots have no suffix (., .., ..., etc.) */
+    bool all_dots = true;
+    for (size_t j = 0; j < name.len; j++) {
+        if (name.data[j] != '.') { all_dots = false; break; }
+    }
+    if (all_dots) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     size_t i = name.len;
     while (i > 0 && name.data[i-1] != '.') i--;
+    /* i <= 1 means no dot found, or dot is at start (hidden file like .bashrc) */
     if (i <= 1) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    if (i >= name.len) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    /* Trailing dot (file.) returns "." as suffix */
     return SP_PRIV_STR(name.data + i - 1, name.len - i + 1);
 }
 
@@ -614,15 +621,30 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
         bool same_drive = (sp_priv_is_drive_letter(other_drive) && sp_priv_is_drive_letter(base_drive) &&
                          ((other_drive | 32) == (base_drive | 32)));
         if (same_drive && olen == 2) {
-            /* Same drive, relative */
-            return sp_path_copy(base);
+            /* Same drive letter only (e.g., "c:") - keep base but use other's drive casing */
+            SpPath r = sp_path_copy(base);
+            r.buf[0] = other_drive;  /* Use casing from other */
+            return r;
         }
         if (same_drive) {
-            /* Same drive - append after drive */
-            SpPath r = sp_path_copy(base);
+            /* Check if other has a root (e.g., c:/x/y vs c:x/y) */
+            bool other_has_root = (olen > 2 && sp_priv_is_sep(other[2], flavor));
+            if (other_has_root) {
+                /* Same drive with root - other replaces base entirely */
+                return sp_path_new(other, SP_PRIV_OPTS(flavor));
+            }
+            /* Same drive, no root - use other's drive casing, keep base path, append other's relative part */
+            SpPath r = SP_PRIV_ZERO;
+            r.flavor = flavor;
+            /* Copy base path but with other's drive casing */
+            memcpy(r.buf, base->buf, base->len);
+            r.len = base->len;
+            r.buf[0] = other_drive;  /* Use casing from other */
+            /* Add separator if needed */
             if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len-1], flavor)) {
                 if (r.len + 1 < SP_PATH_MAX) r.buf[r.len++] = sp_priv_sep(flavor);
             }
+            /* Append content after other's drive */
             if (r.len + olen - 2 < SP_PATH_MAX) {
                 memcpy(r.buf + r.len, other + 2, olen - 2);
                 r.len += olen - 2;
@@ -636,7 +658,14 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
     }
     /* Relative path - simple join */
     SpPath r = sp_path_copy(base);
-    if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len-1], flavor)) {
+    size_t anchor = sp_priv_anchor_len(r.buf, r.len, flavor);
+    /* Add separator unless:
+       - base ends with separator already
+       - base is drive-only (e.g., "D:") - drive-relative paths don't get separator */
+    bool is_drive_only = (anchor == r.len && anchor == 2 &&
+                          sp_priv_has_drive(r.buf, r.len, flavor) &&
+                          sp_priv_root_len(r.buf, r.len, flavor) == 0);
+    if (!is_drive_only && r.len > 0 && !sp_priv_is_sep(r.buf[r.len-1], flavor)) {
         if (r.len + 1 < SP_PATH_MAX) r.buf[r.len++] = sp_priv_sep(flavor);
     }
     if (r.len + olen < SP_PATH_MAX) {

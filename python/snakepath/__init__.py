@@ -379,9 +379,22 @@ class PurePath:
 
         return result
 
+    def _validate_name(self, name, what="name"):
+        """Validate a name/stem doesn't contain path separators or drives."""
+        if not name:
+            raise ValueError(f"Invalid {what} {name!r}")
+        # Check for separators
+        if '/' in name or '\\' in name:
+            raise ValueError(f"Invalid {what} {name!r}")
+        # Check for drive letter (Windows only)
+        if self._flavor == SP_FLAVOR_WINDOWS:
+            if len(name) >= 2 and name[1] == ':' and name[0].isalpha():
+                raise ValueError(f"Invalid {what} {name!r}")
+
     def with_name(self, name):
         if not self.name:
             raise ValueError(f"{self!r} has an empty name")
+        self._validate_name(name, "name")
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_name_wrap(byref(self._sp), _encode(name), byref(result._sp))
@@ -390,16 +403,26 @@ class PurePath:
     def with_stem(self, stem):
         if not self.name:
             raise ValueError(f"{self!r} has an empty name")
+        self._validate_name(stem, "stem")
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_stem_wrap(byref(self._sp), _encode(stem), byref(result._sp))
         return result
 
     def with_suffix(self, suffix):
-        if not self.name:
+        name = self.name
+        if not name or name == '.':
             raise ValueError(f"{self!r} has an empty name")
         if suffix and not suffix.startswith('.'):
             raise ValueError(f"Invalid suffix {suffix!r}")
+        # Check for separators or drive in suffix
+        if '/' in suffix or '\\' in suffix:
+            raise ValueError(f"Invalid suffix {suffix!r}")
+        if self._flavor == SP_FLAVOR_WINDOWS:
+            if len(suffix) >= 3 and suffix[1] == ':' and suffix[0].isalpha():
+                raise ValueError(f"Invalid suffix {suffix!r}")
+            if len(suffix) >= 2 and ':' in suffix:
+                raise ValueError(f"Invalid suffix {suffix!r}")
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_with_suffix_wrap(byref(self._sp), _encode(suffix), byref(result._sp))
