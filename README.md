@@ -131,18 +131,17 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #include "snakepath.h"
 
 // Python: Path('a/b/c').parent.name
-SpFluentPath f = SPF("a/b/c").parent();
-SpStr name = sp_name(&f.path);  // "b"
+SpPath p = SPF("a/b/c").parent().path();
+SpStr name = sp_name(&p);  // "b"
 
 // Python: PurePosixPath('/etc').joinpath('init.d', 'apache2')
-SpFluentPath etc = SPF_P("/etc").join("init.d").join("apache2");
-printf("%s\n", sp_str(&etc.path));  // "/etc/init.d/apache2"
+SpPath etc = SPF_P("/etc").join("init.d").join("apache2").path();
+printf("%s\n", sp_str(&etc));  // "/etc/init.d/apache2"
 
-// Store and resume chaining later
-SpFluentPath base = SPF_P("/home/user");
-SpFluentPath docs = SP(base).join("Documents");
-SpFluentPath pics = SP(base).join("Pictures");
-// Safe: docs.path and pics.path have independent buffers
+// Branching from a common base - use non-fluent API
+SpPath base = SPF_P("/home/user").path();
+SpPath docs = sp_join_one(&base, "Documents");
+SpPath pics = sp_join_one(&base, "Pictures");
 ```
 
 ### Path Creation Macros
@@ -152,7 +151,6 @@ SpFluentPath pics = SP(base).join("Pictures");
 | `SPF("path")` | `Path('path')` | Native platform |
 | `SPF_P("path")` | `PurePosixPath('path')` | POSIX semantics |
 | `SPF_W("path")` | `PureWindowsPath('path')` | Windows semantics |
-| `SP(f)` | - | Resume chaining from stored `SpFluentPath` |
 
 ### Chainable Methods
 
@@ -166,16 +164,17 @@ SpFluentPath pics = SP(base).join("Pictures");
 | `.absolute()` | SpFluentPath | Make path absolute |
 | `.relative_to(&base)` | SpFluentPath | Relative path from base |
 | `.relative_to_walk_up(&base)` | SpFluentPath | Relative path with `..` |
+| `.path()` | SpPath | **Finish chain and get result** |
 
 ### Accessing Results
 
-Use the regular API with the `.path` field:
+Call `.path()` to finish the chain and get an `SpPath`:
 
 ```c
-SpFluentPath f = SPF_P("/home/user").join("docs").with_suffix(".txt");
-printf("%s\n", sp_str(&f.path));        // Path as string
-printf("%.*s\n", (int)sp_name(&f.path).len, sp_name(&f.path).data);  // Name
-bool abs = sp_is_absolute(&f.path);     // Check if absolute
+SpPath p = SPF_P("/home/user").join("docs").with_suffix(".txt").path();
+printf("%s\n", sp_str(&p));        // Path as string
+printf("%.*s\n", (int)sp_name(&p).len, sp_name(&p).data);  // Name
+bool abs = sp_is_absolute(&p);     // Check if absolute
 ```
 
 ## Core Types
