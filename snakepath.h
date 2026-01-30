@@ -67,13 +67,12 @@ typedef enum {
 } SpFlavor;
 
 /* Assertion macros for runtime invariant checking */
-#define SP_ASSERT(cond) assert(cond)
-#define SP_ASSERT_PATH(p) SP_ASSERT((p) != NULL && "path pointer must not be NULL")
-#define SP_ASSERT_FLAVOR(f) SP_ASSERT(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
+#define SP_ASSERT_PATH(p) assert((p) != NULL && "path pointer must not be NULL")
+#define SP_ASSERT_FLAVOR(f) assert(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
 #define SP_ASSERT_PATH_INVARIANT(p) do { \
     SP_ASSERT_PATH(p); \
-    SP_ASSERT((p)->len < SP_PATH_MAX && "path length exceeds buffer size"); \
-    SP_ASSERT((p)->buf[(p)->len] == '\0' && "path buffer not null-terminated"); \
+    assert((p)->len < SP_PATH_MAX && "path length exceeds buffer size"); \
+    assert((p)->buf[(p)->len] == '\0' && "path buffer not null-terminated"); \
     SP_ASSERT_FLAVOR((p)->flavor); \
 } while(0)
 
@@ -172,13 +171,13 @@ bool sp_is_empty(const SpPath *p);
 
 /* ============ Helper Functions ============ */
 static inline bool sp_sv_eq(SpStr a, SpStr b) {
-    SP_ASSERT((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
-    SP_ASSERT((b.len == 0 || b.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert((b.len == 0 || b.data != NULL) && "SpStr with non-zero len must have valid data");
     return a.len == b.len && memcmp(a.data, b.data, a.len) == 0;
 }
 static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
-    SP_ASSERT((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
-    SP_ASSERT(b != NULL && "string pointer must not be NULL");
+    assert((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert(b != NULL && "string pointer must not be NULL");
     size_t blen = strlen(b);
     return a.len == blen && memcmp(a.data, b, a.len) == 0;
 }
@@ -372,14 +371,14 @@ SpPath sp_path_new(const char *s, SpPathOpts opts) {
         p.buf[p.len] = '\0';
         sp_priv_normalize(p.buf, &p.len, p.flavor);
     }
-    SP_ASSERT(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
-    SP_ASSERT(p.buf[p.len] == '\0' && "post-condition: null-terminated");
+    assert(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
+    assert(p.buf[p.len] == '\0' && "post-condition: null-terminated");
     return p;
 }
 
 SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
-    SP_ASSERT((sv.len == 0 || sv.data != NULL) && "SpStr with non-zero len must have valid data");
+    assert((sv.len == 0 || sv.data != NULL) && "SpStr with non-zero len must have valid data");
     SpPath p = SP_PRIV_ZERO;
     p.flavor = flavor;
     p.len = sv.len;
@@ -389,7 +388,7 @@ SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
     }
     p.buf[p.len] = '\0';
     sp_priv_normalize(p.buf, &p.len, p.flavor);
-    SP_ASSERT(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
+    assert(p.len < SP_PATH_MAX && "post-condition: path length in bounds");
     return p;
 }
 
@@ -411,8 +410,8 @@ SpStr sp_as_sv(const SpPath *p) {
 
 void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT(out != NULL && "output buffer must not be NULL");
-    SP_ASSERT(out_size > 0 && "output buffer size must be positive");
+    assert(out != NULL && "output buffer must not be NULL");
+    assert(out_size > 0 && "output buffer size must be positive");
     size_t i;
     size_t n = p->len < out_size - 1 ? p->len : out_size - 1;
     for (i = 0; i < n; i++) {
@@ -424,7 +423,7 @@ void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
 SpStr sp_drive(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     size_t dlen = sp_priv_drive_len(p->buf, p->len, p->flavor);
-    SP_ASSERT(dlen <= p->len && "drive length must not exceed path length");
+    assert(dlen <= p->len && "drive length must not exceed path length");
     return SP_PRIV_STR(p->buf, dlen);
 }
 
@@ -432,14 +431,14 @@ SpStr sp_root(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     size_t start = sp_priv_drive_len(p->buf, p->len, p->flavor);
     size_t rlen = sp_priv_root_len(p->buf, p->len, p->flavor);
-    SP_ASSERT(start + rlen <= p->len && "root must not exceed path bounds");
+    assert(start + rlen <= p->len && "root must not exceed path bounds");
     return SP_PRIV_STR(p->buf + start, rlen);
 }
 
 SpStr sp_anchor(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     size_t alen = sp_priv_anchor_len(p->buf, p->len, p->flavor);
-    SP_ASSERT(alen <= p->len && "anchor length must not exceed path length");
+    assert(alen <= p->len && "anchor length must not exceed path length");
     return SP_PRIV_STR(p->buf, alen);
 }
 
@@ -450,7 +449,7 @@ SpStr sp_name(const SpPath *p) {
     if (anchor == p->len) return SP_PRIV_STR(p->buf + p->len, 0);
     size_t i = p->len;
     while (i > anchor && !sp_priv_is_sep(p->buf[i-1], p->flavor)) i--;
-    SP_ASSERT(i <= p->len && "name start position must be within bounds");
+    assert(i <= p->len && "name start position must be within bounds");
     return SP_PRIV_STR(p->buf + i, p->len - i);
 }
 
@@ -469,7 +468,7 @@ SpStr sp_stem(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpStr name = sp_name(p);
     SpStr suffix = sp_suffix(p);
-    SP_ASSERT(suffix.len <= name.len && "suffix cannot be longer than name");
+    assert(suffix.len <= name.len && "suffix cannot be longer than name");
     return SP_PRIV_STR(name.data, name.len - suffix.len);
 }
 
@@ -495,7 +494,7 @@ SpSuffixes sp_suffixes(const SpPath *p) {
             break;
         }
     }
-    SP_ASSERT(r.count <= SP_MAX_SUFFIXES && "suffixes count must not exceed maximum");
+    assert(r.count <= SP_MAX_SUFFIXES && "suffixes count must not exceed maximum");
     return r;
 }
 
@@ -510,7 +509,7 @@ SpPath sp_parent(const SpPath *p) {
         return sp_path_new(".", SP_PRIV_OPTS(p->flavor));
     }
     if (i <= anchor) i = anchor;
-    SP_ASSERT(i < SP_PATH_MAX && "parent length must be within bounds");
+    assert(i < SP_PATH_MAX && "parent length must be within bounds");
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
     r.len = i;
@@ -530,10 +529,10 @@ SpPartsIter sp_parts_begin(const SpPath *p) {
 }
 
 bool sp_parts_next(SpPartsIter *it, SpStr *out) {
-    SP_ASSERT(it != NULL && "iterator must not be NULL");
-    SP_ASSERT(it->path != NULL && "iterator path must not be NULL");
-    SP_ASSERT(out != NULL && "output SpStr must not be NULL");
-    SP_ASSERT(it->pos <= it->path->len && "iterator position must be within bounds");
+    assert(it != NULL && "iterator must not be NULL");
+    assert(it->path != NULL && "iterator path must not be NULL");
+    assert(out != NULL && "output SpStr must not be NULL");
+    assert(it->pos <= it->path->len && "iterator position must be within bounds");
     const SpPath *p = it->path;
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (it->include_anchor && !it->anchor_done) {
@@ -551,7 +550,7 @@ bool sp_parts_next(SpPartsIter *it, SpStr *out) {
     while (it->pos < p->len && !sp_priv_is_sep(p->buf[it->pos], p->flavor)) {
         it->pos++;
     }
-    SP_ASSERT(start < it->pos && "part must have non-zero length");
+    assert(start < it->pos && "part must have non-zero length");
     out->data = p->buf + start;
     out->len = it->pos - start;
     return true;
@@ -576,8 +575,8 @@ SpParentsIter sp_parents_begin(const SpPath *p) {
 }
 
 bool sp_parents_next(SpParentsIter *it, SpPath *out) {
-    SP_ASSERT(it != NULL && "iterator must not be NULL");
-    SP_ASSERT(out != NULL && "output path must not be NULL");
+    assert(it != NULL && "iterator must not be NULL");
+    assert(out != NULL && "output path must not be NULL");
     if (it->done) return false;
     *out = it->current;
     SpPath next = sp_parent(&it->current);
@@ -660,7 +659,7 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
 
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
     SP_ASSERT_PATH_INVARIANT(base);
-    SP_ASSERT(parts != NULL && "parts array must not be NULL");
+    assert(parts != NULL && "parts array must not be NULL");
     SpPath r = sp_path_copy(base);
     for (size_t i = 0; parts[i] != NULL; i++) {
         r = sp_join_one(&r, parts[i]);
@@ -676,21 +675,21 @@ SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT(name != NULL && "name must not be NULL");
+    assert(name != NULL && "name must not be NULL");
     SpPath parent = sp_parent(p);
     return sp_join_one(&parent, name);
 }
 
 SpPath sp_with_stem(const SpPath *p, const char *stem) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT(stem != NULL && "stem must not be NULL");
+    assert(stem != NULL && "stem must not be NULL");
     SpStr suffix = sp_suffix(p);
     char name[SP_PATH_MAX];
     size_t slen = strlen(stem);
     if (slen + suffix.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suffix.len - 1;
     memcpy(name, stem, slen);
     if (suffix.len > 0) {
-        SP_ASSERT(suffix.data != NULL && "suffix data must be valid when len > 0");
+        assert(suffix.data != NULL && "suffix data must be valid when len > 0");
         memcpy(name + slen, suffix.data, suffix.len);
     }
     name[slen + suffix.len] = '\0';
@@ -699,14 +698,14 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
 
 SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT(suffix != NULL && "suffix must not be NULL");
+    assert(suffix != NULL && "suffix must not be NULL");
     SpStr stem = sp_stem(p);
     char name[SP_PATH_MAX];
     size_t suflen = strlen(suffix);
     size_t stemlen = stem.len;
     if (stemlen + suflen >= SP_PATH_MAX) stemlen = SP_PATH_MAX - suflen - 1;
     if (stemlen > 0) {
-        SP_ASSERT(stem.data != NULL && "stem data must be valid when len > 0");
+        assert(stem.data != NULL && "stem data must be valid when len > 0");
         memcpy(name, stem.data, stemlen);
     }
     memcpy(name + stemlen, suffix, suflen);
@@ -756,7 +755,7 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
     r.flavor = p->flavor;
     bool first = true;
     while (sp_parts_next(&it_p, &part)) {
-        SP_ASSERT(part.data != NULL && "part data must be valid");
+        assert(part.data != NULL && "part data must be valid");
         if (!first) {
             if (r.len + 1 < SP_PATH_MAX) r.buf[r.len++] = sp_priv_sep(p->flavor);
         }
@@ -772,7 +771,7 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
         r.buf[1] = '\0';
         r.len = 1;
     }
-    SP_ASSERT(r.len < SP_PATH_MAX && "result length must be within bounds");
+    assert(r.len < SP_PATH_MAX && "result length must be within bounds");
     return r;
 }
 
@@ -797,8 +796,8 @@ static SP_TLS char sp_priv_f_posix_buf[SP_PATH_MAX];
 
 /* Initialize the fluent context */
 void sp_fluent_init(SpPath p) {
-    SP_ASSERT(p.len < SP_PATH_MAX && "path length must be within bounds");
-    SP_ASSERT(p.buf[p.len] == '\0' && "path must be null-terminated");
+    assert(p.len < SP_PATH_MAX && "path length must be within bounds");
+    assert(p.buf[p.len] == '\0' && "path must be null-terminated");
     SP_ASSERT_FLAVOR(p.flavor);
     sp_priv_f_ctx = p;
 }
@@ -811,28 +810,28 @@ static SpFluent sp_priv_f_parent(void) {
 }
 
 static SpFluent sp_priv_f_join(const char *s) {
-    SP_ASSERT(s != NULL && "join argument must not be NULL");
+    assert(s != NULL && "join argument must not be NULL");
     sp_priv_f_ctx = sp_join_one(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_name(const char *s) {
-    SP_ASSERT(s != NULL && "name argument must not be NULL");
+    assert(s != NULL && "name argument must not be NULL");
     sp_priv_f_ctx = sp_with_name(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_stem(const char *s) {
-    SP_ASSERT(s != NULL && "stem argument must not be NULL");
+    assert(s != NULL && "stem argument must not be NULL");
     sp_priv_f_ctx = sp_with_stem(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
 }
 
 static SpFluent sp_priv_f_with_suffix(const char *s) {
-    SP_ASSERT(s != NULL && "suffix argument must not be NULL");
+    assert(s != NULL && "suffix argument must not be NULL");
     sp_priv_f_ctx = sp_with_suffix(&sp_priv_f_ctx, s);
     extern SpFluent spf;
     return spf;
