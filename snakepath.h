@@ -1742,12 +1742,14 @@ bool sp_is_reserved(const SpPath *p) {
 #ifdef SNAKEPATH_FLUENT
 
 /* Thread-local storage - portable across compilers */
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
+/* Note: MSVC check must come first because MSVC with /std:c11 sets __STDC_VERSION__
+   but doesn't support _Thread_local - it only supports __declspec(thread) */
+#if defined(_MSC_VER)
+  #define SP_TLS __declspec(thread)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
   #define SP_TLS _Thread_local
 #elif defined(__GNUC__) || defined(__clang__)
   #define SP_TLS __thread
-#elif defined(_MSC_VER)
-  #define SP_TLS __declspec(thread)
 #else
   #define SP_TLS /* fallback: not thread-safe */
 #endif
