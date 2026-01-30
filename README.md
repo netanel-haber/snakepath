@@ -164,17 +164,35 @@ SpPath pics = sp_join_one(&base, "Pictures");
 | `.absolute()` | Make path absolute |
 | `.relative_to(&base)` | Relative path from base |
 | `.relative_to_walk_up(&base)` | Relative path with `..` |
-| `.path()` | **Finish chain → returns `SpPath`** |
 
-### Accessing Results
+### Chain Terminators
 
-Call `.path()` to finish the chain and get an `SpPath`:
+These methods end the chain and return a value:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `.path()` | `SpPath` | Full path object |
+| `.str()` | `const char*` | Path as string |
+| `.name()` | `SpStr` | Final component |
+| `.stem()` | `SpStr` | Name without suffix |
+| `.suffix()` | `SpStr` | File extension |
+| `.suffixes()` | `SpSuffixes` | All extensions |
+| `.drive()` | `SpStr` | Drive letter (Windows) |
+| `.root()` | `SpStr` | Root component |
+| `.anchor()` | `SpStr` | Drive + root |
+| `.is_absolute()` | `bool` | Is path absolute? |
+
+### Examples
 
 ```c
-SpPath p = SPF_P("/home/user").join("docs").with_suffix(".txt").path();
-printf("%s\n", sp_str(&p));        // Path as string
-printf("%.*s\n", (int)sp_name(&p).len, sp_name(&p).data);  // Name
-bool abs = sp_is_absolute(&p);     // Check if absolute
+// Get the name directly
+SpStr name = SPF("a/b/c.txt").name();  // "c.txt"
+
+// Get path as string
+const char *s = SPF_P("/home").join("user").str();  // "/home/user"
+
+// Get full path for further operations
+SpPath p = SPF_W("C:/Users").join("docs").path();
 ```
 
 ## Core Types

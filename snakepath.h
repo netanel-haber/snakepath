@@ -213,16 +213,31 @@ static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
 /* ============ Fluent API ============ */
 #ifdef SNAKEPATH_FLUENT
 
-/* Internal struct - not for direct use. Use SPF/SPF_P/SPF_W macros and call .path() */
+/* Internal struct - not for direct use. Use SPF/SPF_P/SPF_W macros. */
 struct sp_fluent_;
 typedef struct sp_fluent_ (*sp_fluent_void_fn_)(void);
 typedef struct sp_fluent_ (*sp_fluent_str_fn_)(const char *);
 typedef struct sp_fluent_ (*sp_fluent_path_fn_)(const SpPath *);
 typedef SpPath (*sp_fluent_finish_fn_)(void);
+typedef SpStr (*sp_fluent_sv_fn_)(void);
+typedef SpSuffixes (*sp_fluent_suffixes_fn_)(void);
+typedef const char *(*sp_fluent_cstr_fn_)(void);
+typedef bool (*sp_fluent_bool_fn_)(void);
 
 struct sp_fluent_ {
     void *_;
+    /* Chain terminators - return value and end chain */
     sp_fluent_finish_fn_ path;
+    sp_fluent_sv_fn_ name;
+    sp_fluent_sv_fn_ stem;
+    sp_fluent_sv_fn_ suffix;
+    sp_fluent_suffixes_fn_ suffixes;
+    sp_fluent_sv_fn_ drive;
+    sp_fluent_sv_fn_ root;
+    sp_fluent_sv_fn_ anchor;
+    sp_fluent_cstr_fn_ str;
+    sp_fluent_bool_fn_ is_absolute;
+    /* Chainable methods */
     sp_fluent_void_fn_ parent;
     sp_fluent_str_fn_ join;
     sp_fluent_str_fn_ with_name;
@@ -1753,8 +1768,19 @@ bool sp_is_reserved(const SpPath *p) {
 static SP_TLS SpPath sp_priv_f_ctx;
 static SP_TLS bool sp_priv_f_ctx_active = false;
 
-/* Forward declarations of chainable methods */
+/* Forward declarations - terminators */
 static SpPath sp_priv_f_path_(void);
+static SpStr sp_priv_f_name_(void);
+static SpStr sp_priv_f_stem_(void);
+static SpStr sp_priv_f_suffix_(void);
+static SpSuffixes sp_priv_f_suffixes_(void);
+static SpStr sp_priv_f_drive_(void);
+static SpStr sp_priv_f_root_(void);
+static SpStr sp_priv_f_anchor_(void);
+static const char *sp_priv_f_str_(void);
+static bool sp_priv_f_is_absolute_(void);
+
+/* Forward declarations - chainable */
 static struct sp_fluent_ sp_priv_f_parent_(void);
 static struct sp_fluent_ sp_priv_f_join_(const char *s);
 static struct sp_fluent_ sp_priv_f_with_name_(const char *s);
@@ -1764,17 +1790,64 @@ static struct sp_fluent_ sp_priv_f_absolute_(void);
 static struct sp_fluent_ sp_priv_f_relative_to_(const SpPath *other);
 static struct sp_fluent_ sp_priv_f_relative_to_walk_up_(const SpPath *other);
 
-/* Finish the chain and return the path */
+/* Terminator implementations - end chain and return value */
 static SpPath sp_priv_f_path_(void) {
     sp_priv_f_ctx_active = false;
     return sp_priv_f_ctx;
+}
+static SpStr sp_priv_f_name_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_name(&sp_priv_f_ctx);
+}
+static SpStr sp_priv_f_stem_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_stem(&sp_priv_f_ctx);
+}
+static SpStr sp_priv_f_suffix_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_suffix(&sp_priv_f_ctx);
+}
+static SpSuffixes sp_priv_f_suffixes_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_suffixes(&sp_priv_f_ctx);
+}
+static SpStr sp_priv_f_drive_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_drive(&sp_priv_f_ctx);
+}
+static SpStr sp_priv_f_root_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_root(&sp_priv_f_ctx);
+}
+static SpStr sp_priv_f_anchor_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_anchor(&sp_priv_f_ctx);
+}
+static const char *sp_priv_f_str_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_str(&sp_priv_f_ctx);
+}
+static bool sp_priv_f_is_absolute_(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_is_absolute(&sp_priv_f_ctx);
 }
 
 /* Helper to create fluent struct with current context */
 static struct sp_fluent_ sp_priv_f_make_(void) {
     return (struct sp_fluent_){
         ._ = NULL,
+        /* Terminators */
         .path = sp_priv_f_path_,
+        .name = sp_priv_f_name_,
+        .stem = sp_priv_f_stem_,
+        .suffix = sp_priv_f_suffix_,
+        .suffixes = sp_priv_f_suffixes_,
+        .drive = sp_priv_f_drive_,
+        .root = sp_priv_f_root_,
+        .anchor = sp_priv_f_anchor_,
+        .str = sp_priv_f_str_,
+        .is_absolute = sp_priv_f_is_absolute_,
+        /* Chainable */
         .parent = sp_priv_f_parent_,
         .join = sp_priv_f_join_,
         .with_name = sp_priv_f_with_name_,
