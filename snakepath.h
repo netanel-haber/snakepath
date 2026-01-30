@@ -168,7 +168,6 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other);
 
 bool sp_is_absolute(const SpPath *p);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
-bool sp_is_empty(const SpPath *p);
 
 /* ============ Helper Functions ============ */
 static inline bool sp_sv_eq(SpStr a, SpStr b) {
@@ -789,10 +788,6 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
     return memcmp(a->buf, b->buf, a->len) == 0;
 }
 
-bool sp_is_empty(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    return false;  /* Paths are never empty; "" normalizes to "." */
-}
 
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT

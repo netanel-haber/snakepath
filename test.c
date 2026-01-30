@@ -210,7 +210,7 @@ int main(void) {
     
     printf("\nEdge Cases:\n");
     
-    SpPath e1 = sp_path_f("", P); ASSERT(!sp_is_empty(&e1)); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), "."); ASSERT_SV(sp_suffix(&e1), "");
+    SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), "."); ASSERT_SV(sp_suffix(&e1), "");
     SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), ".");
     SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "..");
     SpPath e4 = sp_path_f("...", P); ASSERT_SV(sp_suffix(&e4), "");
