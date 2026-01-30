@@ -1606,10 +1606,10 @@ bool sp_is_reserved(const SpPath *p) {
     char upper[13];
     size_t len = 0;
     for (size_t i = 0; i < name.len && name.data[i] != '.' && name.data[i] != ':' && len < 12; i++) {
-        unsigned char c = (unsigned char)name.data[i];
+        unsigned char c = SP_PRIV_CAST(unsigned char, name.data[i]);
         /* Check for UTF-8 encoded superscript digits (U+00B9, U+00B2, U+00B3) */
         if (c == 0xC2 && i + 1 < name.len) {
-            unsigned char c2 = (unsigned char)name.data[i + 1];
+            unsigned char c2 = SP_PRIV_CAST(unsigned char, name.data[i + 1]);
             if (c2 == 0xB9) { upper[len++] = '1'; i++; continue; }  /* ¹ → 1 */
             if (c2 == 0xB2) { upper[len++] = '2'; i++; continue; }  /* ² → 2 */
             if (c2 == 0xB3) { upper[len++] = '3'; i++; continue; }  /* ³ → 3 */
@@ -1617,7 +1617,7 @@ bool sp_is_reserved(const SpPath *p) {
         /* Skip trailing spaces - don't add them */
         if (c == ' ') continue;
         /* Normal ASCII uppercasing */
-        upper[len++] = (char)((c >= 'a' && c <= 'z') ? c - 32 : c);
+        upper[len++] = SP_PRIV_CAST(char, (c >= 'a' && c <= 'z') ? c - 32 : c);
     }
     upper[len] = '\0';
 
