@@ -136,6 +136,7 @@ typedef struct { SpFlavor flavor; } SpPathOpts;
 
 SpPath sp_path_new(const char *s, SpPathOpts opts);
 SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor);
+SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor);
 SpPath sp_path_copy(const SpPath *p);
 
 const char *sp_str(const SpPath *p);
@@ -169,12 +170,17 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
+/* Multi-segment variants (parts is NULL-terminated array of strings) */
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
 bool sp_is_absolute(const SpPath *p);
+size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
 int sp_path_cmp(const SpPath *a, const SpPath *b);
 unsigned long sp_path_hash(const SpPath *p);
-int sp_match(const SpPath *p, const char *pattern);  /* Returns SP_MATCH_* codes */
+int sp_match(const SpPath *p, const char *pattern);
+int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive);  /* Returns SP_MATCH_* codes */
 bool sp_is_reserved(const SpPath *p);
 
 /* Error checking for path results */
@@ -322,12 +328,54 @@ static inline bool sp_priv_is_unc(const char *s, size_t len, SpFlavor flavor) {
     return len >= 2 && sp_priv_is_sep(s[0], flavor) && sp_priv_is_sep(s[1], flavor);
 }
 
+/* Helper to check if s starts with "//?/UNC" (case-insensitive) */
+static inline bool sp_priv_is_unc_device_path(const char *s, size_t len, SpFlavor flavor) {
+    if (!sp_priv_is_windows_flavor(flavor) || len < 7) return false;
+    if (!sp_priv_is_sep(s[0], flavor) || !sp_priv_is_sep(s[1], flavor)) return false;
+    if (s[2] != '?' && s[2] != '.') return false;
+    if (!sp_priv_is_sep(s[3], flavor)) return false;
+    /* Check for "UNC" (case-insensitive) */
+    char c4 = s[4], c5 = s[5], c6 = s[6];
+    if (c4 >= 'a' && c4 <= 'z') c4 -= 32;
+    if (c5 >= 'a' && c5 <= 'z') c5 -= 32;
+    if (c6 >= 'a' && c6 <= 'z') c6 -= 32;
+    return c4 == 'U' && c5 == 'N' && c6 == 'C' && (len == 7 || sp_priv_is_sep(s[7], flavor));
+}
+
 static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
     if (sp_priv_has_drive(s, len, flavor)) {
         return 2;
     }
     if (sp_priv_is_unc(s, len, flavor)) {
-        /* UNC: //server/share */
+        /* Check for special //?/UNC namespace */
+        if (sp_priv_is_unc_device_path(s, len, flavor)) {
+            /* //?/UNC namespace: drive extends through server\share if complete,
+               or includes trailing separator if incomplete */
+            size_t i = 7;  /* Past "//?/UNC" */
+            if (i >= len) return i;  /* Just "//?/UNC" */
+            if (sp_priv_is_sep(s[i], flavor)) i++;  /* Past the separator */
+            if (i >= len) return i;  /* "//?/UNC/" - include trailing sep */
+
+            /* Find server component */
+            size_t server_start = i;
+            while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
+            if (i == server_start) return i;  /* Empty server - return as is */
+            if (i >= len) return i;  /* "//?/UNC/server" - no trailing sep */
+
+            /* Include separator after server for incomplete paths */
+            i++;  /* Past separator */
+            if (i >= len) return i;  /* "//?/UNC/server/" - include trailing sep */
+
+            /* Find share component */
+            size_t share_start = i;
+            while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
+            if (i == share_start) return i;  /* Empty share - include trailing sep */
+
+            /* Complete UNC - drive is up to end of share (no trailing sep) */
+            return i;
+        }
+
+        /* Regular UNC: //server/share */
         size_t i = 2;
         while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
         if (i < len) {
@@ -342,14 +390,61 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
 static size_t sp_priv_root_len(const char *s, size_t len, SpFlavor flavor) {
     size_t start = sp_priv_drive_len(s, len, flavor);
 
-    /* Windows UNC paths always have an implicit root */
+    /* Windows UNC paths: only COMPLETE UNC (//server/share) has root,
+       and device namespace paths (//. or //?) only have root if explicit */
     if (sp_priv_is_windows_flavor(flavor) && sp_priv_is_unc(s, len, flavor)) {
-        /* UNC path: //server/share[/...] - root is the separator after share */
-        if (start < len && sp_priv_is_sep(s[start], flavor)) {
-            return 1;
+        /* Special handling for //?/UNC namespace */
+        if (sp_priv_is_unc_device_path(s, len, flavor)) {
+            /* //?/UNC paths only have root if complete (with server AND share) */
+            size_t i = 8;  /* Past "//?/UNC/" */
+            if (i >= len) return 0;  /* No server - incomplete */
+
+            /* Find server component */
+            while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
+            if (i >= len) return 0;  /* Server only, no separator */
+            i++;  /* Past separator */
+            if (i >= len) return 0;  /* Server and sep, no share */
+
+            /* Find share component */
+            size_t share_start = i;
+            while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
+            if (i == share_start) return 0;  /* Empty share - incomplete */
+
+            /* Complete //?/UNC/server/share - has root */
+            if (start < len && sp_priv_is_sep(s[start], flavor)) {
+                return 1;
+            }
+            return 1;  /* Implicit root */
         }
-        /* Even without trailing separator, UNC has implicit root */
-        return 1;
+
+        /* Device namespace paths (//. or //?) - check if it's one */
+        bool is_device_ns = (len > 2 && (s[2] == '.' || s[2] == '?') &&
+                            (len == 3 || sp_priv_is_sep(s[3], flavor)));
+        if (is_device_ns) {
+            /* Device namespace: only has root if there's explicit separator after drive */
+            if (start < len && sp_priv_is_sep(s[start], flavor)) {
+                return 1;  /* Explicit root */
+            }
+            return 0;  /* No root */
+        }
+
+        /* A complete UNC path has form //server/share where both server and share
+           are non-empty. We detect this by checking if drive parsing found a
+           separator after position 2 (between server and share). */
+        size_t sep_after_server = 2;
+        while (sep_after_server < len && !sp_priv_is_sep(s[sep_after_server], flavor))
+            sep_after_server++;
+        if (sep_after_server >= len) return 0;  /* No sep after server - incomplete */
+
+        /* Check there's actual share content after the separator */
+        size_t share_start = sep_after_server + 1;
+        if (share_start >= len || sp_priv_is_sep(s[share_start], flavor)) return 0;
+
+        /* Complete UNC has implicit root */
+        if (start < len && sp_priv_is_sep(s[start], flavor)) {
+            return 1;  /* Explicit root separator present */
+        }
+        return 1;  /* Implicit root */
     }
 
     /* POSIX: paths starting with exactly // have root // */
@@ -385,15 +480,51 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
         }
     }
 
-    /* For UNC paths without trailing separator, add the implicit root */
+    /* For COMPLETE UNC paths without trailing separator, add the implicit root.
+       A complete UNC has form //server/share - check that we have both parts.
+       Device namespace paths (//. or //?) need special handling. */
     if (sp_priv_is_windows_flavor(flavor) && sp_priv_is_unc(buf, *len, flavor)) {
-        if (drive == *len && j + 1 < SP_PATH_MAX) {
-            /* UNC path with no content after share - add root separator */
-            buf[j++] = sep;
+        bool is_device_ns = (*len > 2 && (buf[2] == '.' || buf[2] == '?') &&
+                            (*len <= 3 || sp_priv_is_sep(buf[3], flavor)));
+
+        /* Check for //?/UNC paths which ARE complete UNC and need implicit root */
+        if (is_device_ns && sp_priv_is_unc_device_path(buf, *len, flavor)) {
+            /* //?/UNC paths: add implicit root if complete (has server+share) */
+            size_t k = 8;  /* Past "//?/UNC/" */
+            if (k < *len) {
+                /* Find server */
+                while (k < *len && !sp_priv_is_sep(buf[k], flavor)) k++;
+                if (k < *len) {
+                    k++;  /* Past separator */
+                    size_t share_start = k;
+                    while (k < *len && !sp_priv_is_sep(buf[k], flavor)) k++;
+                    if (k > share_start && drive == *len && j + 1 < SP_PATH_MAX) {
+                        /* Complete //?/UNC/server/share - add root separator */
+                        buf[j++] = sep;
+                    }
+                }
+            }
+        } else if (!is_device_ns) {
+            /* Regular UNC: Check for complete UNC (has separator between server and share) */
+            size_t sep_pos = 2;
+            while (sep_pos < *len && !sp_priv_is_sep(buf[sep_pos], flavor)) sep_pos++;
+            bool has_server_sep = (sep_pos < *len);
+            bool has_share = has_server_sep && (sep_pos + 1 < *len) &&
+                             !sp_priv_is_sep(buf[sep_pos + 1], flavor);
+            if (has_share && drive == *len && j + 1 < SP_PATH_MAX) {
+                /* Complete UNC path with no content after share - add root separator */
+                buf[j++] = sep;
+            }
         }
+        /* Other device namespace paths (//./device, //?/device) don't get implicit root */
     }
 
-    last_was_sep = (j > 0 && sp_priv_is_sep(buf[j-1], flavor));
+    /* For relative paths (no anchor) or paths with just a drive (no root),
+       treat start as "after separator" for '.' handling.
+       This ensures c:. normalizes to c: just like ./a normalizes to a */
+    last_was_sep = (anchor == 0) ||
+                   (j > 0 && sp_priv_is_sep(buf[j-1], flavor)) ||
+                   (drive > 0 && root == 0);  /* Drive but no root (e.g., c:) */
 
     for (; i < *len; i++) {
         if (sp_priv_is_sep(buf[i], flavor)) {
@@ -406,6 +537,20 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
             if (buf[i] == '.' && last_was_sep) {
                 size_t k = i + 1;
                 if (k >= *len || sp_priv_is_sep(buf[k], flavor)) {
+                    /* On Windows, don't skip '.' if next component looks like a drive
+                       AND we don't already have a drive (e.g., './c:a' should stay as
+                       '.\c:a', not become 'c:a', but 'D:/./c:a' can become 'D:/c:a') */
+                    if (sp_priv_is_windows_flavor(flavor) && k < *len && drive == 0) {
+                        /* Check if component after separator looks like drive letter */
+                        size_t next = k + 1;
+                        if (next + 1 < *len && sp_priv_is_drive_letter(buf[next]) &&
+                            buf[next + 1] == ':') {
+                            /* Don't skip - keep the '.' to protect from drive parsing */
+                            buf[j++] = buf[i];
+                            last_was_sep = false;
+                            continue;
+                        }
+                    }
                     /* It's just '.', skip it */
                     i = k - 1;  /* will be incremented by loop */
                     continue;
@@ -466,6 +611,42 @@ SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
     sp_priv_normalize(p.buf, &p.len, p.flavor);
     /* Empty paths stay empty - sp_str will return "." for display */
     return p;
+}
+
+SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor) {
+    SP_ASSERT_FLAVOR(src_flavor);
+    SP_ASSERT_FLAVOR(dest_flavor);
+    if (!s || !*s) return sp_path_new(s, SP_PRIV_OPTS(dest_flavor));
+
+    /* Parse with source flavor, then rebuild with dest flavor */
+    SpPath src = sp_path_new(s, SP_PRIV_OPTS(src_flavor));
+    if (src_flavor == dest_flavor) return src;
+
+    /* Extract parts from source and join with dest separator */
+    SpPath dest = SP_PRIV_ZERO;
+    dest.flavor = dest_flavor;
+    char dest_sep = sp_priv_sep(dest_flavor);
+
+    SpPartsIter it = sp_parts_begin(&src);
+    SpStr part;
+    bool first = true;
+    while (sp_parts_next(&it, &part)) {
+        if (!first && dest.len > 0 && !sp_priv_is_sep(dest.buf[dest.len-1], dest_flavor)) {
+            if (dest.len + 1 < SP_PATH_MAX) dest.buf[dest.len++] = dest_sep;
+        }
+        /* Copy part, converting separators */
+        for (size_t i = 0; i < part.len && dest.len < SP_PATH_MAX - 1; i++) {
+            if (sp_priv_is_sep(part.data[i], src_flavor)) {
+                dest.buf[dest.len++] = dest_sep;
+            } else {
+                dest.buf[dest.len++] = part.data[i];
+            }
+        }
+        first = false;
+    }
+    dest.buf[dest.len] = '\0';
+    sp_priv_normalize(dest.buf, &dest.len, dest_flavor);
+    return dest;
 }
 
 SpPath sp_path_copy(const SpPath *p) {
@@ -547,11 +728,10 @@ SpStr sp_name(const SpPath *p) {
     while (i > anchor && !sp_priv_is_sep(p->buf[i-1], p->flavor)) i--;
     size_t name_len = p->len - i;
     const char *name_start = p->buf + i;
-    /* '.' and '..' have empty name ONLY when they're the entire relative path */
-    /* (i.e., name starts at position 0, meaning no parent directory) */
-    if (i == 0) {
-        if (name_len == 1 && name_start[0] == '.') return SP_PRIV_STR(SP_PRIV_NULL, 0);
-        if (name_len == 2 && name_start[0] == '.' && name_start[1] == '.') return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    /* '.' has empty name when it's the entire relative path (no parent directory).
+       Note: '..' does NOT have empty name - CPython treats it as a real name component */
+    if (i == 0 && name_len == 1 && name_start[0] == '.') {
+        return SP_PRIV_STR(SP_PRIV_NULL, 0);
     }
     return SP_PRIV_STR(name_start, name_len);
 }
@@ -569,12 +749,16 @@ SpStr sp_suffix(const SpPath *p) {
     while (i > 0 && name.data[i-1] != '.') i--;
     /* i <= 1 means no dot found, or dot is at start (hidden file like .bashrc) */
     if (i <= 1) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    /* Trailing dot (file.) returns "." as suffix */
+    /* i == name.len means trailing dot only (file.) - no suffix (CPython behavior) */
+    if (i == name.len) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    /* Suffix includes the dot */
     return SP_PRIV_STR(name.data + i - 1, name.len - i + 1);
 }
 
 SpStr sp_stem(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
     SpStr name = sp_name(p);
+    if (name.len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     SpStr suffix = sp_suffix(p);
     return SP_PRIV_STR(name.data, name.len - suffix.len);
 }
@@ -584,6 +768,8 @@ SpSuffixes sp_suffixes(const SpPath *p) {
     SpSuffixes r = SP_PRIV_ZERO;
     SpStr name = sp_name(p);
     if (name.len == 0) return r;
+    /* Trailing dot means no suffixes (CPython behavior) */
+    if (name.data[name.len - 1] == '.') return r;
     size_t i = 0;
     /* Skip leading dot (hidden file) */
     if (name.data[0] == '.') i = 1;
@@ -659,6 +845,7 @@ bool sp_parts_next(SpPartsIter *it, SpStr *out) {
         it->pos = anchor;
         return true;
     }
+retry:
     while (it->pos < p->len && sp_priv_is_sep(p->buf[it->pos], p->flavor)) {
         it->pos++;
     }
@@ -668,6 +855,22 @@ bool sp_parts_next(SpPartsIter *it, SpStr *out) {
         it->pos++;
     }
     assert(start < it->pos && "part must have non-zero length");
+
+    /* On Windows, skip leading '.' if it's just protecting a drive letter.
+       This matches CPython behavior where '.\c:a' has parts=('c:a',) */
+    if (sp_priv_is_windows_flavor(p->flavor) && start == 0 &&
+        it->pos - start == 1 && p->buf[start] == '.') {
+        /* Check if next component looks like a drive letter */
+        size_t next_start = it->pos;
+        while (next_start < p->len && sp_priv_is_sep(p->buf[next_start], p->flavor))
+            next_start++;
+        if (next_start + 1 < p->len && sp_priv_is_drive_letter(p->buf[next_start]) &&
+            p->buf[next_start + 1] == ':') {
+            /* Skip this '.' part, get the next one */
+            goto retry;
+        }
+    }
+
     out->data = p->buf + start;
     out->len = it->pos - start;
     return true;
@@ -850,13 +1053,21 @@ SpPath sp_with_name(const SpPath *p, const char *name) {
     SpPath parent = sp_parent(p);
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
+    char sep = sp_priv_sep(p->flavor);
 
     /* Copy parent */
     memcpy(r.buf, parent.buf, parent.len);
     r.len = parent.len;
 
+    /* On Windows, if parent is empty and name looks like a drive letter,
+       we need to prefix with ".\" to keep it relative (e.g., "d:" → ".\d:") */
+    if (sp_priv_is_windows_flavor(p->flavor) && r.len == 0 &&
+        nlen >= 2 && sp_priv_is_drive_letter(name[0]) && name[1] == ':') {
+        r.buf[r.len++] = '.';
+        r.buf[r.len++] = sep;
+    }
+
     /* Add separator if parent is not empty and doesn't end with separator */
-    char sep = sp_priv_sep(p->flavor);
     if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len-1], p->flavor)) {
         if (r.len + 1 < SP_PATH_MAX) r.buf[r.len++] = sep;
     }
@@ -898,9 +1109,11 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     /* Validate: path must have a name */
     if (!sp_priv_has_usable_name(p)) return sp_priv_error_path(SP_ERR_NO_NAME);
     size_t suflen = strlen(suffix);
-    /* Validate: suffix must be empty or start with '.', no separators */
+    /* Validate: suffix must be empty or start with '.' followed by content, no separators */
     if (suflen > 0) {
         if (suffix[0] != '.') return sp_priv_error_path(SP_ERR_INVALID_ARG);
+        /* Suffix of just '.' is invalid - must have content after dot */
+        if (suflen == 1) return sp_priv_error_path(SP_ERR_INVALID_ARG);
         for (size_t i = 0; i < suflen; i++) {
             if (sp_priv_is_sep(suffix[i], p->flavor)) return sp_priv_error_path(SP_ERR_INVALID_ARG);
         }
@@ -1114,6 +1327,103 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     return r;
 }
 
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Join parts into a temporary path */
+    SpPath empty = SP_PRIV_ZERO;
+    empty.flavor = p->flavor;
+    SpPath other = sp_join_impl(&empty, parts);
+    return sp_is_relative_to(p, &other);
+}
+
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Join parts into a temporary path */
+    SpPath empty = SP_PRIV_ZERO;
+    empty.flavor = p->flavor;
+    SpPath other = sp_join_impl(&empty, parts);
+    return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
+}
+
+size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (buf_size == 0) return 0;
+    buf[0] = '\0';
+
+    /* Only absolute paths can be expressed as URIs */
+    if (!sp_is_absolute(p)) return 0;
+
+    /* Get POSIX representation */
+    char posix_buf[SP_PATH_MAX];
+    sp_as_posix(p, posix_buf, SP_PATH_MAX);
+    const char *path = posix_buf;
+    size_t path_len = strlen(path);
+
+    /* Calculate required buffer size and build URI */
+    size_t pos = 0;
+
+    /* UNC paths: //server/share -> file://server/share */
+    if (path_len >= 2 && path[0] == '/' && path[1] == '/') {
+        if (pos + 5 < buf_size) {
+            memcpy(buf + pos, "file:", 5);
+            pos += 5;
+        } else {
+            return 0;
+        }
+    } else if (path_len > 0 && path[0] == '/') {
+        /* POSIX absolute paths: /path -> file:///path */
+        if (pos + 7 < buf_size) {
+            memcpy(buf + pos, "file://", 7);
+            pos += 7;
+        } else {
+            return 0;
+        }
+    } else {
+        /* Windows drive paths: C:/path -> file:///C:/path (need extra slash) */
+        if (pos + 8 < buf_size) {
+            memcpy(buf + pos, "file:///", 8);
+            pos += 8;
+        } else {
+            return 0;
+        }
+    }
+
+    /* URL-encode the path (RFC 3986) */
+    for (size_t i = 0; i < path_len; i++) {
+        unsigned char c = SP_PRIV_CAST(unsigned char, path[i]);
+        /* Unreserved characters: don't encode */
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '.' ||
+            c == '_' || c == '~' || c == '/') {
+            if (pos + 1 < buf_size) {
+                buf[pos++] = SP_PRIV_CAST(char, c);
+            } else {
+                return 0;
+            }
+        } else if (c == ':' && i > 0 && path[i-1] != '/') {
+            /* Allow ':' after drive letter (e.g., C:) but encode otherwise */
+            if (pos + 1 < buf_size) {
+                buf[pos++] = ':';
+            } else {
+                return 0;
+            }
+        } else {
+            /* Percent-encode */
+            if (pos + 3 < buf_size) {
+                static const char hex[] = "0123456789ABCDEF";
+                buf[pos++] = '%';
+                buf[pos++] = hex[c >> 4];
+                buf[pos++] = hex[c & 0x0F];
+            } else {
+                return 0;
+            }
+        }
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
 bool sp_path_eq(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
     SP_ASSERT_PATH_INVARIANT(b);
@@ -1194,7 +1504,14 @@ static bool sp_priv_fnmatch(const char *pattern, size_t plen, const char *str, s
     return pi == plen;
 }
 
-int sp_match(const SpPath *p, const char *pattern) {
+/* Helper: check if pattern part is "**" (matches any single component) */
+static bool sp_priv_is_doublestar(const char *pat, size_t len) {
+    return len == 2 && pat[0] == '*' && pat[1] == '*';
+}
+
+/* Match with explicit case sensitivity control.
+   case_sensitive: 0 = case-insensitive, 1 = case-sensitive, -1 = use flavor default */
+int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(pattern != NULL && "pattern must not be NULL");
 
@@ -1208,6 +1525,8 @@ int sp_match(const SpPath *p, const char *pattern) {
     }
 
     bool is_windows = sp_priv_is_windows_flavor(p->flavor);
+    /* Determine case sensitivity: -1 means use flavor default */
+    bool case_insensitive = (case_sensitive == -1) ? is_windows : (case_sensitive == 0);
 
     /* Check if pattern has path separator */
     bool pattern_has_sep = false;
@@ -1219,27 +1538,112 @@ int sp_match(const SpPath *p, const char *pattern) {
     }
 
     if (!pattern_has_sep) {
+        /* No separator - check for special case of just "**" */
+        if (plen == 2 && pattern[0] == '*' && pattern[1] == '*') {
+            /* "**" matches everything including empty path */
+            return SP_MATCH_YES;
+        }
         /* Match against name only */
         SpStr name = sp_name(p);
         if (name.len == 0) return SP_MATCH_NO;
-        return sp_priv_fnmatch(pattern, plen, name.data, name.len, is_windows) ? SP_MATCH_YES : SP_MATCH_NO;
+        return sp_priv_fnmatch(pattern, plen, name.data, name.len, case_insensitive) ? SP_MATCH_YES : SP_MATCH_NO;
     }
 
-    /* Match from the right - collect parts */
+    /* Check if pattern has anchor (drive and/or root) */
+    bool pattern_has_drive = false;
+    bool pattern_has_root = false;
+    size_t pattern_anchor_len = 0;
+
+    /* Check for drive pattern: letter: or *: */
+    if (is_windows && plen >= 2 && (sp_priv_is_drive_letter(pattern[0]) || pattern[0] == '*') && pattern[1] == ':') {
+        pattern_has_drive = true;
+        pattern_anchor_len = 2;
+        if (plen > 2 && sp_priv_is_sep(pattern[2], p->flavor)) {
+            pattern_has_root = true;
+            pattern_anchor_len = 3;
+        }
+    } else if (sp_priv_is_sep(pattern[0], p->flavor)) {
+        pattern_has_root = true;
+        pattern_anchor_len = 1;
+    }
+
+    bool pattern_is_anchored = pattern_has_drive || pattern_has_root;
+
+    /* If pattern has drive, path must have compatible drive */
+    if (pattern_has_drive) {
+        SpStr path_drive = sp_drive(p);
+        if (path_drive.len < 2) return SP_MATCH_NO;  /* No drive */
+        /* Check drive letter matches (pattern has * or letter) */
+        char pdrive = (pattern[0] >= 'a' && pattern[0] <= 'z') ? pattern[0] - 32 : pattern[0];
+        char pathd = (path_drive.data[0] >= 'a' && path_drive.data[0] <= 'z') ? path_drive.data[0] - 32 : path_drive.data[0];
+        if (pattern[0] != '*' && pdrive != pathd) return SP_MATCH_NO;
+    }
+
+    /* If pattern has root, path must have root */
+    if (pattern_has_root) {
+        SpStr path_root = sp_root(p);
+        if (path_root.len == 0) return SP_MATCH_NO;
+        /* If pattern has root but no drive, path must also have no drive (on Windows) */
+        if (is_windows && !pattern_has_drive) {
+            SpStr path_drive = sp_drive(p);
+            if (path_drive.len > 0 && !sp_priv_is_unc(p->buf, p->len, p->flavor)) {
+                return SP_MATCH_NO;  /* Path has drive but pattern doesn't */
+            }
+        }
+    }
+
+    /* Collect path parts - for UNC paths with root-only patterns, decompose anchor */
     SpStr path_parts[SP_PATH_MAX / 2];
     size_t path_count = 0;
-    SpPartsIter it = sp_parts_begin(p);
-    SpStr part;
-    while (sp_parts_next(&it, &part) && path_count < SP_PATH_MAX / 2) {
-        path_parts[path_count++] = part;
+    bool is_unc = sp_priv_is_unc(p->buf, p->len, p->flavor);
+
+    /* For UNC paths with a root-only pattern (no drive), decompose the UNC anchor
+       into server and share parts for matching. Pattern like /x/y/z.py matches
+       //server/share/file.py where x=server, y=share, z.py=file.py */
+    if (is_unc && pattern_has_root && !pattern_has_drive) {
+        /* Extract server and share from UNC path */
+        size_t i = 2;  /* Skip leading // */
+        size_t server_start = i;
+        while (i < p->len && !sp_priv_is_sep(p->buf[i], p->flavor)) i++;
+        size_t server_len = i - server_start;
+        if (server_len > 0) {
+            path_parts[path_count].data = p->buf + server_start;
+            path_parts[path_count].len = server_len;
+            path_count++;
+        }
+        if (i < p->len) {
+            i++;  /* Skip separator */
+            size_t share_start = i;
+            while (i < p->len && !sp_priv_is_sep(p->buf[i], p->flavor)) i++;
+            size_t share_len = i - share_start;
+            if (share_len > 0) {
+                path_parts[path_count].data = p->buf + share_start;
+                path_parts[path_count].len = share_len;
+                path_count++;
+            }
+        }
+        /* Now add remaining parts after the anchor */
+        SpPartsIter it = sp_parts_begin(p);
+        SpStr part;
+        bool first = true;
+        while (sp_parts_next(&it, &part) && path_count < SP_PATH_MAX / 2) {
+            if (first) { first = false; continue; }  /* Skip anchor */
+            path_parts[path_count++] = part;
+        }
+    } else {
+        SpPartsIter it = sp_parts_begin(p);
+        SpStr part;
+        while (sp_parts_next(&it, &part) && path_count < SP_PATH_MAX / 2) {
+            path_parts[path_count++] = part;
+        }
     }
 
-    /* Split pattern into parts */
+    /* Split pattern into parts, skipping the anchor if present */
     const char *pattern_parts[SP_PATH_MAX / 2];
     size_t pattern_lens[SP_PATH_MAX / 2];
     size_t pattern_count = 0;
-    size_t start = 0;
-    for (size_t i = 0; i <= plen && pattern_count < SP_PATH_MAX / 2; i++) {
+    size_t start = pattern_anchor_len;  /* Skip anchor */
+    for (size_t i = start; i <= plen && pattern_count < SP_PATH_MAX / 2; i++) {
         if (i == plen || pattern[i] == '/' || (is_windows && pattern[i] == '\\')) {
             if (i > start) {
                 pattern_parts[pattern_count] = pattern + start;
@@ -1250,18 +1654,40 @@ int sp_match(const SpPath *p, const char *pattern) {
         }
     }
 
-    if (pattern_count > path_count) return SP_MATCH_NO;
+    /* For anchored patterns, skip the anchor part (first part is the root/drive).
+       But for UNC with root-only pattern, we already decomposed above. */
+    size_t path_start = 0;
+    if (pattern_is_anchored && path_count > 0 && !(is_unc && pattern_has_root && !pattern_has_drive)) {
+        path_start = 1;  /* Skip anchor */
+    }
+    size_t effective_path_count = path_count - path_start;
 
-    /* Match from right to left */
+    /* For anchored patterns, part counts must match exactly.
+       For relative patterns, match from right (pattern can be shorter than path). */
+    if (pattern_is_anchored && pattern_count != effective_path_count) return SP_MATCH_NO;
+    if (pattern_count > effective_path_count) return SP_MATCH_NO;
+
     for (size_t i = 0; i < pattern_count; i++) {
         size_t pi = pattern_count - 1 - i;
-        size_t si = path_count - 1 - i;
-        if (!sp_priv_fnmatch(pattern_parts[pi], pattern_lens[pi],
-                            path_parts[si].data, path_parts[si].len, is_windows)) {
+        size_t si = path_start + effective_path_count - 1 - i;
+        const char *pat = pattern_parts[pi];
+        size_t pat_len = pattern_lens[pi];
+
+        /* ** matches any single component */
+        if (sp_priv_is_doublestar(pat, pat_len)) {
+            continue;  /* Always matches */
+        }
+
+        if (!sp_priv_fnmatch(pat, pat_len, path_parts[si].data, path_parts[si].len, case_insensitive)) {
             return SP_MATCH_NO;
         }
     }
     return SP_MATCH_YES;
+}
+
+/* Match using flavor default for case sensitivity */
+int sp_match(const SpPath *p, const char *pattern) {
+    return sp_match_ex(p, pattern, -1);
 }
 
 bool sp_is_reserved(const SpPath *p) {
@@ -1269,15 +1695,30 @@ bool sp_is_reserved(const SpPath *p) {
     /* Only Windows has reserved names */
     if (!sp_priv_is_windows_flavor(p->flavor)) return false;
 
+    /* UNC paths are never reserved (including device namespace paths) */
+    if (sp_priv_is_unc(p->buf, p->len, p->flavor)) return false;
+
     SpStr name = sp_name(p);
     if (name.len == 0 || name.len > 12) return false;  /* Reserved names are short */
 
-    /* Get name without extension */
+    /* Get name without extension or stream name, normalizing superscript digits to ASCII,
+       and ignoring spaces (Windows treats "PRN  " as "PRN").
+       Stop at '.' (extension) or ':' (NTFS alternate data stream) */
     char upper[13];
     size_t len = 0;
-    for (size_t i = 0; i < name.len && name.data[i] != '.' && len < 12; i++) {
-        char c = name.data[i];
-        upper[len++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+    for (size_t i = 0; i < name.len && name.data[i] != '.' && name.data[i] != ':' && len < 12; i++) {
+        unsigned char c = SP_PRIV_CAST(unsigned char, name.data[i]);
+        /* Check for UTF-8 encoded superscript digits (U+00B9, U+00B2, U+00B3) */
+        if (c == 0xC2 && i + 1 < name.len) {
+            unsigned char c2 = SP_PRIV_CAST(unsigned char, name.data[i + 1]);
+            if (c2 == 0xB9) { upper[len++] = '1'; i++; continue; }  /* ¹ → 1 */
+            if (c2 == 0xB2) { upper[len++] = '2'; i++; continue; }  /* ² → 2 */
+            if (c2 == 0xB3) { upper[len++] = '3'; i++; continue; }  /* ³ → 3 */
+        }
+        /* Skip trailing spaces - don't add them */
+        if (c == ' ') continue;
+        /* Normal ASCII uppercasing */
+        upper[len++] = SP_PRIV_CAST(char, (c >= 'a' && c <= 'z') ? c - 32 : c);
     }
     upper[len] = '\0';
 
@@ -1286,6 +1727,7 @@ bool sp_is_reserved(const SpPath *p) {
         "CON", "PRN", "AUX", "NUL",
         "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CONIN$", "CONOUT$",
         NULL
     };
     for (const char **r = reserved; *r; r++) {

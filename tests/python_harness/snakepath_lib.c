@@ -57,6 +57,19 @@ SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
     return sp_relative_to_is_error(p) ? 1 : 0;
 }
 
+/* Multi-segment variants */
+SP_EXPORT int sp_is_relative_to_parts_wrap(const SpPath *p, const char **parts) {
+    return sp_is_relative_to_parts(p, parts) ? 1 : 0;
+}
+
+SP_EXPORT void sp_relative_to_parts_wrap(const SpPath *p, const char **parts, int walk_up, SpPath *out) {
+    *out = sp_relative_to_parts(p, parts, walk_up != 0);
+}
+
+SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
+    return sp_as_uri(p, buf, buf_size);
+}
+
 /* Path -> bool */
 WRAP_BOOL_UNARY(is_absolute)
 
@@ -68,6 +81,7 @@ WRAP_BOOL_BINARY(path_eq)
 SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
 SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
 SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern) { return sp_match(p, pattern); }
+SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_sensitive) { return sp_match_ex(p, pattern, case_sensitive); }
 SP_EXPORT int sp_is_reserved_wrap(const SpPath *p) { return sp_is_reserved(p) ? 1 : 0; }
 SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
 SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
@@ -76,6 +90,10 @@ SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_co
 
 SP_EXPORT void sp_path_new_wrap(const char *s, int flavor, SpPath *out) {
     *out = sp_path_new(s, (SpPathOpts){(SpFlavor)flavor});
+}
+
+SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
+    *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
 }
 
 SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = sp_path_copy(p); }
