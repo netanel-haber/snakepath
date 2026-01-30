@@ -346,6 +346,12 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
     *len = j;
 }
 
+/* Helper to return an empty path (works in both C and C++) */
+static inline SpPath sp_priv_empty_path(void) {
+    SpPath p = SP_PRIV_ZERO;
+    return p;
+}
+
 SpPath sp_path_new(const char *s, SpPathOpts opts) {
     SP_ASSERT_FLAVOR(opts.flavor);
     SpPath p = SP_PRIV_ZERO;
@@ -719,9 +725,9 @@ SpPath sp_with_name(const SpPath *p, const char *name) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(name != NULL && "name must not be NULL");
     /* Validate: path must have a name, new name must be valid */
-    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    if (!sp_priv_has_usable_name(p)) return sp_priv_empty_path();
     size_t nlen = strlen(name);
-    if (!sp_priv_is_valid_name(name, nlen, p->flavor)) return (SpPath)SP_PRIV_ZERO;
+    if (!sp_priv_is_valid_name(name, nlen, p->flavor)) return sp_priv_empty_path();
     SpPath parent = sp_parent(p);
     return sp_join_one(&parent, name);
 }
@@ -730,9 +736,9 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(stem != NULL && "stem must not be NULL");
     /* Validate: path must have a name, new stem must be valid */
-    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    if (!sp_priv_has_usable_name(p)) return sp_priv_empty_path();
     size_t slen = strlen(stem);
-    if (!sp_priv_is_valid_name(stem, slen, p->flavor)) return (SpPath)SP_PRIV_ZERO;
+    if (!sp_priv_is_valid_name(stem, slen, p->flavor)) return sp_priv_empty_path();
     SpStr suffix = sp_suffix(p);
     char name[SP_PATH_MAX];
     if (slen + suffix.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suffix.len - 1;
@@ -749,17 +755,17 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(suffix != NULL && "suffix must not be NULL");
     /* Validate: path must have a name */
-    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    if (!sp_priv_has_usable_name(p)) return sp_priv_empty_path();
     size_t suflen = strlen(suffix);
     /* Validate: suffix must be empty or start with '.', no separators */
     if (suflen > 0) {
-        if (suffix[0] != '.') return (SpPath)SP_PRIV_ZERO;
+        if (suffix[0] != '.') return sp_priv_empty_path();
         for (size_t i = 0; i < suflen; i++) {
-            if (sp_priv_is_sep(suffix[i], p->flavor)) return (SpPath)SP_PRIV_ZERO;
+            if (sp_priv_is_sep(suffix[i], p->flavor)) return sp_priv_empty_path();
         }
         /* Check for drive letter in suffix (Windows) */
         if (sp_priv_is_windows_flavor(p->flavor) && suflen >= 2 && suffix[1] == ':') {
-            return (SpPath)SP_PRIV_ZERO;
+            return sp_priv_empty_path();
         }
     }
     SpStr stem = sp_stem(p);
