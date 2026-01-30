@@ -1,5 +1,7 @@
-Snakepath
-C99 header-only pathlib library. POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor.
+Snakepath:
+C99 STB-style header-only based on [python's pathlib library](https://docs.python.org/3/library/pathlib.html), because I love pathlib. 
+POSIX + Windows. No malloc. 
+Vibe-coded with Claude Code + Cursor.
 
 ```c
 #define SNAKEPATH_IMPLEMENTATION
