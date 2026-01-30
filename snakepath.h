@@ -220,11 +220,13 @@ typedef struct SpFluentPath SpFluentPath;
 typedef SpFluentPath (*SpFluentVoidFn)(void);
 typedef SpFluentPath (*SpFluentStrFn)(const char *);
 typedef SpFluentPath (*SpFluentPathFn)(const SpPath *);
+typedef SpPath (*SpFluentFinishFn)(void);
 
-/* The fluent API struct - each instance carries its own path.
- * Only path→path transformations are methods; use sp_*(&f.path) for accessors. */
+/* The fluent API struct - call .path() to finish the chain.
+ * Internal storage is opaque - do not access _priv directly. */
 struct SpFluentPath {
-    SpPath path;
+    void *_priv;  /* opaque internal storage - do not use */
+    SpFluentFinishFn path;
     SpFluentVoidFn parent;
     SpFluentStrFn join;
     SpFluentStrFn with_name;
@@ -238,13 +240,10 @@ struct SpFluentPath {
 /* Initialize fluent context and create SpFluentPath (called by macros) */
 SpFluentPath sp_fluent_init(SpPath p);
 
-/* Path creation macros - return SpFluentPath with its own copy of the path */
+/* Path creation macros - return SpFluentPath, call .path() to finish the chain */
 #define SPF(s)   sp_fluent_init(sp_path(s))
 #define SPF_P(s) sp_fluent_init(sp_path_f((s), SP_FLAVOR_POSIX))
 #define SPF_W(s) sp_fluent_init(sp_path_f((s), SP_FLAVOR_WINDOWS))
-
-/* Resume chaining from a stored SpFluentPath */
-#define SP(f) sp_fluent_init((f).path)
 
 #endif /* SNAKEPATH_FLUENT */
 
@@ -1756,8 +1755,10 @@ bool sp_is_reserved(const SpPath *p) {
 
 /* Thread-local context for fluent chaining */
 static SP_TLS SpPath sp_priv_f_ctx;
+static SP_TLS bool sp_priv_f_ctx_active = false;
 
 /* Forward declarations of chainable methods */
+static SpPath sp_priv_f_path(void);
 static SpFluentPath sp_priv_f_parent(void);
 static SpFluentPath sp_priv_f_join(const char *s);
 static SpFluentPath sp_priv_f_with_name(const char *s);
@@ -1767,10 +1768,17 @@ static SpFluentPath sp_priv_f_absolute(void);
 static SpFluentPath sp_priv_f_relative_to(const SpPath *other);
 static SpFluentPath sp_priv_f_relative_to_walk_up(const SpPath *other);
 
+/* Finish the chain and return the path */
+static SpPath sp_priv_f_path(void) {
+    sp_priv_f_ctx_active = false;
+    return sp_priv_f_ctx;
+}
+
 /* Helper to create SpFluentPath with current context */
 static SpFluentPath sp_priv_f_make(void) {
     return (SpFluentPath){
-        .path = sp_priv_f_ctx,
+        ._priv = NULL,
+        .path = sp_priv_f_path,
         .parent = sp_priv_f_parent,
         .join = sp_priv_f_join,
         .with_name = sp_priv_f_with_name,
@@ -1784,9 +1792,11 @@ static SpFluentPath sp_priv_f_make(void) {
 
 /* Initialize the fluent context and return SpFluentPath */
 SpFluentPath sp_fluent_init(SpPath p) {
+    assert(!sp_priv_f_ctx_active && "fluent chain already active - did you forget to call .path()?");
     assert(p.len < SP_PATH_MAX && "path length must be within bounds");
     assert(p.buf[p.len] == '\0' && "path must be null-terminated");
     SP_ASSERT_FLAVOR(p.flavor);
+    sp_priv_f_ctx_active = true;
     sp_priv_f_ctx = p;
     return sp_priv_f_make();
 }
