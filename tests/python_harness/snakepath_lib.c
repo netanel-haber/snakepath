@@ -1,7 +1,7 @@
 /* snakepath_lib.c - Shared library wrapper for Python bindings */
 
 #define SNAKEPATH_IMPLEMENTATION
-#include "../snakepath.h"
+#include "snakepath.h"
 
 #ifdef _WIN32
 #define SP_EXPORT __declspec(dllexport)
