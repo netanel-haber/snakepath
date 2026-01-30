@@ -9,8 +9,8 @@ import os
 import unittest
 import urllib.request
 
-# Add our module to path FIRST (tests/python_harness/ -> python/)
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'python'))
+# Add our module to path FIRST (snakepath package is in this directory)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import snakepath
 

@@ -185,12 +185,12 @@ static const char *all_artifacts[] = {
     /* PDB and obj files from MSVC */
     "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
     "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "demo.obj",
-    "python/snakepath.dll",
+    "tests/python_harness/snakepath.dll",
 #else
     "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",
     "tests/test_gpp", "tests/test_clangpp", "tests/test_fluent_gcc", "tests/test_fluent_clang",
     "demo",
-    "python/libsnakepath.so",
+    "tests/python_harness/libsnakepath.so",
 #endif
     NULL
 };
@@ -202,23 +202,23 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
 #ifdef _WIN32
     if (compiler == COMPILER_MSVC) {
         nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
-        nob_cmd_append(&cmd, "/W4");
-        nob_cmd_append(&cmd, "/Fe:python/snakepath.dll");
-        nob_cmd_append(&cmd, "python/snakepath_lib.c");
+        nob_cmd_append(&cmd, "/W4", "/I.");
+        nob_cmd_append(&cmd, "/Fe:tests/python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
     } else {
         nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
-        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2");
+        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2", "-I.");
         nob_cmd_append(&cmd, "-fvisibility=hidden");
-        nob_cmd_append(&cmd, "-o", "python/snakepath.dll");
-        nob_cmd_append(&cmd, "python/snakepath_lib.c");
+        nob_cmd_append(&cmd, "-o", "tests/python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
     }
 #else
     const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
-    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2");
+    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2", "-I.");
     nob_cmd_append(&cmd, "-Wall", "-Wextra");
     nob_cmd_append(&cmd, "-fvisibility=hidden");
-    nob_cmd_append(&cmd, "-o", "python/libsnakepath.so");
-    nob_cmd_append(&cmd, "python/snakepath_lib.c");
+    nob_cmd_append(&cmd, "-o", "tests/python_harness/libsnakepath.so");
+    nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
 #endif
 
     bool result;

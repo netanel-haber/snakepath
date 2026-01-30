@@ -5,13 +5,13 @@ nob.old
 demo
 
 # Python
-python/libsnakepath.so
-python/snakepath.dll
 __pycache__/
 *.pyc
 
 # Tests
 tests/python_harness/cpython_tests/
+tests/python_harness/libsnakepath.so
+tests/python_harness/snakepath.dll
 tests/test_gcc
 tests/test_clang
 tests/test_gcc_san

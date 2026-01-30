@@ -51,14 +51,12 @@ README.md                # This file
 tests/                   # All tests
   test.c                 # Core API tests
   test_fluent_api.c      # Fluent API tests
-  python_harness/        # Python test harness
+  python_harness/        # Python bindings and test harness
+    snakepath/           # Python package
+      __init__.py        # Thin ctypes wrapper over C library
+    snakepath_lib.c      # FFI wrapper for Python bindings
     run_cpython_tests.py # Runs CPython's pathlib test suite against snakepath
     skip.txt             # Exact list of tests to skip (unimplemented features)
-
-python/                  # Python bindings
-  snakepath/             # Python package
-    __init__.py          # Thin ctypes wrapper over C library
-  snakepath_lib.c        # FFI wrapper for Python bindings
 ```
 
 ## Boring API
@@ -221,8 +219,8 @@ print(w.stem)      # 'test'
 ### Building
 
 ```bash
-cd python
-gcc -shared -fPIC -fvisibility=hidden -O2 -I.. -o libsnakepath.so snakepath_lib.c
+cd tests/python_harness
+gcc -shared -fPIC -fvisibility=hidden -O2 -I../.. -o libsnakepath.so snakepath_lib.c
 ```
 
 ### Testing
@@ -230,12 +228,11 @@ gcc -shared -fPIC -fvisibility=hidden -O2 -I.. -o libsnakepath.so snakepath_lib.
 Tests run CPython's official pathlib test suite against snakepath:
 
 ```bash
-cd python
-python tests/run_cpython_tests.py
+python tests/python_harness/run_cpython_tests.py
 ```
 
-- Test runner: [`python/tests/run_cpython_tests.py`](python/tests/run_cpython_tests.py)
-- Skip list: [`python/tests/skip.txt`](python/tests/skip.txt) - exact tests to skip for unimplemented features
+- Test runner: [`tests/python_harness/run_cpython_tests.py`](tests/python_harness/run_cpython_tests.py)
+- Skip list: [`tests/python_harness/skip.txt`](tests/python_harness/skip.txt) - exact tests to skip for unimplemented features
 
 ## Gotchas
 
