@@ -453,7 +453,6 @@ SpStr sp_anchor(const SpPath *p) {
 
 SpStr sp_name(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (p->len == 0) return SP_PRIV_STR(p->buf, 0);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (anchor == p->len) return SP_PRIV_STR(p->buf + p->len, 0);
     size_t i = p->len;
