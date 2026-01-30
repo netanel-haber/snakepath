@@ -163,6 +163,12 @@ _lib.sp_is_relative_to_wrap.restype = c_int
 _lib.sp_is_absolute_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_is_absolute_wrap.restype = c_int
 
+_lib.sp_cwd_wrap.argtypes = [c_int, POINTER(_SpPath)]
+_lib.sp_cwd_wrap.restype = None
+
+_lib.sp_absolute_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
+_lib.sp_absolute_wrap.restype = None
+
 _lib.sp_path_eq_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_path_eq_wrap.restype = c_int
 
@@ -616,6 +622,21 @@ class Path(PurePath):
         if cls is Path:
             cls = PosixPath if os.name != 'nt' else WindowsPath
         return object.__new__(cls)
+
+    @classmethod
+    def cwd(cls):
+        """Return a new path pointing to the current working directory."""
+        result = cls.__new__(cls)
+        result._sp = _SpPath()
+        _lib.sp_cwd_wrap(result._flavor, byref(result._sp))
+        return result
+
+    def absolute(self):
+        """Return an absolute version of this path."""
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_absolute_wrap(byref(self._sp), byref(result._sp))
+        return result
 
 
 class PosixPath(Path, PurePosixPath):

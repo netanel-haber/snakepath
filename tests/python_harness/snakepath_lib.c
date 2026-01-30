@@ -73,6 +73,10 @@ SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
 /* Path -> bool */
 WRAP_BOOL_UNARY(is_absolute)
 
+/* Path -> Path (cwd/absolute) */
+WRAP_PATH_UNARY(absolute)
+SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
+
 /* Path + Path -> bool */
 WRAP_BOOL_BINARY(is_relative_to)
 WRAP_BOOL_BINARY(path_eq)

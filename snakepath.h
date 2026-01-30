@@ -175,6 +175,8 @@ SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
 bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
 bool sp_is_absolute(const SpPath *p);
+SpPath sp_cwd(SpFlavor flavor);
+SpPath sp_absolute(const SpPath *p);
 size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
 int sp_path_cmp(const SpPath *a, const SpPath *b);
@@ -279,6 +281,15 @@ void sp_fluent_init(SpPath p);
 
 /* ============ Implementation ============ */
 #ifdef SNAKEPATH_IMPLEMENTATION
+
+/* Platform-specific includes for getcwd */
+#ifdef SP_WINDOWS
+#include <direct.h>
+#define sp_priv_getcwd _getcwd
+#else
+#include <unistd.h>
+#define sp_priv_getcwd getcwd
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -1151,6 +1162,25 @@ bool sp_is_absolute(const SpPath *p) {
     }
     /* POSIX: absolute if has root */
     return root.len > 0;
+}
+
+SpPath sp_cwd(SpFlavor flavor) {
+    char buf[SP_PATH_MAX];
+    if (sp_priv_getcwd(buf, SP_PATH_MAX) == NULL) {
+        /* On error, return empty path */
+        return sp_path_new("", SP_PRIV_OPTS(flavor));
+    }
+    return sp_path_new(buf, SP_PRIV_OPTS(flavor));
+}
+
+SpPath sp_absolute(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_is_absolute(p)) {
+        return sp_path_copy(p);
+    }
+    /* Join cwd with the relative path */
+    SpPath cwd = sp_cwd(p->flavor);
+    return sp_joinpath(&cwd, p);
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
