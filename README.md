@@ -131,13 +131,18 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #include "snakepath.h"
 
 // Python: Path('a/b/c').parent.name
-// C:      SPF("a/b/c").parent().name()
+SpFluentPath f = SPF("a/b/c").parent();
+SpStr name = sp_name(&f.path);  // "b"
 
 // Python: PurePosixPath('/etc').joinpath('init.d', 'apache2')
-// C:      SPF_P("/etc").join("init.d").join("apache2")
+SpFluentPath etc = SPF_P("/etc").join("init.d").join("apache2");
+printf("%s\n", sp_str(&etc.path));  // "/etc/init.d/apache2"
 
-// Get the underlying path
-const SpPath *p = SPF("a/b").parent().get();
+// Store and resume chaining later
+SpFluentPath base = SPF_P("/home/user");
+SpFluentPath docs = SP(base).join("Documents");
+SpFluentPath pics = SP(base).join("Pictures");
+// Safe: docs.path and pics.path have independent buffers
 ```
 
 ### Path Creation Macros
@@ -147,31 +152,31 @@ const SpPath *p = SPF("a/b").parent().get();
 | `SPF("path")` | `Path('path')` | Native platform |
 | `SPF_P("path")` | `PurePosixPath('path')` | POSIX semantics |
 | `SPF_W("path")` | `PureWindowsPath('path')` | Windows semantics |
+| `SP(f)` | - | Resume chaining from stored `SpFluentPath` |
 
 ### Chainable Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `.parent()` | SpFluent | Parent directory |
-| `.join("x")` | SpFluent | Join with component |
-| `.with_name("x")` | SpFluent | Replace name |
-| `.with_stem("x")` | SpFluent | Replace stem |
-| `.with_suffix(".x")` | SpFluent | Replace suffix |
+| `.parent()` | SpFluentPath | Parent directory |
+| `.join("x")` | SpFluentPath | Join with component |
+| `.with_name("x")` | SpFluentPath | Replace name |
+| `.with_stem("x")` | SpFluentPath | Replace stem |
+| `.with_suffix(".x")` | SpFluentPath | Replace suffix |
+| `.absolute()` | SpFluentPath | Make path absolute |
+| `.relative_to(&base)` | SpFluentPath | Relative path from base |
+| `.relative_to_walk_up(&base)` | SpFluentPath | Relative path with `..` |
 
-### Accessor Methods
+### Accessing Results
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `.name()` | SpStr | Final component |
-| `.stem()` | SpStr | Name without suffix |
-| `.suffix()` | SpStr | File extension |
-| `.suffixes()` | SpSuffixes | All extensions |
-| `.drive()` | SpStr | Drive letter |
-| `.root()` | SpStr | Root separator |
-| `.anchor()` | SpStr | Drive + root |
-| `.str()` | const char* | Path as string |
-| `.is_absolute()` | bool | Check if absolute |
-| `.get()` | const SpPath* | Underlying path |
+Use the regular API with the `.path` field:
+
+```c
+SpFluentPath f = SPF_P("/home/user").join("docs").with_suffix(".txt");
+printf("%s\n", sp_str(&f.path));        // Path as string
+printf("%.*s\n", (int)sp_name(&f.path).len, sp_name(&f.path).data);  // Name
+bool abs = sp_is_absolute(&f.path);     // Check if absolute
+```
 
 ## Core Types
 
