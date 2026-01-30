@@ -20,6 +20,7 @@ cpython_tests.test_pathlib.PureWindowsPathTest.test_full_match_case_sensitive
 
 # match() case_sensitive kwarg not implemented
 cpython_tests.test_pathlib.PurePathTest.test_match_common
+cpython_tests.test_pathlib.PurePathTest.test_match_windows
 cpython_tests.test_pathlib.PurePosixPathTest.test_match_common
 cpython_tests.test_pathlib.PureWindowsPathTest.test_match_common
 cpython_tests.test_pathlib.PureWindowsPathTest.test_match_windows
@@ -27,6 +28,7 @@ cpython_tests.test_pathlib.PureWindowsPathTest.test_match_windows
 # _parse_path internal method not implemented
 cpython_tests.test_pathlib.PurePathTest.test_parse_path_common
 cpython_tests.test_pathlib.PurePathTest.test_parse_path_posix
+cpython_tests.test_pathlib.PurePathTest.test_parse_path_windows
 cpython_tests.test_pathlib.PurePathTest.test_parse_windows_path
 cpython_tests.test_pathlib.PurePosixPathTest.test_parse_path_common
 cpython_tests.test_pathlib.PurePosixPathTest.test_parse_path_posix
@@ -57,6 +59,7 @@ cpython_tests.test_pathlib.PurePosixPathTest.test_different_parsers_unordered
 cpython_tests.test_pathlib.PureWindowsPathTest.test_different_parsers_unordered
 
 # Unicode case folding for Windows (complex locale-aware comparison)
+cpython_tests.test_pathlib.PurePathTest.test_eq_windows
 cpython_tests.test_pathlib.PureWindowsPathTest.test_eq_windows
 
 # PurePathSubclassTest - tests internal subclassing behavior
