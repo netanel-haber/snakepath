@@ -693,9 +693,35 @@ SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
     return sp_join_one(base, other->buf);
 }
 
+/* Validate name/stem doesn't contain separators or drive letters.
+   Returns true if valid, false if invalid. */
+static bool sp_priv_is_valid_name(const char *s, size_t len, SpFlavor flavor) {
+    if (len == 0) return false;
+    for (size_t i = 0; i < len; i++) {
+        if (sp_priv_is_sep(s[i], flavor)) return false;
+    }
+    /* Check for drive letter (Windows only) */
+    if (sp_priv_is_windows_flavor(flavor) && len >= 2 && s[1] == ':' && sp_priv_is_drive_letter(s[0])) {
+        return false;
+    }
+    return true;
+}
+
+/* Check if path has a usable name (not empty, not '.') */
+static bool sp_priv_has_usable_name(const SpPath *p) {
+    SpStr name = sp_name(p);
+    if (name.len == 0) return false;
+    if (name.len == 1 && name.data[0] == '.') return false;
+    return true;
+}
+
 SpPath sp_with_name(const SpPath *p, const char *name) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(name != NULL && "name must not be NULL");
+    /* Validate: path must have a name, new name must be valid */
+    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    size_t nlen = strlen(name);
+    if (!sp_priv_is_valid_name(name, nlen, p->flavor)) return (SpPath)SP_PRIV_ZERO;
     SpPath parent = sp_parent(p);
     return sp_join_one(&parent, name);
 }
@@ -703,24 +729,41 @@ SpPath sp_with_name(const SpPath *p, const char *name) {
 SpPath sp_with_stem(const SpPath *p, const char *stem) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(stem != NULL && "stem must not be NULL");
+    /* Validate: path must have a name, new stem must be valid */
+    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    size_t slen = strlen(stem);
+    if (!sp_priv_is_valid_name(stem, slen, p->flavor)) return (SpPath)SP_PRIV_ZERO;
     SpStr suffix = sp_suffix(p);
     char name[SP_PATH_MAX];
-    size_t slen = strlen(stem);
     if (slen + suffix.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suffix.len - 1;
     memcpy(name, stem, slen);
     if (suffix.len > 0) {
         memcpy(name + slen, suffix.data, suffix.len);
     }
     name[slen + suffix.len] = '\0';
-    return sp_with_name(p, name);
+    SpPath parent = sp_parent(p);
+    return sp_join_one(&parent, name);
 }
 
 SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     SP_ASSERT_PATH_INVARIANT(p);
     assert(suffix != NULL && "suffix must not be NULL");
+    /* Validate: path must have a name */
+    if (!sp_priv_has_usable_name(p)) return (SpPath)SP_PRIV_ZERO;
+    size_t suflen = strlen(suffix);
+    /* Validate: suffix must be empty or start with '.', no separators */
+    if (suflen > 0) {
+        if (suffix[0] != '.') return (SpPath)SP_PRIV_ZERO;
+        for (size_t i = 0; i < suflen; i++) {
+            if (sp_priv_is_sep(suffix[i], p->flavor)) return (SpPath)SP_PRIV_ZERO;
+        }
+        /* Check for drive letter in suffix (Windows) */
+        if (sp_priv_is_windows_flavor(p->flavor) && suflen >= 2 && suffix[1] == ':') {
+            return (SpPath)SP_PRIV_ZERO;
+        }
+    }
     SpStr stem = sp_stem(p);
     char name[SP_PATH_MAX];
-    size_t suflen = strlen(suffix);
     size_t stemlen = stem.len;
     if (stemlen + suflen >= SP_PATH_MAX) stemlen = SP_PATH_MAX - suflen - 1;
     if (stemlen > 0) {
