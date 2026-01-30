@@ -20,7 +20,6 @@ static int sv_eq(SpStr a, const char *b) {
 #define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
 #define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
-#define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 #define ASSERT_FLUENT(f, exp) do { SpPath _p = (f).path(); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 
 int main(void) {
