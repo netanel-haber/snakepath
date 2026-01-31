@@ -189,6 +189,14 @@ int sp_match(const SpPath *p, const char *pattern);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
 bool sp_is_reserved(const SpPath *p);
 
+/* Filesystem I/O functions */
+bool sp_exists(const SpPath *p);
+bool sp_is_file(const SpPath *p);
+bool sp_is_dir(const SpPath *p);
+bool sp_is_symlink(const SpPath *p);
+SpPath sp_home(SpFlavor flavor);
+SpPath sp_expanduser(const SpPath *p);
+
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
 static inline int sp_path_error_code(const SpPath *p) {
@@ -233,6 +241,10 @@ struct sp_fluent_ {
     const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
+    bool (*exists)(void);
+    bool (*is_file)(void);
+    bool (*is_dir)(void);
+    bool (*is_symlink)(void);
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
@@ -242,6 +254,7 @@ struct sp_fluent_ {
     SpPrivDontUseThisDirectly_ *(*absolute)(void);
     SpPrivDontUseThisDirectly_ *(*relative_to)(const SpPath *);
     SpPrivDontUseThisDirectly_ *(*relative_to_walk_up)(const SpPath *);
+    SpPrivDontUseThisDirectly_ *(*expanduser)(void);
 };
 SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 
@@ -268,6 +281,18 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #else
 #include <unistd.h>
 #define sp_priv_getcwd getcwd
+#endif
+
+/* Platform-specific includes for stat and filesystem I/O */
+#ifdef SP_WINDOWS
+#include <sys/stat.h>
+#include <windows.h>
+#include <stdlib.h> /* for getenv */
+#else
+#include <sys/stat.h>
+#include <stdlib.h> /* for getenv */
+#include <pwd.h>    /* for getpwuid */
+#include <unistd.h> /* for getuid */
 #endif
 
 #ifdef __cplusplus
@@ -1430,6 +1455,111 @@ bool sp_is_reserved(const SpPath *p) {
     return false;
 }
 
+/* ============ Filesystem I/O Functions ============ */
+
+bool sp_exists(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    #ifdef SP_WINDOWS
+        struct _stat st;
+        return _stat(sp_str(p), &st) == 0;
+    #else
+        struct stat st;
+        return stat(sp_str(p), &st) == 0;
+    #endif
+}
+
+bool sp_is_file(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    #ifdef SP_WINDOWS
+        struct _stat st;
+        if (_stat(sp_str(p), &st) != 0) return false;
+        return (st.st_mode & _S_IFREG) != 0;
+    #else
+        struct stat st;
+        if (stat(sp_str(p), &st) != 0) return false;
+        return S_ISREG(st.st_mode);
+    #endif
+}
+
+bool sp_is_dir(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    #ifdef SP_WINDOWS
+        struct _stat st;
+        if (_stat(sp_str(p), &st) != 0) return false;
+        return (st.st_mode & _S_IFDIR) != 0;
+    #else
+        struct stat st;
+        if (stat(sp_str(p), &st) != 0) return false;
+        return S_ISDIR(st.st_mode);
+    #endif
+}
+
+bool sp_is_symlink(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    #ifdef SP_WINDOWS
+        /* Windows: Use GetFileAttributesW for symlink detection */
+        wchar_t wpath[SP_PATH_MAX];
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, sp_str(p), -1, wpath, SP_PATH_MAX);
+        if (wlen == 0) return false;
+        DWORD attrs = GetFileAttributesW(wpath);
+        if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+        return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    #else
+        struct stat st;
+        if (lstat(sp_str(p), &st) != 0) return false;
+        return S_ISLNK(st.st_mode);
+    #endif
+}
+
+SpPath sp_home(SpFlavor flavor) {
+    SP_ASSERT_FLAVOR(flavor);
+    #ifdef SP_WINDOWS
+        const char *home = getenv("USERPROFILE");
+        if (!home) {
+            const char *drive = getenv("HOMEDRIVE");
+            const char *path = getenv("HOMEPATH");
+            if (drive && path) {
+                char buf[SP_PATH_MAX];
+                snprintf(buf, SP_PATH_MAX, "%s%s", drive, path);
+                return sp_path_new(buf, SP_PRIV_OPTS(flavor));
+            }
+        }
+    #else
+        const char *home = getenv("HOME");
+        if (!home) {
+            /* Fallback to getpwuid */
+            struct passwd *pw = getpwuid(getuid());
+            if (pw) {
+                home = pw->pw_dir;
+            }
+        }
+    #endif
+    return sp_path_new(home ? home : "", SP_PRIV_OPTS(flavor));
+}
+
+SpPath sp_expanduser(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    const char *s = sp_str(p);
+
+    /* Not a tilde path, return as-is */
+    if (p->len == 0 || p->buf[0] != '~') {
+        return sp_path_copy(p);
+    }
+
+    /* Just "~" or "~/..." */
+    if (p->len == 1 || sp_priv_is_sep(p->buf[1], p->flavor)) {
+        if (p->len == 1) {
+            return sp_home(p->flavor);
+        }
+        /* Join home with rest of path */
+        SpPath home = sp_home(p->flavor);
+        return sp_join_one(&home, s + 2); /* Skip "~/" */
+    }
+
+    /* "~user/..." - not supported, return as-is */
+    return sp_path_copy(p);
+}
+
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
 
@@ -1451,12 +1581,16 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(path, SpPath, sp_priv_f_ctx)                                                                                     \
     X(suffixes, SpSuffixes, sp_suffixes(&sp_priv_f_ctx))                                                               \
     X(str, const char *, sp_str(&sp_priv_f_ctx))                                                                       \
-    X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))
+    X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
+    X(exists, bool, sp_exists(&sp_priv_f_ctx))                                                                         \
+    X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
+    X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))                                                                         \
+    X(is_symlink, bool, sp_is_symlink(&sp_priv_f_ctx))
 #define SP_FLUENT_TERM_STR(X)                                                                                          \
     X(name, SpStr, sp_name)                                                                                            \
     X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
         X(anchor, SpStr, sp_anchor)
-#define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute)
+#define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser)
 #define SP_FLUENT_CHAIN_STR(X)                                                                                         \
     X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
 #define SP_FLUENT_CHAIN_PATH(X)                                                                                        \
@@ -1500,6 +1634,10 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {sp_priv_f_path_,
                                                         sp_priv_f_str_,
                                                         sp_priv_f_is_absolute_,
                                                         sp_priv_f_is_relative_to_,
+                                                        sp_priv_f_exists_,
+                                                        sp_priv_f_is_file_,
+                                                        sp_priv_f_is_dir_,
+                                                        sp_priv_f_is_symlink_,
                                                         sp_priv_f_parent_,
                                                         sp_priv_f_join_,
                                                         sp_priv_f_with_name_,
@@ -1507,7 +1645,8 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {sp_priv_f_path_,
                                                         sp_priv_f_with_suffix_,
                                                         sp_priv_f_absolute_,
                                                         sp_priv_f_relative_to_,
-                                                        sp_priv_f_relative_to_walk_up_};
+                                                        sp_priv_f_relative_to_walk_up_,
+                                                        sp_priv_f_expanduser_};
 
 #define SP_DEF_CHAIN_VOID(n, fn)                                                                                       \
     static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(void) {                                                        \

@@ -72,10 +72,16 @@ SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
 
 /* Path -> bool */
 WRAP_BOOL_UNARY(is_absolute)
+WRAP_BOOL_UNARY(exists)
+WRAP_BOOL_UNARY(is_file)
+WRAP_BOOL_UNARY(is_dir)
+WRAP_BOOL_UNARY(is_symlink)
 
 /* Path -> Path (cwd/absolute) */
 WRAP_PATH_UNARY(absolute)
+WRAP_PATH_UNARY(expanduser)
 SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
+SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) { *out = sp_home((SpFlavor)flavor); }
 
 /* Path + Path -> bool */
 WRAP_BOOL_BINARY(is_relative_to)

@@ -163,8 +163,26 @@ _lib.sp_is_relative_to_wrap.restype = c_int
 _lib.sp_is_absolute_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_is_absolute_wrap.restype = c_int
 
+_lib.sp_exists_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_exists_wrap.restype = c_int
+
+_lib.sp_is_file_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_file_wrap.restype = c_int
+
+_lib.sp_is_dir_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_dir_wrap.restype = c_int
+
+_lib.sp_is_symlink_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_symlink_wrap.restype = c_int
+
 _lib.sp_cwd_wrap.argtypes = [c_int, POINTER(_SpPath)]
 _lib.sp_cwd_wrap.restype = None
+
+_lib.sp_home_wrap.argtypes = [c_int, POINTER(_SpPath)]
+_lib.sp_home_wrap.restype = None
+
+_lib.sp_expanduser_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
+_lib.sp_expanduser_wrap.restype = None
 
 _lib.sp_absolute_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_absolute_wrap.restype = None
@@ -588,6 +606,38 @@ class PurePath:
     def is_reserved(self):
         """Return True if the path is reserved under Windows."""
         return bool(_lib.sp_is_reserved_wrap(byref(self._sp)))
+
+    def exists(self):
+        """Whether this path exists."""
+        return bool(_lib.sp_exists_wrap(byref(self._sp)))
+
+    def is_file(self):
+        """Whether this path is a regular file."""
+        return bool(_lib.sp_is_file_wrap(byref(self._sp)))
+
+    def is_dir(self):
+        """Whether this path is a directory."""
+        return bool(_lib.sp_is_dir_wrap(byref(self._sp)))
+
+    def is_symlink(self):
+        """Whether this path is a symbolic link."""
+        return bool(_lib.sp_is_symlink_wrap(byref(self._sp)))
+
+    def expanduser(self):
+        """Expand ~ and ~user constructs."""
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_expanduser_wrap(byref(self._sp), byref(result._sp))
+        return result
+
+    @classmethod
+    def home(cls):
+        """Return the home directory."""
+        result = cls.__new__(cls)
+        result._sp = _SpPath()
+        flavor = cls._flavor if hasattr(cls, '_flavor') else SP_FLAVOR_NATIVE
+        _lib.sp_home_wrap(flavor, byref(result._sp))
+        return result
 
 
 class PurePosixPath(PurePath):

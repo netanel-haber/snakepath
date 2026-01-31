@@ -231,7 +231,49 @@ int main(void) {
     SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
     
     printf("  Edge cases OK\n");
-    
+
+    printf("\nFilesystem I/O Tests:\n");
+
+    /* Test sp_exists */
+    SpPath exists_test = sp_path(".");
+    ASSERT(sp_exists(&exists_test) == true);
+    SpPath noexist = sp_path("/nonexistent/path/xyz123");
+    ASSERT(sp_exists(&noexist) == false);
+
+    /* Test sp_is_dir */
+    SpPath dir_test = sp_path(".");
+    ASSERT(sp_is_dir(&dir_test) == true);
+
+    /* Test sp_is_file */
+    SpPath file_test = sp_path("tests/test.c");
+    ASSERT(sp_is_file(&file_test) == true);
+    ASSERT(sp_is_file(&dir_test) == false);
+
+    /* Test sp_is_symlink - test on non-symlink paths */
+    ASSERT(sp_is_symlink(&dir_test) == false);
+    ASSERT(sp_is_symlink(&file_test) == false);
+
+    /* Test sp_home */
+    SpPath home = sp_home(SP_FLAVOR_NATIVE);
+    ASSERT(sp_is_absolute(&home) == true);
+    ASSERT(sp_exists(&home) == true);
+
+    /* Test sp_expanduser */
+    SpPath tilde = sp_path("~");
+    SpPath expanded = sp_expanduser(&tilde);
+    ASSERT(sp_is_absolute(&expanded) == true);
+
+    SpPath tilde_rel = sp_path("~/docs");
+    SpPath exp_rel = sp_expanduser(&tilde_rel);
+    ASSERT(sp_is_absolute(&exp_rel) == true);
+
+    /* Test non-tilde path returns as-is */
+    SpPath notilde = sp_path("some/path");
+    SpPath notilde_exp = sp_expanduser(&notilde);
+    ASSERT(strcmp(sp_str(&notilde_exp), "some/path") == 0);
+
+    printf("  Filesystem I/O tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }

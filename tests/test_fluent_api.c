@@ -239,6 +239,32 @@ int main(void) {
     ASSERT_STR(sp_str(&docs), "/home/user/Documents");
     ASSERT_STR(sp_str(&pics), "/home/user/Pictures");
 
+    /* ============ exists ============ */
+    ASSERT(SPF(".")->exists() == true);
+    ASSERT(SPF("/nonexistent/xyz")->exists() == false);
+
+    /* ============ is_file ============ */
+    ASSERT(SPF("tests/test_fluent_api.c")->is_file() == true);
+    ASSERT(SPF(".")->is_file() == false);
+
+    /* ============ is_dir ============ */
+    ASSERT(SPF(".")->is_dir() == true);
+    ASSERT(SPF("tests/test_fluent_api.c")->is_dir() == false);
+
+    /* ============ is_symlink ============ */
+    ASSERT(SPF(".")->is_symlink() == false);
+    ASSERT(SPF("tests/test_fluent_api.c")->is_symlink() == false);
+
+    /* ============ expanduser ============ */
+    { SpPath p = SPF("~")->expanduser()->path();
+      ASSERT(sp_is_absolute(&p) == true); }
+
+    { SpPath p = SPF("~/docs")->expanduser()->path();
+      ASSERT(sp_is_absolute(&p) == true); }
+
+    /* Non-tilde path should be unchanged */
+    ASSERT_FLUENT(SPF("some/path")->expanduser(), "some/path");
+
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);
     return 0;
