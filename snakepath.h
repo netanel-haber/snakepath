@@ -293,6 +293,7 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <sys/stat.h>
 #include <windows.h>
 #include <stdlib.h> /* for getenv */
+#include <stdio.h>  /* for snprintf */
 #else
 #include <sys/stat.h>
 #include <stdlib.h> /* for getenv */
