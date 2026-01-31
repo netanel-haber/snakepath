@@ -2,11 +2,6 @@
  * Each test references Python pathlib documentation snippets.
  * https://docs.python.org/3/library/pathlib.html
  */
-#ifndef _WIN32
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-#endif
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"

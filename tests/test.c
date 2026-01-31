@@ -1,9 +1,4 @@
 /* test.c - Rigorous pathlib tests for snakepath.h */
-#ifndef _WIN32
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
-#endif
-#endif
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 #include <stdio.h>
