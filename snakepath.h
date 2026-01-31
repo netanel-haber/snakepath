@@ -9,6 +9,13 @@
 #ifndef SNAKEPATH_H
 #define SNAKEPATH_H
 
+/* Enable POSIX features for lstat, symlink, etc. */
+#if !defined(_WIN32) && !defined(__cplusplus)
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
