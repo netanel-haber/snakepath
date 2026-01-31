@@ -283,10 +283,10 @@ int main(void) {
     SpPath exp_rel = sp_expanduser(&tilde_rel);
     ASSERT(sp_is_absolute(&exp_rel) == true);
 
-    /* Test non-tilde path returns as-is */
-    SpPath notilde = sp_path("some/path");
+    /* Test non-tilde path returns as-is (use no separators to avoid platform differences) */
+    SpPath notilde = sp_path("somepath");
     SpPath notilde_exp = sp_expanduser(&notilde);
-    ASSERT(strcmp(sp_str(&notilde_exp), "some/path") == 0);
+    ASSERT(strcmp(sp_str(&notilde_exp), "somepath") == 0);
 
     printf("  Filesystem I/O tests OK\n");
 

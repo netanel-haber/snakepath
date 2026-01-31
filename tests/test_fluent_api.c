@@ -276,8 +276,8 @@ int main(void) {
     { SpPath p = SPF("~/docs")->expanduser()->path();
       ASSERT(sp_is_absolute(&p) == true); }
 
-    /* Non-tilde path should be unchanged */
-    ASSERT_FLUENT(SPF("some/path")->expanduser(), "some/path");
+    /* Non-tilde path should be unchanged (use no separators to avoid platform differences) */
+    ASSERT_FLUENT(SPF("somepath")->expanduser(), "somepath");
 
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);
