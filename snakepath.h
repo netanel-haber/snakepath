@@ -292,8 +292,6 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #ifdef SP_WINDOWS
 #include <sys/stat.h>
 #include <windows.h>
-#include <stdlib.h> /* for getenv */
-#include <stdio.h>  /* for snprintf */
 #else
 #include <sys/stat.h>
 #include <stdlib.h> /* for getenv */
@@ -1520,16 +1518,25 @@ bool sp_is_symlink(const SpPath *p) {
 SpPath sp_home(SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
     #ifdef SP_WINDOWS
-        const char *home = getenv("USERPROFILE");
-        if (!home) {
-            const char *drive = getenv("HOMEDRIVE");
-            const char *path = getenv("HOMEPATH");
-            if (drive && path) {
-                char buf[SP_PATH_MAX];
-                snprintf(buf, SP_PATH_MAX, "%s%s", drive, path);
-                return sp_path_new(buf, SP_PRIV_OPTS(flavor));
-            }
+        /* Use Windows API to avoid MSVC secure CRT warnings */
+        char buf[SP_PATH_MAX];
+        DWORD len = GetEnvironmentVariableA("USERPROFILE", buf, SP_PATH_MAX);
+        if (len > 0 && len < SP_PATH_MAX) {
+            return sp_path_new(buf, SP_PRIV_OPTS(flavor));
         }
+        /* Fallback to HOMEDRIVE + HOMEPATH */
+        char drive[16], path[SP_PATH_MAX];
+        DWORD drive_len = GetEnvironmentVariableA("HOMEDRIVE", drive, sizeof(drive));
+        DWORD path_len = GetEnvironmentVariableA("HOMEPATH", path, sizeof(path));
+        if (drive_len > 0 && path_len > 0) {
+            char combined[SP_PATH_MAX];
+            size_t i = 0;
+            for (size_t j = 0; j < drive_len && i < SP_PATH_MAX - 1; j++) combined[i++] = drive[j];
+            for (size_t j = 0; j < path_len && i < SP_PATH_MAX - 1; j++) combined[i++] = path[j];
+            combined[i] = '\0';
+            return sp_path_new(combined, SP_PRIV_OPTS(flavor));
+        }
+        return sp_path_new("", SP_PRIV_OPTS(flavor));
     #else
         const char *home = getenv("HOME");
         if (!home) {
@@ -1539,8 +1546,8 @@ SpPath sp_home(SpFlavor flavor) {
                 home = pw->pw_dir;
             }
         }
+        return sp_path_new(home ? home : "", SP_PRIV_OPTS(flavor));
     #endif
-    return sp_path_new(home ? home : "", SP_PRIV_OPTS(flavor));
 }
 
 SpPath sp_expanduser(const SpPath *p) {
