@@ -51,7 +51,7 @@ SOFTWARE.
 
 ## Docs
 
-<details>
+<details markdown="1">
 <summary>Snakepath API Reference</summary>
 
 ## Boring API
