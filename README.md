@@ -49,10 +49,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 </details>
 
+
 ## Docs
 
 <details markdown="1">
 <summary>Snakepath API Reference</summary>
+
 
 ## Boring API
 
