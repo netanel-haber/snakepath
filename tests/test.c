@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 static int tests_run = 0;
 
@@ -252,6 +255,19 @@ int main(void) {
     /* Test sp_is_symlink - test on non-symlink paths */
     ASSERT(sp_is_symlink(&dir_test) == false);
     ASSERT(sp_is_symlink(&file_test) == false);
+
+    /* Test sp_is_symlink - create actual symlink and test it returns true */
+    #ifndef _WIN32
+    const char *symlink_path = "test_symlink_tmp";
+    unlink(symlink_path); /* Remove if exists from previous run */
+    if (symlink("tests/test.c", symlink_path) == 0) {
+        SpPath symlink_test = sp_path(symlink_path);
+        ASSERT(sp_is_symlink(&symlink_test) == true);
+        ASSERT(sp_exists(&symlink_test) == true);
+        ASSERT(sp_is_file(&symlink_test) == true); /* stat() follows symlinks like pathlib */
+        unlink(symlink_path); /* Clean up */
+    }
+    #endif
 
     /* Test sp_home */
     SpPath home = sp_home(SP_FLAVOR_NATIVE);

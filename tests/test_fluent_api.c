@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 static int tests_run = 0;
 
@@ -254,6 +257,17 @@ int main(void) {
     /* ============ is_symlink ============ */
     ASSERT(SPF(".")->is_symlink() == false);
     ASSERT(SPF("tests/test_fluent_api.c")->is_symlink() == false);
+
+    /* Create actual symlink and test it returns true */
+    #ifndef _WIN32
+    const char *symlink_path = "test_symlink_fluent_tmp";
+    unlink(symlink_path); /* Remove if exists from previous run */
+    if (symlink("tests/test_fluent_api.c", symlink_path) == 0) {
+        ASSERT(SPF(symlink_path)->is_symlink() == true);
+        ASSERT(SPF(symlink_path)->exists() == true);
+        unlink(symlink_path); /* Clean up */
+    }
+    #endif
 
     /* ============ expanduser ============ */
     { SpPath p = SPF("~")->expanduser()->path();
