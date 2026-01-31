@@ -639,8 +639,8 @@ SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor)
     SP_ASSERT_FLAVOR(src_flavor);
     SP_ASSERT_FLAVOR(dest_flavor);
     if (!s || !*s) return sp_path_new(s, SP_PRIV_OPTS(dest_flavor));
+    if (src_flavor == dest_flavor) return sp_path_new(s, SP_PRIV_OPTS(src_flavor));
     SpPath src = sp_path_new(s, SP_PRIV_OPTS(src_flavor));
-    if (src_flavor == dest_flavor) return src;
 
     SpPath dest = SP_PRIV_ZERO;
     dest.flavor = dest_flavor;
