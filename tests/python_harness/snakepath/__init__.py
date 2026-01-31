@@ -635,8 +635,7 @@ class PurePath:
         """Return the home directory."""
         result = cls.__new__(cls)
         result._sp = _SpPath()
-        flavor = cls._flavor if hasattr(cls, '_flavor') else SP_FLAVOR_NATIVE
-        _lib.sp_home_wrap(flavor, byref(result._sp))
+        _lib.sp_home_wrap(result._flavor, byref(result._sp))
         return result
 
 

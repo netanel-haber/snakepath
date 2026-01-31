@@ -1566,7 +1566,22 @@ SpPath sp_expanduser(const SpPath *p) {
         }
         /* Join home with rest of path */
         SpPath home = sp_home(p->flavor);
-        return sp_join_one(&home, s + 2); /* Skip "~/" */
+        const char *rest = s + 2; /* Skip "~/" */
+        size_t rest_len = strlen(rest);
+
+        /* On Windows, if rest starts with a drive letter pattern (e.g., "a:b"),
+           we need to protect it with "./" to prevent join from treating it as a drive */
+        if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
+            char protected_path[SP_PATH_MAX];
+            size_t plen = 2 + rest_len;
+            if (plen < SP_PATH_MAX) {
+                protected_path[0] = '.';
+                protected_path[1] = sp_priv_sep(p->flavor);
+                memcpy(protected_path + 2, rest, rest_len + 1);
+                return sp_join_one(&home, protected_path);
+            }
+        }
+        return sp_join_one(&home, rest);
     }
 
     /* "~user/..." - not supported, return as-is */
