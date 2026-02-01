@@ -271,4 +271,4 @@ SOFTWARE.
 </details>
 
 
-<img height="200px" src="./snakepath.png" alt="snake ascii art that also looks like a path"/>
+<img height="200px" src="./assets/snakepath.png" alt="snake ascii art that also looks like a path"/>
