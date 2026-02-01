@@ -1,25 +1,23 @@
-<!DOCTYPE html>
 <html lang="en-US">
   <head>
-    <meta charset='utf-8'>
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/assets/css/style.css?v=9f6f336cdcb305f555f39026fee98582aa5f5727">
-    <meta name="theme-color" content="#151515">
-    <meta name="msapplication-navbutton-color" content="#151515">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta charset="utf-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#151515"/>
+    <meta name="msapplication-navbutton-color" content="#151515"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
     <title>snakepath | C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.</title>
-    <meta name="generator" content="Jekyll v3.10.0" />
-    <meta property="og:title" content="snakepath" />
-    <meta property="og:locale" content="en_US" />
-    <meta name="description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
-    <meta property="og:description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
-    <link rel="canonical" href="https://www.snakepath.dev/" />
-    <meta property="og:url" content="https://www.snakepath.dev/" />
-    <meta property="og:site_name" content="snakepath" />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary" />
-    <meta property="twitter:title" content="snakepath" />
+    <meta name="generator" content="Jekyll v3.10.0"/>
+    <meta property="og:title" content="snakepath"/>
+    <meta property="og:locale" content="en_US"/>
+    <meta name="description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril."/>
+    <meta property="og:description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril."/>
+    <link rel="canonical" href="https://www.snakepath.dev/"/>
+    <meta property="og:url" content="https://www.snakepath.dev/"/>
+    <meta property="og:site_name" content="snakepath"/>
+    <meta property="og:type" content="website"/>
+    <meta name="twitter:card" content="summary"/>
+    <meta property="twitter:title" content="snakepath"/>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -410,137 +408,137 @@
         <div class="language-c highlighter-rouge">
           <div class="highlight">
             <pre class="highlight">
-														<code>
-															<span class="n">u</span>
-															<span class="o">=</span>
-															<span class="n">https</span>
-															<span class="o">:</span>
-															<span class="c1">//raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &amp;&amp;</span>
-															<span class="n">curl</span>
-															<span class="o">-</span>
-															<span class="n">sSLo</span>
-															<span class="n">snakepath</span>
-															<span class="p">.</span>
-															<span class="n">h</span>
-															<span class="s">"$u"</span>
-															<span class="o">&amp;&amp;</span>
-															<span class="n">cat</span>
-															<span class="o">&lt;&lt;</span>
-															<span class="err">'</span>
-															<span class="n">EOF</span>
-															<span class="err">'</span>
-															<span class="o">|</span>
-															<span class="n">cc</span>
-															<span class="o">-</span>
-															<span class="n">xc</span>
-															<span class="o">-</span>
-															<span class="o">-</span>
-															<span class="n">o</span>
-															<span class="n">demo</span>
-															<span class="o">&amp;&amp;</span>
-															<span class="cp">#define SNAKEPATH_FLUENT
+	<code>
+		<span class="n">u</span>
+		<span class="o">=</span>
+		<span class="n">https</span>
+		<span class="o">:</span>
+		<span class="c1">//raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &amp;&amp;</span>
+		<span class="n">curl</span>
+		<span class="o">-</span>
+		<span class="n">sSLo</span>
+		<span class="n">snakepath</span>
+		<span class="p">.</span>
+		<span class="n">h</span>
+		<span class="s">"$u"</span>
+		<span class="o">&amp;&amp;</span>
+		<span class="n">cat</span>
+		<span class="o">&lt;&lt;</span>
+		<span class="err">'</span>
+		<span class="n">EOF</span>
+		<span class="err">'</span>
+		<span class="o">|</span>
+		<span class="n">cc</span>
+		<span class="o">-</span>
+		<span class="n">xc</span>
+		<span class="o">-</span>
+		<span class="o">-</span>
+		<span class="n">o</span>
+		<span class="n">demo</span>
+		<span class="o">&amp;&amp;</span>
+		<span class="cp">#define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include</span>
-															<span class="cpf">"snakepath.h"</span>
-															<span class="cp">
+		<span class="cpf">"snakepath.h"</span>
+		<span class="cp">
 #include</span>
-															<span class="cpf">&lt;stdio.h&gt;</span>
-															<span class="cp"></span>
-															<span class="kt">int</span>
-															<span class="nf">main</span>
-															<span class="p">(</span>
-															<span class="kt">void</span>
-															<span class="p">)</span>
-															<span class="p">{</span>
-															<span class="n">SpPath</span>
-															<span class="n">boring</span>
-															<span class="o">=</span>
-															<span class="n">sp_path</span>
-															<span class="p">(</span>
-															<span class="s">"/foo/bar.txt"</span>
-															<span class="p">);</span>
-															<span class="n">printf</span>
-															<span class="p">(</span>
-															<span class="s">"BORING API: %s</span>
-															<span class="se">\n</span>
-															<span class="s">"</span>
-															<span class="p">,</span>
-															<span class="n">sp_name</span>
-															<span class="p">(</span>
-															<span class="o">&amp;</span>
-															<span class="n">boring</span>
-															<span class="p">).</span>
-															<span class="n">data</span>
-															<span class="p">);</span>
-															<span class="n">printf</span>
-															<span class="p">(</span>
-															<span class="s">"BORING API: %s</span>
-															<span class="se">\n</span>
-															<span class="s">"</span>
-															<span class="p">,</span>
-															<span class="n">sp_stem</span>
-															<span class="p">(</span>
-															<span class="o">&amp;</span>
-															<span class="n">boring</span>
-															<span class="p">).</span>
-															<span class="n">data</span>
-															<span class="p">);</span>
-															<span class="k">const</span>
-															<span class="kt">char</span>
-															<span class="o">*</span>
-															<span class="n">fluent</span>
-															<span class="o">=</span>
-															<span class="n">SPF</span>
-															<span class="p">(</span>
-															<span class="s">"/etc"</span>
-															<span class="p">)</span>
-															<span class="o">-&gt;</span>
-															<span class="n">join</span>
-															<span class="p">(</span>
-															<span class="s">"nginx"</span>
-															<span class="p">)</span>
-															<span class="o">-&gt;</span>
-															<span class="n">join</span>
-															<span class="p">(</span>
-															<span class="s">"nginx.conf"</span>
-															<span class="p">)</span>
-															<span class="o">-&gt;</span>
-															<span class="n">str</span>
-															<span class="p">();</span>
-															<span class="n">printf</span>
-															<span class="p">(</span>
-															<span class="s">"FLUENT API: %s</span>
-															<span class="se">\n</span>
-															<span class="s">"</span>
-															<span class="p">,</span>
-															<span class="n">fluent</span>
-															<span class="p">);</span>
-															<span class="p">}</span>
-															<span class="n">EOF</span>
-															<span class="p">.</span>
-															<span class="o">/</span>
-															<span class="n">demo</span>
-															<span class="n">rm</span>
-															<span class="o">-</span>
-															<span class="n">f</span>
-															<span class="n">demo</span>
-															<span class="n">snakepath</span>
-															<span class="p">.</span>
-															<span class="n">h</span>
-														</code>
-													</pre>
+		<span class="cpf">&lt;stdio.h&gt;</span>
+		<span class="cp"></span>
+		<span class="kt">int</span>
+		<span class="nf">main</span>
+		<span class="p">(</span>
+		<span class="kt">void</span>
+		<span class="p">)</span>
+		<span class="p">{</span>
+		<span class="n">SpPath</span>
+		<span class="n">boring</span>
+		<span class="o">=</span>
+		<span class="n">sp_path</span>
+		<span class="p">(</span>
+		<span class="s">"/foo/bar.txt"</span>
+		<span class="p">);</span>
+		<span class="n">printf</span>
+		<span class="p">(</span>
+		<span class="s">"BORING API: %s</span>
+		<span class="se">\n</span>
+		<span class="s">"</span>
+		<span class="p">,</span>
+		<span class="n">sp_name</span>
+		<span class="p">(</span>
+		<span class="o">&amp;</span>
+		<span class="n">boring</span>
+		<span class="p">).</span>
+		<span class="n">data</span>
+		<span class="p">);</span>
+		<span class="n">printf</span>
+		<span class="p">(</span>
+		<span class="s">"BORING API: %s</span>
+		<span class="se">\n</span>
+		<span class="s">"</span>
+		<span class="p">,</span>
+		<span class="n">sp_stem</span>
+		<span class="p">(</span>
+		<span class="o">&amp;</span>
+		<span class="n">boring</span>
+		<span class="p">).</span>
+		<span class="n">data</span>
+		<span class="p">);</span>
+		<span class="k">const</span>
+		<span class="kt">char</span>
+		<span class="o">*</span>
+		<span class="n">fluent</span>
+		<span class="o">=</span>
+		<span class="n">SPF</span>
+		<span class="p">(</span>
+		<span class="s">"/etc"</span>
+		<span class="p">)</span>
+		<span class="o">-&gt;</span>
+		<span class="n">join</span>
+		<span class="p">(</span>
+		<span class="s">"nginx"</span>
+		<span class="p">)</span>
+		<span class="o">-&gt;</span>
+		<span class="n">join</span>
+		<span class="p">(</span>
+		<span class="s">"nginx.conf"</span>
+		<span class="p">)</span>
+		<span class="o">-&gt;</span>
+		<span class="n">str</span>
+		<span class="p">();</span>
+		<span class="n">printf</span>
+		<span class="p">(</span>
+		<span class="s">"FLUENT API: %s</span>
+		<span class="se">\n</span>
+		<span class="s">"</span>
+		<span class="p">,</span>
+		<span class="n">fluent</span>
+		<span class="p">);</span>
+		<span class="p">}</span>
+		<span class="n">EOF</span>
+		<span class="p">.</span>
+		<span class="o">/</span>
+		<span class="n">demo</span>
+		<span class="n">rm</span>
+		<span class="o">-</span>
+		<span class="n">f</span>
+		<span class="n">demo</span>
+		<span class="n">snakepath</span>
+		<span class="p">.</span>
+		<span class="n">h</span>
+	</code>
+</pre>
           </div>
         </div>
         <h2 id="build--test">Build &amp; Test</h2>
         <div class="language-bash highlighter-rouge">
           <div class="highlight">
             <pre class="highlight">
-														<code>cc 
-															<span class="nt">-o</span> nob nob.c 
-															<span class="o">&amp;&amp;</span> ./nob
+	<code>cc 
+		<span class="nt">-o</span> nob nob.c 
+		<span class="o">&amp;&amp;</span> ./nob
 
-														</code>
-													</pre>
+	</code>
+</pre>
           </div>
         </div>
         <details>
@@ -550,302 +548,302 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">sp_path</span>
-																<span class="p">(</span>
-																<span class="s">"a/b/c"</span>
-																<span class="p">);</span>
-																<span class="c1">// Native flavor</span>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">sp_path_f</span>
-																<span class="p">(</span>
-																<span class="s">"a/b/c"</span>
-																<span class="p">,</span>
-																<span class="n">SP_FLAVOR_POSIX</span>
-																<span class="p">);</span>
-																<span class="c1">// Explicit POSIX</span>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">sp_path_f</span>
-																<span class="p">(</span>
-																<span class="s">"C:/x"</span>
-																<span class="p">,</span>
-																<span class="n">SP_FLAVOR_WINDOWS</span>
-																<span class="p">);</span>
-																<span class="c1">// Explicit Windows</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">sp_path</span>
+			<span class="p">(</span>
+			<span class="s">"a/b/c"</span>
+			<span class="p">);</span>
+			<span class="c1">// Native flavor</span>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">sp_path_f</span>
+			<span class="p">(</span>
+			<span class="s">"a/b/c"</span>
+			<span class="p">,</span>
+			<span class="n">SP_FLAVOR_POSIX</span>
+			<span class="p">);</span>
+			<span class="c1">// Explicit POSIX</span>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">sp_path_f</span>
+			<span class="p">(</span>
+			<span class="s">"C:/x"</span>
+			<span class="p">,</span>
+			<span class="n">SP_FLAVOR_WINDOWS</span>
+			<span class="p">);</span>
+			<span class="c1">// Explicit Windows</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="path-components">Path Components</h3>
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpStr</span>
-																<span class="n">name</span>
-																<span class="o">=</span>
-																<span class="n">sp_name</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Final component: "file.txt"</span>
-																<span class="n">SpStr</span>
-																<span class="n">stem</span>
-																<span class="o">=</span>
-																<span class="n">sp_stem</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Name without suffix: "file"</span>
-																<span class="n">SpStr</span>
-																<span class="n">suffix</span>
-																<span class="o">=</span>
-																<span class="n">sp_suffix</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Extension: ".txt"</span>
-																<span class="n">SpStr</span>
-																<span class="n">drive</span>
-																<span class="o">=</span>
-																<span class="n">sp_drive</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Drive letter: "C:" (Windows)</span>
-																<span class="n">SpStr</span>
-																<span class="n">root</span>
-																<span class="o">=</span>
-																<span class="n">sp_root</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Root: "/" or "\"</span>
-																<span class="n">SpStr</span>
-																<span class="n">anchor</span>
-																<span class="o">=</span>
-																<span class="n">sp_anchor</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Drive + root: "C:\"</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpStr</span>
+			<span class="n">name</span>
+			<span class="o">=</span>
+			<span class="n">sp_name</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Final component: "file.txt"</span>
+			<span class="n">SpStr</span>
+			<span class="n">stem</span>
+			<span class="o">=</span>
+			<span class="n">sp_stem</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Name without suffix: "file"</span>
+			<span class="n">SpStr</span>
+			<span class="n">suffix</span>
+			<span class="o">=</span>
+			<span class="n">sp_suffix</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Extension: ".txt"</span>
+			<span class="n">SpStr</span>
+			<span class="n">drive</span>
+			<span class="o">=</span>
+			<span class="n">sp_drive</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Drive letter: "C:" (Windows)</span>
+			<span class="n">SpStr</span>
+			<span class="n">root</span>
+			<span class="o">=</span>
+			<span class="n">sp_root</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Root: "/" or "\"</span>
+			<span class="n">SpStr</span>
+			<span class="n">anchor</span>
+			<span class="o">=</span>
+			<span class="n">sp_anchor</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Drive + root: "C:\"</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="navigation">Navigation</h3>
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">parent</span>
-																<span class="o">=</span>
-																<span class="n">sp_parent</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// Parent directory</span>
-																<span class="c1">// Iterate parts</span>
-																<span class="n">SpPartsIter</span>
-																<span class="n">it</span>
-																<span class="o">=</span>
-																<span class="n">sp_parts_begin</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="n">SpStr</span>
-																<span class="n">part</span>
-																<span class="p">;</span>
-																<span class="k">while</span>
-																<span class="p">(</span>
-																<span class="n">sp_parts_next</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">it</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">part</span>
-																<span class="p">))</span>
-																<span class="p">{</span>
-																<span class="cm">/* use part */</span>
-																<span class="p">}</span>
-																<span class="c1">// Iterate parents</span>
-																<span class="n">SpParentsIter</span>
-																<span class="n">pit</span>
-																<span class="o">=</span>
-																<span class="n">sp_parents_begin</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="n">SpPath</span>
-																<span class="n">par</span>
-																<span class="p">;</span>
-																<span class="k">while</span>
-																<span class="p">(</span>
-																<span class="n">sp_parents_next</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">pit</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">par</span>
-																<span class="p">))</span>
-																<span class="p">{</span>
-																<span class="cm">/* use par */</span>
-																<span class="p">}</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">parent</span>
+			<span class="o">=</span>
+			<span class="n">sp_parent</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// Parent directory</span>
+			<span class="c1">// Iterate parts</span>
+			<span class="n">SpPartsIter</span>
+			<span class="n">it</span>
+			<span class="o">=</span>
+			<span class="n">sp_parts_begin</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="n">SpStr</span>
+			<span class="n">part</span>
+			<span class="p">;</span>
+			<span class="k">while</span>
+			<span class="p">(</span>
+			<span class="n">sp_parts_next</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">it</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">part</span>
+			<span class="p">))</span>
+			<span class="p">{</span>
+			<span class="cm">/* use part */</span>
+			<span class="p">}</span>
+			<span class="c1">// Iterate parents</span>
+			<span class="n">SpParentsIter</span>
+			<span class="n">pit</span>
+			<span class="o">=</span>
+			<span class="n">sp_parents_begin</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="n">SpPath</span>
+			<span class="n">par</span>
+			<span class="p">;</span>
+			<span class="k">while</span>
+			<span class="p">(</span>
+			<span class="n">sp_parents_next</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">pit</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">par</span>
+			<span class="p">))</span>
+			<span class="p">{</span>
+			<span class="cm">/* use par */</span>
+			<span class="p">}</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="joining">Joining</h3>
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">joined</span>
-																<span class="o">=</span>
-																<span class="n">sp_join_one</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">"subdir"</span>
-																<span class="p">);</span>
-																<span class="n">SpPath</span>
-																<span class="n">joined</span>
-																<span class="o">=</span>
-																<span class="n">sp_join</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">"a"</span>
-																<span class="p">,</span>
-																<span class="s">"b"</span>
-																<span class="p">,</span>
-																<span class="s">"c"</span>
-																<span class="p">);</span>
-																<span class="c1">// C only (variadic)</span>
-																<span class="n">SpPath</span>
-																<span class="n">joined</span>
-																<span class="o">=</span>
-																<span class="n">sp_joinpath</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">other</span>
-																<span class="p">);</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">joined</span>
+			<span class="o">=</span>
+			<span class="n">sp_join_one</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">"subdir"</span>
+			<span class="p">);</span>
+			<span class="n">SpPath</span>
+			<span class="n">joined</span>
+			<span class="o">=</span>
+			<span class="n">sp_join</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">"a"</span>
+			<span class="p">,</span>
+			<span class="s">"b"</span>
+			<span class="p">,</span>
+			<span class="s">"c"</span>
+			<span class="p">);</span>
+			<span class="c1">// C only (variadic)</span>
+			<span class="n">SpPath</span>
+			<span class="n">joined</span>
+			<span class="o">=</span>
+			<span class="n">sp_joinpath</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">other</span>
+			<span class="p">);</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="modification">Modification</h3>
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">new_p</span>
-																<span class="o">=</span>
-																<span class="n">sp_with_name</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">"newfile.txt"</span>
-																<span class="p">);</span>
-																<span class="n">SpPath</span>
-																<span class="n">new_p</span>
-																<span class="o">=</span>
-																<span class="n">sp_with_stem</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">"newname"</span>
-																<span class="p">);</span>
-																<span class="n">SpPath</span>
-																<span class="n">new_p</span>
-																<span class="o">=</span>
-																<span class="n">sp_with_suffix</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">".md"</span>
-																<span class="p">);</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">new_p</span>
+			<span class="o">=</span>
+			<span class="n">sp_with_name</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">"newfile.txt"</span>
+			<span class="p">);</span>
+			<span class="n">SpPath</span>
+			<span class="n">new_p</span>
+			<span class="o">=</span>
+			<span class="n">sp_with_stem</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">"newname"</span>
+			<span class="p">);</span>
+			<span class="n">SpPath</span>
+			<span class="n">new_p</span>
+			<span class="o">=</span>
+			<span class="n">sp_with_suffix</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">".md"</span>
+			<span class="p">);</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="queries">Queries</h3>
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">bool</span>
-																<span class="n">abs</span>
-																<span class="o">=</span>
-																<span class="n">sp_is_absolute</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="n">bool</span>
-																<span class="n">rel</span>
-																<span class="o">=</span>
-																<span class="n">sp_is_relative_to</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">base</span>
-																<span class="p">);</span>
-																<span class="n">SpPath</span>
-																<span class="n">relative</span>
-																<span class="o">=</span>
-																<span class="n">sp_relative_to</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">base</span>
-																<span class="p">);</span>
-																<span class="n">bool</span>
-																<span class="n">eq</span>
-																<span class="o">=</span>
-																<span class="n">sp_path_eq</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">a</span>
-																<span class="p">,</span>
-																<span class="o">&amp;</span>
-																<span class="n">b</span>
-																<span class="p">);</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">bool</span>
+			<span class="n">abs</span>
+			<span class="o">=</span>
+			<span class="n">sp_is_absolute</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="n">bool</span>
+			<span class="n">rel</span>
+			<span class="o">=</span>
+			<span class="n">sp_is_relative_to</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">base</span>
+			<span class="p">);</span>
+			<span class="n">SpPath</span>
+			<span class="n">relative</span>
+			<span class="o">=</span>
+			<span class="n">sp_relative_to</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">base</span>
+			<span class="p">);</span>
+			<span class="n">bool</span>
+			<span class="n">eq</span>
+			<span class="o">=</span>
+			<span class="n">sp_path_eq</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">a</span>
+			<span class="p">,</span>
+			<span class="o">&amp;</span>
+			<span class="n">b</span>
+			<span class="p">);</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h2 id="fluent-api">Fluent API</h2>
@@ -853,76 +851,76 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="cp">#define SNAKEPATH_FLUENT
+		<code>
+			<span class="cp">#define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include</span>
-																<span class="cpf">"snakepath.h"</span>
-																<span class="cp"></span>
-																<span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
-																<span class="n">SpStr</span>
-																<span class="n">name</span>
-																<span class="o">=</span>
-																<span class="n">SPF</span>
-																<span class="p">(</span>
-																<span class="s">"a/b/c"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">parent</span>
-																<span class="p">()</span>
-																<span class="o">-&gt;</span>
-																<span class="n">name</span>
-																<span class="p">();</span>
-																<span class="c1">// PurePosixPath('/etc').joinpath('init.d').name -&gt; "init.d"</span>
-																<span class="k">const</span>
-																<span class="kt">char</span>
-																<span class="o">*</span>
-																<span class="n">s</span>
-																<span class="o">=</span>
-																<span class="n">SPF_P</span>
-																<span class="p">(</span>
-																<span class="s">"/etc"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">join</span>
-																<span class="p">(</span>
-																<span class="s">"init.d"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">join</span>
-																<span class="p">(</span>
-																<span class="s">"apache2"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">str</span>
-																<span class="p">();</span>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">SPF_W</span>
-																<span class="p">(</span>
-																<span class="s">"C:/Users"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">join</span>
-																<span class="p">(</span>
-																<span class="s">"docs"</span>
-																<span class="p">)</span>
-																<span class="o">-&gt;</span>
-																<span class="n">path</span>
-																<span class="p">();</span>
-																<span class="n">SpPath</span>
-																<span class="n">child</span>
-																<span class="o">=</span>
-																<span class="n">sp_join_one</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">,</span>
-																<span class="s">"file.txt"</span>
-																<span class="p">);</span>
-															</code>
-														</pre>
+			<span class="cpf">"snakepath.h"</span>
+			<span class="cp"></span>
+			<span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
+			<span class="n">SpStr</span>
+			<span class="n">name</span>
+			<span class="o">=</span>
+			<span class="n">SPF</span>
+			<span class="p">(</span>
+			<span class="s">"a/b/c"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">parent</span>
+			<span class="p">()</span>
+			<span class="o">-&gt;</span>
+			<span class="n">name</span>
+			<span class="p">();</span>
+			<span class="c1">// PurePosixPath('/etc').joinpath('init.d').name -&gt; "init.d"</span>
+			<span class="k">const</span>
+			<span class="kt">char</span>
+			<span class="o">*</span>
+			<span class="n">s</span>
+			<span class="o">=</span>
+			<span class="n">SPF_P</span>
+			<span class="p">(</span>
+			<span class="s">"/etc"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">join</span>
+			<span class="p">(</span>
+			<span class="s">"init.d"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">join</span>
+			<span class="p">(</span>
+			<span class="s">"apache2"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">str</span>
+			<span class="p">();</span>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">SPF_W</span>
+			<span class="p">(</span>
+			<span class="s">"C:/Users"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">join</span>
+			<span class="p">(</span>
+			<span class="s">"docs"</span>
+			<span class="p">)</span>
+			<span class="o">-&gt;</span>
+			<span class="n">path</span>
+			<span class="p">();</span>
+			<span class="n">SpPath</span>
+			<span class="n">child</span>
+			<span class="o">=</span>
+			<span class="n">sp_join_one</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">,</span>
+			<span class="s">"file.txt"</span>
+			<span class="p">);</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="macros">Macros</h3>
@@ -1046,43 +1044,43 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpStr</span>
-																<span class="p">{</span>
-																<span class="k">const</span>
-																<span class="kt">char</span>
-																<span class="o">*</span>
-																<span class="n">data</span>
-																<span class="p">;</span>
-																<span class="kt">size_t</span>
-																<span class="n">len</span>
-																<span class="p">;</span>
-																<span class="p">}</span>
-																<span class="c1">// String view</span>
-																<span class="n">SpPath</span>
-																<span class="p">{</span>
-																<span class="kt">char</span>
-																<span class="n">buf</span>
-																<span class="p">[</span>
-																<span class="mi">4096</span>
-																<span class="p">];</span>
-																<span class="kt">size_t</span>
-																<span class="n">len</span>
-																<span class="p">;</span>
-																<span class="n">SpFlavor</span>
-																<span class="n">flavor</span>
-																<span class="p">;</span>
-																<span class="p">}</span>
-																<span class="n">SpFlavor</span>
-																<span class="p">{</span>
-																<span class="n">SP_FLAVOR_NATIVE</span>
-																<span class="p">,</span>
-																<span class="n">SP_FLAVOR_POSIX</span>
-																<span class="p">,</span>
-																<span class="n">SP_FLAVOR_WINDOWS</span>
-																<span class="p">}</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpStr</span>
+			<span class="p">{</span>
+			<span class="k">const</span>
+			<span class="kt">char</span>
+			<span class="o">*</span>
+			<span class="n">data</span>
+			<span class="p">;</span>
+			<span class="kt">size_t</span>
+			<span class="n">len</span>
+			<span class="p">;</span>
+			<span class="p">}</span>
+			<span class="c1">// String view</span>
+			<span class="n">SpPath</span>
+			<span class="p">{</span>
+			<span class="kt">char</span>
+			<span class="n">buf</span>
+			<span class="p">[</span>
+			<span class="mi">4096</span>
+			<span class="p">];</span>
+			<span class="kt">size_t</span>
+			<span class="n">len</span>
+			<span class="p">;</span>
+			<span class="n">SpFlavor</span>
+			<span class="n">flavor</span>
+			<span class="p">;</span>
+			<span class="p">}</span>
+			<span class="n">SpFlavor</span>
+			<span class="p">{</span>
+			<span class="n">SP_FLAVOR_NATIVE</span>
+			<span class="p">,</span>
+			<span class="n">SP_FLAVOR_POSIX</span>
+			<span class="p">,</span>
+			<span class="n">SP_FLAVOR_WINDOWS</span>
+			<span class="p">}</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h2 id="configuration">Configuration</h2>
@@ -1090,19 +1088,19 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="cp">#define SP_PATH_MAX 4096      // Max path length
+		<code>
+			<span class="cp">#define SP_PATH_MAX 4096      // Max path length
 #define SP_MAX_SUFFIXES 16    // Max file extensions
 </span>
-															</code>
-														</pre>
+		</code>
+	</pre>
             </div>
           </div>
           <h2 id="platform-behavior">Platform Behavior</h2>
           <table>
             <thead>
               <tr>
-                <th></th>
+                <th>&nbsp;</th>
                 <th>POSIX</th>
                 <th>Windows</th>
               </tr>
@@ -1138,67 +1136,67 @@
           <div class="language-python highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="kn">from</span>
-																<span class="nn">snakepath</span>
-																<span class="kn">import</span>
-																<span class="n">PurePosixPath</span>
-																<span class="p">,</span>
-																<span class="n">PureWindowsPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">PurePosixPath</span>
-																<span class="p">(</span>
-																<span class="s">'/usr/local/bin'</span>
-																<span class="p">)</span>
-																<span class="k">print</span>
-																<span class="p">(</span>
-																<span class="n">p</span>
-																<span class="p">.</span>
-																<span class="n">name</span>
-																<span class="p">)</span>
-																<span class="c1"># 'bin'
+		<code>
+			<span class="kn">from</span>
+			<span class="nn">snakepath</span>
+			<span class="kn">import</span>
+			<span class="n">PurePosixPath</span>
+			<span class="p">,</span>
+			<span class="n">PureWindowsPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">PurePosixPath</span>
+			<span class="p">(</span>
+			<span class="s">'/usr/local/bin'</span>
+			<span class="p">)</span>
+			<span class="k">print</span>
+			<span class="p">(</span>
+			<span class="n">p</span>
+			<span class="p">.</span>
+			<span class="n">name</span>
+			<span class="p">)</span>
+			<span class="c1"># 'bin'
 </span>
-																<span class="k">print</span>
-																<span class="p">(</span>
-																<span class="n">p</span>
-																<span class="p">.</span>
-																<span class="n">parent</span>
-																<span class="p">)</span>
-																<span class="c1"># PurePosixPath('/usr/local')
+			<span class="k">print</span>
+			<span class="p">(</span>
+			<span class="n">p</span>
+			<span class="p">.</span>
+			<span class="n">parent</span>
+			<span class="p">)</span>
+			<span class="c1"># PurePosixPath('/usr/local')
 </span>
-																<span class="k">print</span>
-																<span class="p">(</span>
-																<span class="n">p</span>
-																<span class="p">.</span>
-																<span class="n">suffix</span>
-																<span class="p">)</span>
-																<span class="c1"># ''
+			<span class="k">print</span>
+			<span class="p">(</span>
+			<span class="n">p</span>
+			<span class="p">.</span>
+			<span class="n">suffix</span>
+			<span class="p">)</span>
+			<span class="c1"># ''
 </span>
-																<span class="n">w</span>
-																<span class="o">=</span>
-																<span class="n">PureWindowsPath</span>
-																<span class="p">(</span>
-																<span class="s">'C:/Users/test.txt'</span>
-																<span class="p">)</span>
-																<span class="k">print</span>
-																<span class="p">(</span>
-																<span class="n">w</span>
-																<span class="p">.</span>
-																<span class="n">drive</span>
-																<span class="p">)</span>
-																<span class="c1"># 'C:'
+			<span class="n">w</span>
+			<span class="o">=</span>
+			<span class="n">PureWindowsPath</span>
+			<span class="p">(</span>
+			<span class="s">'C:/Users/test.txt'</span>
+			<span class="p">)</span>
+			<span class="k">print</span>
+			<span class="p">(</span>
+			<span class="n">w</span>
+			<span class="p">.</span>
+			<span class="n">drive</span>
+			<span class="p">)</span>
+			<span class="c1"># 'C:'
 </span>
-																<span class="k">print</span>
-																<span class="p">(</span>
-																<span class="n">w</span>
-																<span class="p">.</span>
-																<span class="n">stem</span>
-																<span class="p">)</span>
-																<span class="c1"># 'test'
+			<span class="k">print</span>
+			<span class="p">(</span>
+			<span class="n">w</span>
+			<span class="p">.</span>
+			<span class="n">stem</span>
+			<span class="p">)</span>
+			<span class="c1"># 'test'
 </span>
-															</code>
-														</pre>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="testing">Testing</h3>
@@ -1206,9 +1204,9 @@
           <div class="language-bash highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>python tests/python_harness/run_cpython_tests.py
+		<code>python tests/python_harness/run_cpython_tests.py
 </code>
-														</pre>
+	</pre>
             </div>
           </div>
           <h2 id="gotchas">Gotchas</h2>
@@ -1218,28 +1216,28 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">sp_path</span>
-																<span class="p">(</span>
-																<span class="s">""</span>
-																<span class="p">);</span>
-																<span class="n">printf</span>
-																<span class="p">(</span>
-																<span class="s">"%s</span>
-																<span class="se">\n</span>
-																<span class="s">"</span>
-																<span class="p">,</span>
-																<span class="n">sp_str</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">));</span>
-																<span class="c1">// prints "."</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">sp_path</span>
+			<span class="p">(</span>
+			<span class="s">""</span>
+			<span class="p">);</span>
+			<span class="n">printf</span>
+			<span class="p">(</span>
+			<span class="s">"%s</span>
+			<span class="se">\n</span>
+			<span class="s">"</span>
+			<span class="p">,</span>
+			<span class="n">sp_str</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">));</span>
+			<span class="c1">// prints "."</span>
+		</code>
+	</pre>
             </div>
           </div>
           <h3 id="spsuffixes-returns-all-dot-separated-segments">
@@ -1249,25 +1247,25 @@
           <div class="language-c highlighter-rouge">
             <div class="highlight">
               <pre class="highlight">
-															<code>
-																<span class="n">SpPath</span>
-																<span class="n">p</span>
-																<span class="o">=</span>
-																<span class="n">sp_path</span>
-																<span class="p">(</span>
-																<span class="s">"snakepath-1.0.0.tar.gz"</span>
-																<span class="p">);</span>
-																<span class="n">SpSuffixes</span>
-																<span class="n">s</span>
-																<span class="o">=</span>
-																<span class="n">sp_suffixes</span>
-																<span class="p">(</span>
-																<span class="o">&amp;</span>
-																<span class="n">p</span>
-																<span class="p">);</span>
-																<span class="c1">// s.count == 4: ".0", ".0", ".tar", ".gz"</span>
-															</code>
-														</pre>
+		<code>
+			<span class="n">SpPath</span>
+			<span class="n">p</span>
+			<span class="o">=</span>
+			<span class="n">sp_path</span>
+			<span class="p">(</span>
+			<span class="s">"snakepath-1.0.0.tar.gz"</span>
+			<span class="p">);</span>
+			<span class="n">SpSuffixes</span>
+			<span class="n">s</span>
+			<span class="o">=</span>
+			<span class="n">sp_suffixes</span>
+			<span class="p">(</span>
+			<span class="o">&amp;</span>
+			<span class="n">p</span>
+			<span class="p">);</span>
+			<span class="c1">// s.count == 4: ".0", ".0", ".tar", ".gz"</span>
+		</code>
+	</pre>
             </div>
           </div>
           <p>Use <code class="language-plaintext highlighter-rouge">sp_suffix()</code> if you only want the final extension ( <code class="language-plaintext highlighter-rouge">.gz</code>). </p>
@@ -1552,7 +1550,7 @@
           <summary>MIT License</summary> Copyright (c) 2026 Netanel Haber Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         </details>
         <p>
-          <img height="200px" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+          <img height="200px" src="./snakepath.png" alt="snake ascii art that also looks like a path"/>
         </p>
       </section>
     </div>
