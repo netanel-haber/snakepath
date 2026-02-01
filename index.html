@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/assets/css/style.css?v=9f6f336cdcb305f555f39026fee98582aa5f5727">
+    <meta name="theme-color" content="#151515">
+    <meta name="msapplication-navbutton-color" content="#151515">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>snakepath | C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.</title>
+    <meta name="generator" content="Jekyll v3.10.0" />
+    <meta property="og:title" content="snakepath" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
+    <meta property="og:description" content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
+    <link rel="canonical" href="https://www.snakepath.dev/" />
+    <meta property="og:url" content="https://www.snakepath.dev/" />
+    <meta property="og:site_name" content="snakepath" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <meta property="twitter:title" content="snakepath" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "description": "C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.",
+        "headline": "snakepath",
+        "name": "snakepath",
+        "url": "https://www.snakepath.dev/"
+      }
+    </script>
+    <style>
+      .highlight {
+        color: #d0d0d0
+      }
+
+      .highlight table td {
+        padding: 5px
+      }
+
+      .highlight table pre {
+        margin: 0
+      }
+
+      .highlight .w {
+        color: #d0d0d0
+      }
+
+      .highlight .err {
+        color: #151515;
+        background-color: #ac4142
+      }
+
+      .highlight .c,
+      .highlight .cd,
+      .highlight .cm,
+      .highlight .c1,
+      .highlight .cs {
+        color: #888
+      }
+
+      .highlight .cp {
+        color: #f4bf75
+      }
+
+      .highlight .o,
+      .highlight .ow {
+        color: #f4bf75
+      }
+
+      .highlight .p,
+      .highlight .pi {
+        color: #d0d0d0
+      }
+
+      .highlight .gi {
+        color: #90a959
+      }
+
+      .highlight .gd {
+        color: #ac4142
+      }
+
+      .highlight .gh {
+        color: #6a9fb5;
+        font-weight: bold
+      }
+
+      .highlight .k,
+      .highlight .kn,
+      .highlight .kp,
+      .highlight .kr,
+      .highlight .kv {
+        color: #aa759f
+      }
+
+      .highlight .kc,
+      .highlight .kt,
+      .highlight .kd {
+        color: #d28445
+      }
+
+      .highlight .s,
+      .highlight .sb,
+      .highlight .sc,
+      .highlight .sd,
+      .highlight .s2,
+      .highlight .sh,
+      .highlight .sx,
+      .highlight .s1 {
+        color: #90a959
+      }
+
+      .highlight .sr {
+        color: #75b5aa
+      }
+
+      .highlight .si,
+      .highlight .se {
+        color: #8f5536
+      }
+
+      .highlight .nt,
+      .highlight .nn,
+      .highlight .nc,
+      .highlight .no {
+        color: #f4bf75
+      }
+
+      .highlight .na {
+        color: #6a9fb5
+      }
+
+      .highlight .m,
+      .highlight .mf,
+      .highlight .mh,
+      .highlight .mi,
+      .highlight .il,
+      .highlight .mo,
+      .highlight .mb,
+      .highlight .mx {
+        color: #90a959
+      }
+
+      .highlight .ss {
+        color: #90a959
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background: #151515 url("../images/bkg.png") 0 0;
+        color: #eaeaea;
+        font-size: 16px;
+        line-height: 1.5;
+        font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace
+      }
+
+      .container {
+        width: 90%;
+        max-width: 1000px;
+        margin: 0 auto
+      }
+
+      section {
+        display: block;
+        margin: 0 0 20px 0
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        margin: 0 0 20px
+      }
+
+      li {
+        line-height: 1.4
+      }
+
+      header {
+        background: rgba(0, 0, 0, 0.1);
+        width: 100%;
+        border-bottom: 1px dashed #b5e853;
+        padding: 20px 0;
+        margin: 0 0 40px 0
+      }
+
+      header h1 {
+        font-size: 30px;
+        line-height: 1.5;
+        margin: 0 0 0 -40px;
+        font-weight: bold;
+        font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace;
+        color: #b5e853;
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.1), 0 0 5px rgba(181, 232, 83, 0.1), 0 0 10px rgba(181, 232, 83, 0.1);
+        letter-spacing: -1px;
+        -webkit-font-smoothing: antialiased
+      }
+
+      @media (max-width: 1000px) {
+        header h1 {
+          margin-left: 0
+        }
+      }
+
+      header h1:before {
+        content: "./ ";
+        font-size: 24px
+      }
+
+      header h2 {
+        font-size: 18px;
+        font-weight: 300;
+        color: #666
+      }
+
+      #downloads .btn {
+        display: inline-block;
+        text-align: center;
+        margin: 0
+      }
+
+      #main_content {
+        width: 100%;
+        -webkit-font-smoothing: antialiased
+      }
+
+      section img {
+        max-width: 100%
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        font-weight: normal;
+        font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace;
+        color: #b5e853;
+        letter-spacing: -0.03em;
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.1), 0 0 5px rgba(181, 232, 83, 0.1), 0 0 10px rgba(181, 232, 83, 0.1)
+      }
+
+      #main_content h1 {
+        font-size: 30px
+      }
+
+      #main_content h2 {
+        font-size: 24px
+      }
+
+      #main_content h3 {
+        font-size: 18px
+      }
+
+      #main_content h4 {
+        font-size: 14px
+      }
+
+      #main_content h5 {
+        font-size: 12px;
+        text-transform: uppercase;
+        margin: 0 0 5px 0
+      }
+
+      #main_content h6 {
+        font-size: 12px;
+        text-transform: uppercase;
+        color: #999;
+        margin: 0 0 5px 0
+      }
+
+      dt {
+        font-style: italic;
+        font-weight: bold
+      }
+
+      ul li {
+        list-style-image: url("../images/bullet.png")
+      }
+
+      blockquote {
+        color: #aaa;
+        padding-left: 10px;
+        border-left: 1px dotted #666
+      }
+
+      pre {
+        background: rgba(0, 0, 0, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        padding: 10px;
+        font-size: 16px;
+        color: #b5e853;
+        border-radius: 2px;
+        word-wrap: normal;
+        overflow: auto;
+        overflow-y: hidden
+      }
+
+      code.highlighter-rouge {
+        background: rgba(0, 0, 0, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        padding: 0px 3px;
+        margin: 0px -3px;
+        color: #aa759f;
+        border-radius: 2px
+      }
+
+      table {
+        width: 100%;
+        margin: 0 0 20px 0
+      }
+
+      th {
+        text-align: left;
+        border-bottom: 1px dashed #b5e853;
+        padding: 5px 10px
+      }
+
+      td {
+        padding: 5px 10px
+      }
+
+      hr {
+        height: 0;
+        border: 0;
+        border-bottom: 1px dashed #b5e853;
+        color: #b5e853
+      }
+
+      .btn {
+        display: inline-block;
+        background: -webkit-linear-gradient(top, rgba(40, 40, 40, 0.3), rgba(35, 35, 35, 0.3) 50%, rgba(10, 10, 10, 0.3) 50%, rgba(0, 0, 0, 0.3));
+        padding: 8px 18px;
+        border-radius: 50px;
+        border: 2px solid rgba(0, 0, 0, 0.7);
+        border-bottom: 2px solid rgba(0, 0, 0, 0.7);
+        border-top: 2px solid #000;
+        color: rgba(255, 255, 255, 0.8);
+        font-family: Helvetica, Arial, sans-serif;
+        font-weight: bold;
+        font-size: 13px;
+        text-decoration: none;
+        text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.75);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05)
+      }
+
+      .btn:hover {
+        background: -webkit-linear-gradient(top, rgba(40, 40, 40, 0.6), rgba(35, 35, 35, 0.6) 50%, rgba(10, 10, 10, 0.8) 50%, rgba(0, 0, 0, 0.8))
+      }
+
+      .btn .icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        margin: 1px 8px 0 0;
+        float: left
+      }
+
+      .btn-github .icon {
+        opacity: 0.6;
+        background: url("../images/blacktocat.png") 0 0 no-repeat
+      }
+
+      a {
+        color: #63c0f5;
+        text-shadow: 0 0 5px rgba(104, 182, 255, 0.5)
+      }
+
+      .cf:before,
+      .cf:after {
+        content: "";
+        display: table
+      }
+
+      .cf:after {
+        clear: both
+      }
+
+      .cf {
+        zoom: 1
+      }
+
+      #a-title {
+        text-decoration: none
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container">
+        <a id="a-title" href="/">
+          <h1>snakepath</h1>
+        </a>
+        <h2>C99 STB style ~port of Python's standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.</h2>
+        <section id="downloads">
+          <a href="https://github.com/netanel-haber/snakepath" class="btn btn-github">
+            <span class="icon"></span>View on GitHub </a>
+        </section>
+      </div>
+    </header>
+    <div class="container">
+      <section id="main_content">
+        <p>Snakepath: C99 STB-style header-only based on <a href="https://docs.python.org/3/library/pathlib.html">python’s pathlib library</a>, because I love pathlib. POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor. </p>
+        <div class="language-c highlighter-rouge">
+          <div class="highlight">
+            <pre class="highlight">
+														<code>
+															<span class="n">u</span>
+															<span class="o">=</span>
+															<span class="n">https</span>
+															<span class="o">:</span>
+															<span class="c1">//raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &amp;&amp;</span>
+															<span class="n">curl</span>
+															<span class="o">-</span>
+															<span class="n">sSLo</span>
+															<span class="n">snakepath</span>
+															<span class="p">.</span>
+															<span class="n">h</span>
+															<span class="s">"$u"</span>
+															<span class="o">&amp;&amp;</span>
+															<span class="n">cat</span>
+															<span class="o">&lt;&lt;</span>
+															<span class="err">'</span>
+															<span class="n">EOF</span>
+															<span class="err">'</span>
+															<span class="o">|</span>
+															<span class="n">cc</span>
+															<span class="o">-</span>
+															<span class="n">xc</span>
+															<span class="o">-</span>
+															<span class="o">-</span>
+															<span class="n">o</span>
+															<span class="n">demo</span>
+															<span class="o">&amp;&amp;</span>
+															<span class="cp">#define SNAKEPATH_FLUENT
+#define SNAKEPATH_IMPLEMENTATION
+#include</span>
+															<span class="cpf">"snakepath.h"</span>
+															<span class="cp">
+#include</span>
+															<span class="cpf">&lt;stdio.h&gt;</span>
+															<span class="cp"></span>
+															<span class="kt">int</span>
+															<span class="nf">main</span>
+															<span class="p">(</span>
+															<span class="kt">void</span>
+															<span class="p">)</span>
+															<span class="p">{</span>
+															<span class="n">SpPath</span>
+															<span class="n">boring</span>
+															<span class="o">=</span>
+															<span class="n">sp_path</span>
+															<span class="p">(</span>
+															<span class="s">"/foo/bar.txt"</span>
+															<span class="p">);</span>
+															<span class="n">printf</span>
+															<span class="p">(</span>
+															<span class="s">"BORING API: %s</span>
+															<span class="se">\n</span>
+															<span class="s">"</span>
+															<span class="p">,</span>
+															<span class="n">sp_name</span>
+															<span class="p">(</span>
+															<span class="o">&amp;</span>
+															<span class="n">boring</span>
+															<span class="p">).</span>
+															<span class="n">data</span>
+															<span class="p">);</span>
+															<span class="n">printf</span>
+															<span class="p">(</span>
+															<span class="s">"BORING API: %s</span>
+															<span class="se">\n</span>
+															<span class="s">"</span>
+															<span class="p">,</span>
+															<span class="n">sp_stem</span>
+															<span class="p">(</span>
+															<span class="o">&amp;</span>
+															<span class="n">boring</span>
+															<span class="p">).</span>
+															<span class="n">data</span>
+															<span class="p">);</span>
+															<span class="k">const</span>
+															<span class="kt">char</span>
+															<span class="o">*</span>
+															<span class="n">fluent</span>
+															<span class="o">=</span>
+															<span class="n">SPF</span>
+															<span class="p">(</span>
+															<span class="s">"/etc"</span>
+															<span class="p">)</span>
+															<span class="o">-&gt;</span>
+															<span class="n">join</span>
+															<span class="p">(</span>
+															<span class="s">"nginx"</span>
+															<span class="p">)</span>
+															<span class="o">-&gt;</span>
+															<span class="n">join</span>
+															<span class="p">(</span>
+															<span class="s">"nginx.conf"</span>
+															<span class="p">)</span>
+															<span class="o">-&gt;</span>
+															<span class="n">str</span>
+															<span class="p">();</span>
+															<span class="n">printf</span>
+															<span class="p">(</span>
+															<span class="s">"FLUENT API: %s</span>
+															<span class="se">\n</span>
+															<span class="s">"</span>
+															<span class="p">,</span>
+															<span class="n">fluent</span>
+															<span class="p">);</span>
+															<span class="p">}</span>
+															<span class="n">EOF</span>
+															<span class="p">.</span>
+															<span class="o">/</span>
+															<span class="n">demo</span>
+															<span class="n">rm</span>
+															<span class="o">-</span>
+															<span class="n">f</span>
+															<span class="n">demo</span>
+															<span class="n">snakepath</span>
+															<span class="p">.</span>
+															<span class="n">h</span>
+														</code>
+													</pre>
+          </div>
+        </div>
+        <h2 id="build--test">Build &amp; Test</h2>
+        <div class="language-bash highlighter-rouge">
+          <div class="highlight">
+            <pre class="highlight">
+														<code>cc 
+															<span class="nt">-o</span> nob nob.c 
+															<span class="o">&amp;&amp;</span> ./nob
+
+														</code>
+													</pre>
+          </div>
+        </div>
+        <details>
+          <summary>Snakepath API Reference</summary>
+          <h2 id="boring-api">Boring API</h2>
+          <h3 id="path-creation">Path Creation</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">sp_path</span>
+																<span class="p">(</span>
+																<span class="s">"a/b/c"</span>
+																<span class="p">);</span>
+																<span class="c1">// Native flavor</span>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">sp_path_f</span>
+																<span class="p">(</span>
+																<span class="s">"a/b/c"</span>
+																<span class="p">,</span>
+																<span class="n">SP_FLAVOR_POSIX</span>
+																<span class="p">);</span>
+																<span class="c1">// Explicit POSIX</span>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">sp_path_f</span>
+																<span class="p">(</span>
+																<span class="s">"C:/x"</span>
+																<span class="p">,</span>
+																<span class="n">SP_FLAVOR_WINDOWS</span>
+																<span class="p">);</span>
+																<span class="c1">// Explicit Windows</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="path-components">Path Components</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpStr</span>
+																<span class="n">name</span>
+																<span class="o">=</span>
+																<span class="n">sp_name</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Final component: "file.txt"</span>
+																<span class="n">SpStr</span>
+																<span class="n">stem</span>
+																<span class="o">=</span>
+																<span class="n">sp_stem</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Name without suffix: "file"</span>
+																<span class="n">SpStr</span>
+																<span class="n">suffix</span>
+																<span class="o">=</span>
+																<span class="n">sp_suffix</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Extension: ".txt"</span>
+																<span class="n">SpStr</span>
+																<span class="n">drive</span>
+																<span class="o">=</span>
+																<span class="n">sp_drive</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Drive letter: "C:" (Windows)</span>
+																<span class="n">SpStr</span>
+																<span class="n">root</span>
+																<span class="o">=</span>
+																<span class="n">sp_root</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Root: "/" or "\"</span>
+																<span class="n">SpStr</span>
+																<span class="n">anchor</span>
+																<span class="o">=</span>
+																<span class="n">sp_anchor</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Drive + root: "C:\"</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="navigation">Navigation</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">parent</span>
+																<span class="o">=</span>
+																<span class="n">sp_parent</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// Parent directory</span>
+																<span class="c1">// Iterate parts</span>
+																<span class="n">SpPartsIter</span>
+																<span class="n">it</span>
+																<span class="o">=</span>
+																<span class="n">sp_parts_begin</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="n">SpStr</span>
+																<span class="n">part</span>
+																<span class="p">;</span>
+																<span class="k">while</span>
+																<span class="p">(</span>
+																<span class="n">sp_parts_next</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">it</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">part</span>
+																<span class="p">))</span>
+																<span class="p">{</span>
+																<span class="cm">/* use part */</span>
+																<span class="p">}</span>
+																<span class="c1">// Iterate parents</span>
+																<span class="n">SpParentsIter</span>
+																<span class="n">pit</span>
+																<span class="o">=</span>
+																<span class="n">sp_parents_begin</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="n">SpPath</span>
+																<span class="n">par</span>
+																<span class="p">;</span>
+																<span class="k">while</span>
+																<span class="p">(</span>
+																<span class="n">sp_parents_next</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">pit</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">par</span>
+																<span class="p">))</span>
+																<span class="p">{</span>
+																<span class="cm">/* use par */</span>
+																<span class="p">}</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="joining">Joining</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">joined</span>
+																<span class="o">=</span>
+																<span class="n">sp_join_one</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">"subdir"</span>
+																<span class="p">);</span>
+																<span class="n">SpPath</span>
+																<span class="n">joined</span>
+																<span class="o">=</span>
+																<span class="n">sp_join</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">"a"</span>
+																<span class="p">,</span>
+																<span class="s">"b"</span>
+																<span class="p">,</span>
+																<span class="s">"c"</span>
+																<span class="p">);</span>
+																<span class="c1">// C only (variadic)</span>
+																<span class="n">SpPath</span>
+																<span class="n">joined</span>
+																<span class="o">=</span>
+																<span class="n">sp_joinpath</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">other</span>
+																<span class="p">);</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="modification">Modification</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">new_p</span>
+																<span class="o">=</span>
+																<span class="n">sp_with_name</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">"newfile.txt"</span>
+																<span class="p">);</span>
+																<span class="n">SpPath</span>
+																<span class="n">new_p</span>
+																<span class="o">=</span>
+																<span class="n">sp_with_stem</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">"newname"</span>
+																<span class="p">);</span>
+																<span class="n">SpPath</span>
+																<span class="n">new_p</span>
+																<span class="o">=</span>
+																<span class="n">sp_with_suffix</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">".md"</span>
+																<span class="p">);</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="queries">Queries</h3>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">bool</span>
+																<span class="n">abs</span>
+																<span class="o">=</span>
+																<span class="n">sp_is_absolute</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="n">bool</span>
+																<span class="n">rel</span>
+																<span class="o">=</span>
+																<span class="n">sp_is_relative_to</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">base</span>
+																<span class="p">);</span>
+																<span class="n">SpPath</span>
+																<span class="n">relative</span>
+																<span class="o">=</span>
+																<span class="n">sp_relative_to</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">base</span>
+																<span class="p">);</span>
+																<span class="n">bool</span>
+																<span class="n">eq</span>
+																<span class="o">=</span>
+																<span class="n">sp_path_eq</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">a</span>
+																<span class="p">,</span>
+																<span class="o">&amp;</span>
+																<span class="n">b</span>
+																<span class="p">);</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h2 id="fluent-api">Fluent API</h2>
+          <p>Enable with <code class="language-plaintext highlighter-rouge">#define SNAKEPATH_FLUENT</code> before including. </p>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="cp">#define SNAKEPATH_FLUENT
+#define SNAKEPATH_IMPLEMENTATION
+#include</span>
+																<span class="cpf">"snakepath.h"</span>
+																<span class="cp"></span>
+																<span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
+																<span class="n">SpStr</span>
+																<span class="n">name</span>
+																<span class="o">=</span>
+																<span class="n">SPF</span>
+																<span class="p">(</span>
+																<span class="s">"a/b/c"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">parent</span>
+																<span class="p">()</span>
+																<span class="o">-&gt;</span>
+																<span class="n">name</span>
+																<span class="p">();</span>
+																<span class="c1">// PurePosixPath('/etc').joinpath('init.d').name -&gt; "init.d"</span>
+																<span class="k">const</span>
+																<span class="kt">char</span>
+																<span class="o">*</span>
+																<span class="n">s</span>
+																<span class="o">=</span>
+																<span class="n">SPF_P</span>
+																<span class="p">(</span>
+																<span class="s">"/etc"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">join</span>
+																<span class="p">(</span>
+																<span class="s">"init.d"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">join</span>
+																<span class="p">(</span>
+																<span class="s">"apache2"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">str</span>
+																<span class="p">();</span>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">SPF_W</span>
+																<span class="p">(</span>
+																<span class="s">"C:/Users"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">join</span>
+																<span class="p">(</span>
+																<span class="s">"docs"</span>
+																<span class="p">)</span>
+																<span class="o">-&gt;</span>
+																<span class="n">path</span>
+																<span class="p">();</span>
+																<span class="n">SpPath</span>
+																<span class="n">child</span>
+																<span class="o">=</span>
+																<span class="n">sp_join_one</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">,</span>
+																<span class="s">"file.txt"</span>
+																<span class="p">);</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="macros">Macros</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Macro</th>
+                <th>Python</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SPF("path")</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">Path('path')</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SPF_P("path")</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">PurePosixPath('path')</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SPF_W("path")</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">PureWindowsPath('path')</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <h3 id="chainable">Chainable</h3>
+          <p>
+            <code class="language-plaintext highlighter-rouge">-&gt;parent()</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;join("x")</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;with_name("x")</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;with_stem("x")</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;with_suffix(".x")</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;absolute()</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;relative_to(&amp;p)</code>
+            <code class="language-plaintext highlighter-rouge">-&gt;relative_to_walk_up(&amp;p)</code>
+          </p>
+          <h3 id="terminators">Terminators</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Returns</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;path()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SpPath</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;str()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">const char*</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;name()</code>
+                  <code class="language-plaintext highlighter-rouge">-&gt;stem()</code>
+                  <code class="language-plaintext highlighter-rouge">-&gt;suffix()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SpStr</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;drive()</code>
+                  <code class="language-plaintext highlighter-rouge">-&gt;root()</code>
+                  <code class="language-plaintext highlighter-rouge">-&gt;anchor()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SpStr</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;suffixes()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">SpSuffixes</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;is_absolute()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">bool</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">-&gt;is_relative_to(&amp;p)</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">bool</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <h2 id="core-types">Core Types</h2>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpStr</span>
+																<span class="p">{</span>
+																<span class="k">const</span>
+																<span class="kt">char</span>
+																<span class="o">*</span>
+																<span class="n">data</span>
+																<span class="p">;</span>
+																<span class="kt">size_t</span>
+																<span class="n">len</span>
+																<span class="p">;</span>
+																<span class="p">}</span>
+																<span class="c1">// String view</span>
+																<span class="n">SpPath</span>
+																<span class="p">{</span>
+																<span class="kt">char</span>
+																<span class="n">buf</span>
+																<span class="p">[</span>
+																<span class="mi">4096</span>
+																<span class="p">];</span>
+																<span class="kt">size_t</span>
+																<span class="n">len</span>
+																<span class="p">;</span>
+																<span class="n">SpFlavor</span>
+																<span class="n">flavor</span>
+																<span class="p">;</span>
+																<span class="p">}</span>
+																<span class="n">SpFlavor</span>
+																<span class="p">{</span>
+																<span class="n">SP_FLAVOR_NATIVE</span>
+																<span class="p">,</span>
+																<span class="n">SP_FLAVOR_POSIX</span>
+																<span class="p">,</span>
+																<span class="n">SP_FLAVOR_WINDOWS</span>
+																<span class="p">}</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h2 id="configuration">Configuration</h2>
+          <p>Define before including:</p>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="cp">#define SP_PATH_MAX 4096      // Max path length
+#define SP_MAX_SUFFIXES 16    // Max file extensions
+</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h2 id="platform-behavior">Platform Behavior</h2>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>POSIX</th>
+                <th>Windows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Separator</td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">/</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">\</code> (normalizes <code class="language-plaintext highlighter-rouge">/</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Drive</td>
+                <td>None</td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">C:</code> or UNC <code class="language-plaintext highlighter-rouge">\\server\share</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Absolute</td>
+                <td>Has root <code class="language-plaintext highlighter-rouge">/</code>
+                </td>
+                <td>Has drive + root <code class="language-plaintext highlighter-rouge">C:\</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <h2 id="python-bindings">Python Bindings</h2>
+          <p>Thin ctypes wrapper providing <code class="language-plaintext highlighter-rouge">PurePath</code>, <code class="language-plaintext highlighter-rouge">PurePosixPath</code>, and <code class="language-plaintext highlighter-rouge">PureWindowsPath</code> classes compatible with Python’s pathlib interface. </p>
+          <div class="language-python highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="kn">from</span>
+																<span class="nn">snakepath</span>
+																<span class="kn">import</span>
+																<span class="n">PurePosixPath</span>
+																<span class="p">,</span>
+																<span class="n">PureWindowsPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">PurePosixPath</span>
+																<span class="p">(</span>
+																<span class="s">'/usr/local/bin'</span>
+																<span class="p">)</span>
+																<span class="k">print</span>
+																<span class="p">(</span>
+																<span class="n">p</span>
+																<span class="p">.</span>
+																<span class="n">name</span>
+																<span class="p">)</span>
+																<span class="c1"># 'bin'
+</span>
+																<span class="k">print</span>
+																<span class="p">(</span>
+																<span class="n">p</span>
+																<span class="p">.</span>
+																<span class="n">parent</span>
+																<span class="p">)</span>
+																<span class="c1"># PurePosixPath('/usr/local')
+</span>
+																<span class="k">print</span>
+																<span class="p">(</span>
+																<span class="n">p</span>
+																<span class="p">.</span>
+																<span class="n">suffix</span>
+																<span class="p">)</span>
+																<span class="c1"># ''
+</span>
+																<span class="n">w</span>
+																<span class="o">=</span>
+																<span class="n">PureWindowsPath</span>
+																<span class="p">(</span>
+																<span class="s">'C:/Users/test.txt'</span>
+																<span class="p">)</span>
+																<span class="k">print</span>
+																<span class="p">(</span>
+																<span class="n">w</span>
+																<span class="p">.</span>
+																<span class="n">drive</span>
+																<span class="p">)</span>
+																<span class="c1"># 'C:'
+</span>
+																<span class="k">print</span>
+																<span class="p">(</span>
+																<span class="n">w</span>
+																<span class="p">.</span>
+																<span class="n">stem</span>
+																<span class="p">)</span>
+																<span class="c1"># 'test'
+</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="testing">Testing</h3>
+          <p>Tests run CPython’s official pathlib test suite against snakepath:</p>
+          <div class="language-bash highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>python tests/python_harness/run_cpython_tests.py
+</code>
+														</pre>
+            </div>
+          </div>
+          <h2 id="gotchas">Gotchas</h2>
+          <h3 id="empty-paths-normalize-to-">Empty paths normalize to <code class="language-plaintext highlighter-rouge">"."</code>
+          </h3>
+          <p>Like Python’s pathlib, an empty path string normalizes to <code class="language-plaintext highlighter-rouge">"."</code> (current directory): </p>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">sp_path</span>
+																<span class="p">(</span>
+																<span class="s">""</span>
+																<span class="p">);</span>
+																<span class="n">printf</span>
+																<span class="p">(</span>
+																<span class="s">"%s</span>
+																<span class="se">\n</span>
+																<span class="s">"</span>
+																<span class="p">,</span>
+																<span class="n">sp_str</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">));</span>
+																<span class="c1">// prints "."</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <h3 id="spsuffixes-returns-all-dot-separated-segments">
+            <code class="language-plaintext highlighter-rouge">sp_suffixes()</code> returns all dot-separated segments
+          </h3>
+          <p>Like Python’s <code class="language-plaintext highlighter-rouge">pathlib.Path.suffixes</code>, this function returns <strong>all</strong> segments after dots in the filename—not just “real” file extensions: </p>
+          <div class="language-c highlighter-rouge">
+            <div class="highlight">
+              <pre class="highlight">
+															<code>
+																<span class="n">SpPath</span>
+																<span class="n">p</span>
+																<span class="o">=</span>
+																<span class="n">sp_path</span>
+																<span class="p">(</span>
+																<span class="s">"snakepath-1.0.0.tar.gz"</span>
+																<span class="p">);</span>
+																<span class="n">SpSuffixes</span>
+																<span class="n">s</span>
+																<span class="o">=</span>
+																<span class="n">sp_suffixes</span>
+																<span class="p">(</span>
+																<span class="o">&amp;</span>
+																<span class="n">p</span>
+																<span class="p">);</span>
+																<span class="c1">// s.count == 4: ".0", ".0", ".tar", ".gz"</span>
+															</code>
+														</pre>
+            </div>
+          </div>
+          <p>Use <code class="language-plaintext highlighter-rouge">sp_suffix()</code> if you only want the final extension ( <code class="language-plaintext highlighter-rouge">.gz</code>). </p>
+          <h2 id="pathlib-mapping">Pathlib Mapping</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Python</th>
+                <th>Boring API</th>
+                <th>Fluent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.parts</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_parts_begin/next()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.drive</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_drive()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.drive()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.root</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_root()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.root()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.anchor</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_anchor()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.anchor()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.parents</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_parents_begin/next()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.parent</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_parent()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.parent()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.name</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_name()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.name()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.suffix</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_suffix()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.suffix()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.suffixes</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_suffixes()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.suffixes()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.stem</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_stem()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.stem()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.as_posix()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_as_posix()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.is_absolute()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_is_absolute()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.is_absolute()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.is_relative_to()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_is_relative_to()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.is_relative_to()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.joinpath()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_join_one()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.join()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.match()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_match()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.relative_to()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_relative_to()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.relative_to()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_name()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_with_name()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_name()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_stem()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_with_stem()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_stem()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_suffix()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_with_suffix()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.with_suffix()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">/</code> operator
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_join_one()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.join()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">str(p)</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_str()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.str()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">==</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_path_eq()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.absolute()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_absolute()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.absolute()</code>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">.as_uri()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_as_uri()</code>
+                </td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">Path.cwd()</code>
+                </td>
+                <td>
+                  <code class="language-plaintext highlighter-rouge">sp_cwd()</code>
+                </td>
+                <td>-</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            <strong>Not implemented:</strong> Most I/O methods ( <code class="language-plaintext highlighter-rouge">stat</code>, <code class="language-plaintext highlighter-rouge">exists</code>, <code class="language-plaintext highlighter-rouge">mkdir</code>, <code class="language-plaintext highlighter-rouge">read_*</code>, <code class="language-plaintext highlighter-rouge">write_*</code>, <code class="language-plaintext highlighter-rouge">glob</code>, etc.)
+          </p>
+        </details>
+        <details>
+          <summary>MIT License</summary> Copyright (c) 2026 Netanel Haber Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+        </details>
+        <p>
+          <img height="200px" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+        </p>
+      </section>
+    </div>
+  </body>
+</html>
