@@ -550,9 +550,7 @@ def run_tests():
     # Add test dir to path
     sys.path.insert(0, str(TEST_DIR.parent))
 
-    print("\n" + "=" * 70)
-    print("Running CPython pathlib tests against snakepath")
-    print("=" * 70 + "\n")
+    print("\nRunning CPython pathlib tests against snakepath\n")
 
     # Discover and load tests
     loader = unittest.TestLoader()
@@ -577,7 +575,6 @@ def run_tests():
                     class_loaded = True
 
                 if class_loaded:
-                    print(f"  LOAD: {name}")
                     loaded_count += 1
     except Exception as e:
         print(f"  ERROR loading {TEST_FILE}: {e}")
@@ -586,12 +583,12 @@ def run_tests():
 
     print(f"\nLoaded {loaded_count} test classes\n")
 
-    # Run with quiet runner that suppresses expected failures
-    runner = QuietRunner(verbosity=2)
+    # Run with quiet runner - use verbosity=1 (dots) for shorter CI output
+    runner = QuietRunner(verbosity=1)
     result = runner.run(suite)
 
-    # Check expected failures
-    expected_failure_count = 0
+    # Check expected failures, grouped by reason
+    expected_by_reason = {}  # reason -> list of test names
     unexpected_failures = []
     unexpected_errors = []
 
@@ -602,7 +599,7 @@ def run_tests():
         if key in EXPECTED_FAILURES:
             expected_msg = EXPECTED_FAILURES[key]
             if expected_msg in traceback:
-                expected_failure_count += 1
+                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
                 continue
         unexpected_failures.append((test, traceback))
 
@@ -613,21 +610,24 @@ def run_tests():
         if key in EXPECTED_FAILURES:
             expected_msg = EXPECTED_FAILURES[key]
             if expected_msg in traceback:
-                expected_failure_count += 1
+                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
                 continue
         unexpected_errors.append((test, traceback))
 
     # Summary
-    print("\n" + "=" * 70)
-    print(f"Ran {result.testsRun} CPython tests against snakepath")
-    if expected_failure_count > 0:
-        print(f"Expected failures (documented in EXPECTED_FAILURES): {expected_failure_count}")
+    expected_total = sum(len(tests) for tests in expected_by_reason.values())
+    print(f"\nRan {result.testsRun} tests, {expected_total} expected failures")
+
+    if expected_by_reason:
+        print("\nExpected failures by reason:")
+        for reason, tests in sorted(expected_by_reason.items(), key=lambda x: -len(x[1])):
+            print(f"  {reason!r}: {len(tests)} tests")
 
     if not unexpected_failures and not unexpected_errors:
-        print("SUCCESS")
+        print("\nSUCCESS")
         return_code = 0
     else:
-        print(f"UNEXPECTED FAILURES: {len(unexpected_failures)}, ERRORS: {len(unexpected_errors)}")
+        print(f"\nUNEXPECTED: {len(unexpected_failures)} failures, {len(unexpected_errors)} errors")
         for test, tb in unexpected_failures:
             print(f"  FAIL: {test}")
             print(tb)
@@ -635,7 +635,6 @@ def run_tests():
             print(f"  ERROR: {test}")
             print(tb)
         return_code = 1
-    print("=" * 70)
 
     return return_code
 
