@@ -145,7 +145,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
-| `->is_file()` `->is_dir()` | `bool` |
+| `->is_file()` `->is_dir()` `->exists()` | `bool` |
 
 ## Core Types
 
@@ -253,6 +253,7 @@ Use `sp_suffix()` if you only want the final extension (`.gz`).
 | `Path.cwd()` | `sp_cwd()` | - |
 | `.is_file()` | `sp_is_file()` | `.is_file()` |
 | `.is_dir()` | `sp_is_dir()` | `.is_dir()` |
+| `.exists()` | `sp_exists()` | `.exists()` |
 
 **Not implemented:** Most I/O methods (`stat`, `exists`, `mkdir`, `read_*`, `write_*`, `glob`, etc.)
 

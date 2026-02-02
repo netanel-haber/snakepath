@@ -199,6 +199,9 @@ _lib.sp_is_file_wrap.restype = c_int
 _lib.sp_is_dir_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_is_dir_wrap.restype = c_int
 
+_lib.sp_exists_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_exists_wrap.restype = c_int
+
 _lib.sp_path_is_error_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_path_is_error_wrap.restype = c_int
 
@@ -669,6 +672,10 @@ class Path(PurePath):
     def is_dir(self):
         """Return True if the path points to a directory."""
         return bool(_lib.sp_is_dir_wrap(byref(self._sp)))
+
+    def exists(self):
+        """Return True if the path exists."""
+        return bool(_lib.sp_exists_wrap(byref(self._sp)))
 
 
 class PosixPath(Path, PurePosixPath):
