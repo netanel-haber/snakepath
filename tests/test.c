@@ -1,4 +1,5 @@
 /* test.c - Rigorous pathlib tests for snakepath.h */
+#define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for CI compatibility */
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 #include <stdio.h>
@@ -231,7 +232,39 @@ int main(void) {
     SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
     
     printf("  Edge cases OK\n");
-    
+
+    printf("\nis_file Tests:\n");
+
+    /* Test is_file - existing file */
+    SpPath existing_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    ASSERT(sp_is_file(&existing_file) == true);
+
+    /* Test is_file - nonexistent path */
+    SpPath nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
+    ASSERT(sp_is_file(&nonexistent) == false);
+
+    /* Test is_file - directory (not a file) */
+    SpPath dir = sp_path_f(".", P);
+    ASSERT(sp_is_file(&dir) == false);
+
+    printf("  is_file tests OK\n");
+
+    printf("\nis_dir Tests:\n");
+
+    /* Test is_dir - existing directory */
+    SpPath existing_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
+    ASSERT(sp_is_dir(&existing_dir) == true);
+
+    /* Test is_dir - nonexistent path */
+    SpPath nonexistent_dir = sp_path_f("/nonexistent/path/dir", P);
+    ASSERT(sp_is_dir(&nonexistent_dir) == false);
+
+    /* Test is_dir - file (not a directory) */
+    SpPath file_path = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    ASSERT(sp_is_dir(&file_path) == false);
+
+    printf("  is_dir tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }

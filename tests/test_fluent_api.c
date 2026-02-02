@@ -2,6 +2,7 @@
  * Each test references Python pathlib documentation snippets.
  * https://docs.python.org/3/library/pathlib.html
  */
+#define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for CI compatibility */
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
@@ -238,6 +239,22 @@ int main(void) {
     SpPath pics = sp_join_one(&base, "Pictures");
     ASSERT_STR(sp_str(&docs), "/home/user/Documents");
     ASSERT_STR(sp_str(&pics), "/home/user/Pictures");
+
+    /* ============ is_file (fluent) ============ */
+
+    /* Existing file should return true */
+    { SpPath p = SPF(__FILE__)->path(); ASSERT(sp_is_file(&p) == true); }
+
+    /* Non-existent file should return false */
+    ASSERT(SPF("/nonexistent/file.txt")->is_file() == false);
+
+    /* ============ is_dir (fluent) ============ */
+
+    /* Existing directory should return true */
+    { SpPath p = SPF(".")->path(); ASSERT(sp_is_dir(&p) == true); }
+
+    /* Non-existent directory should return false */
+    ASSERT(SPF("/nonexistent/dir")->is_dir() == false);
 
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);

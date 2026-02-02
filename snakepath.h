@@ -40,8 +40,13 @@ extern "C" {
 #define SP_PRIV_CAST(type, val) ((type)(val))
 #endif
 
+/* Recommended SP_PATH_MAX values - define SP_PATH_MAX before including snakepath.h */
+#define SP_PATH_MAX_WINDOWS 1024  /* Windows has 1MB default stack; larger values may cause stack overflow. Use /STACK linker flag to increase. */
+#define SP_PATH_MAX_LINUX 4096    /* Linux PATH_MAX; typical 8MB stack handles this fine */
+
 #ifndef SP_PATH_MAX
-#define SP_PATH_MAX 4096
+#error "SP_PATH_MAX must be defined before including snakepath.h. " \
+       "Use: #define SP_PATH_MAX SP_PATH_MAX_WINDOWS (1024) or SP_PATH_MAX_LINUX (4096)"
 #endif
 
 #ifndef SP_MAX_SUFFIXES
@@ -164,6 +169,7 @@ SpParentsIter sp_parents_begin(const SpPath *p);
 bool sp_parents_next(SpParentsIter *it, SpPath *out);
 
 SpPath sp_join_one(const SpPath *base, const char *other);
+SpPath sp_join_sv(const SpPath *base, SpStr other);
 SpPath sp_join_impl(const SpPath *base, const char **parts);
 SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
@@ -188,6 +194,8 @@ unsigned long sp_path_hash(const SpPath *p);
 int sp_match(const SpPath *p, const char *pattern);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
 bool sp_is_reserved(const SpPath *p);
+bool sp_is_file(const SpPath *p);
+bool sp_is_dir(const SpPath *p);
 
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
@@ -233,6 +241,8 @@ struct sp_fluent_ {
     const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
+    bool (*is_file)(void);
+    bool (*is_dir)(void);
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
@@ -261,12 +271,14 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 /* ============ Implementation ============ */
 #ifdef SNAKEPATH_IMPLEMENTATION
 
-/* Platform-specific includes for getcwd */
+/* Platform-specific includes for getcwd and stat */
 #ifdef SP_WINDOWS
 #include <direct.h>
+#include <windows.h>
 #define sp_priv_getcwd _getcwd
 #else
 #include <unistd.h>
+#include <sys/stat.h>
 #define sp_priv_getcwd getcwd
 #endif
 
@@ -830,18 +842,15 @@ bool sp_parents_next(SpParentsIter *it, SpPath *out) {
     return true;
 }
 
-SpPath sp_join_one(const SpPath *base, const char *other) {
-    SP_ASSERT_PATH_INVARIANT(base);
-    if (!other || !*other) return sp_path_copy(base);
-    if (base->len == 0) return sp_path_new(other, SP_PRIV_OPTS(base->flavor));
-
-    size_t olen = strlen(other);
+/* Internal length-aware join - handles embedded nulls correctly */
+static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t olen) {
     SpFlavor flavor = base->flavor;
 
     /* Check if other has root */
-    if (sp_priv_is_sep(other[0], flavor)) {
+    if (olen > 0 && sp_priv_is_sep(other[0], flavor)) {
         if (sp_priv_has_drive(other, olen, flavor) || sp_priv_is_unc(other, olen, flavor)) {
-            return sp_path_new(other, SP_PRIV_OPTS(flavor));
+            SpStr sv = {other, olen};
+            return sp_path_from_sv(sv, flavor);
         }
         /* Root only - keep drive from base */
         size_t dlen = sp_priv_drive_len(base->buf, base->len, flavor);
@@ -855,7 +864,8 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
-        return sp_path_new(other, SP_PRIV_OPTS(flavor));
+        SpStr sv = {other, olen};
+        return sp_path_from_sv(sv, flavor);
     }
 
     /* Check if other has drive */
@@ -870,7 +880,8 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
         }
         if (same) {
             if (olen > 2 && sp_priv_is_sep(other[2], flavor)) {
-                return sp_path_new(other, SP_PRIV_OPTS(flavor));
+                SpStr sv = {other, olen};
+                return sp_path_from_sv(sv, flavor);
             }
             SpPath r = SP_PRIV_ZERO;
             r.flavor = flavor;
@@ -885,7 +896,8 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
-        return sp_path_new(other, SP_PRIV_OPTS(flavor));
+        SpStr sv = {other, olen};
+        return sp_path_from_sv(sv, flavor);
     }
 
     /* Relative path - simple join */
@@ -902,6 +914,20 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
     return r;
 }
 
+SpPath sp_join_one(const SpPath *base, const char *other) {
+    SP_ASSERT_PATH_INVARIANT(base);
+    if (!other || !*other) return sp_path_copy(base);
+    if (base->len == 0) return sp_path_new(other, SP_PRIV_OPTS(base->flavor));
+    return sp_priv_join_len(base, other, strlen(other));
+}
+
+SpPath sp_join_sv(const SpPath *base, SpStr other) {
+    SP_ASSERT_PATH_INVARIANT(base);
+    if (other.len == 0 || !other.data) return sp_path_copy(base);
+    if (base->len == 0) return sp_path_from_sv(other, base->flavor);
+    return sp_priv_join_len(base, other.data, other.len);
+}
+
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
     SP_ASSERT_PATH_INVARIANT(base);
     SpPath r = sp_path_copy(base);
@@ -914,7 +940,9 @@ SpPath sp_join_impl(const SpPath *base, const char **parts) {
 SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(base);
     SP_ASSERT_PATH_INVARIANT(other);
-    return sp_join_one(base, other->buf);
+    if (other->len == 0) return sp_path_copy(base);
+    if (base->len == 0) return sp_path_copy(other);
+    return sp_priv_join_len(base, other->buf, other->len);
 }
 
 static bool sp_priv_is_valid_name(const char *s, size_t len, SpFlavor flavor) {
@@ -1430,6 +1458,42 @@ bool sp_is_reserved(const SpPath *p) {
     return false;
 }
 
+bool sp_is_file(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Check for embedded null bytes - such paths can't exist */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISREG(st.st_mode);
+#endif
+}
+
+bool sp_is_dir(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Check for embedded null bytes - such paths can't exist */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+#endif
+}
+
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
 
@@ -1451,7 +1515,9 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(path, SpPath, sp_priv_f_ctx)                                                                                     \
     X(suffixes, SpSuffixes, sp_suffixes(&sp_priv_f_ctx))                                                               \
     X(str, const char *, sp_str(&sp_priv_f_ctx))                                                                       \
-    X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))
+    X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
+    X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
+    X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))
 #define SP_FLUENT_TERM_STR(X)                                                                                          \
     X(name, SpStr, sp_name)                                                                                            \
     X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
@@ -1500,6 +1566,8 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {sp_priv_f_path_,
                                                         sp_priv_f_str_,
                                                         sp_priv_f_is_absolute_,
                                                         sp_priv_f_is_relative_to_,
+                                                        sp_priv_f_is_file_,
+                                                        sp_priv_f_is_dir_,
                                                         sp_priv_f_parent_,
                                                         sp_priv_f_join_,
                                                         sp_priv_f_with_name_,
