@@ -222,6 +222,17 @@ SpSuffixes s = sp_suffixes(&p);
 
 Use `sp_suffix()` if you only want the final extension (`.gz`).
 
+### Parent iteration terminates at anchors
+
+`sp_parents_count()` and parent iteration stop at the path's anchor—`/` for absolute paths, `.` for relative paths:
+
+```c
+sp_parents_count(sp_path("/a/b/c/d")) == 4  // /a/b/c, /a/b, /a, /
+sp_parents_count(sp_path("a/b/c"))    == 3  // a/b, a, .
+sp_parents_count(sp_path("/"))        == 0  // root has no parents
+sp_parents_count(sp_path("."))        == 0  // current dir has no parents
+```
+
 ## Pathlib Mapping
 
 | Python | Boring API | Fluent |
