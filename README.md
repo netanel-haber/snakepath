@@ -255,6 +255,7 @@ Use `sp_suffix()` if you only want the final extension (`.gz`).
 | `.is_dir()` | `sp_is_dir()` | `.is_dir()` |
 | `.exists()` | `sp_exists()` | `.exists()` |
 | `.stat()` | `sp_stat()` | - |
+| `len(p.parents)` | `sp_parents_count()` | - |
 
 **Not implemented:** Most I/O methods (`mkdir`, `read_*`, `write_*`, `glob`, etc.)
 

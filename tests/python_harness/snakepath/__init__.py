@@ -8,7 +8,6 @@ with Python's pathlib interface.
 import ctypes
 import os
 import pathlib
-import sys
 from ctypes import c_char_p, c_size_t, c_int, POINTER, Structure, byref, create_string_buffer
 
 # Find and load the shared library
@@ -59,17 +58,11 @@ class _SpPath(Structure):
 
 
 class _SpPartsIter(Structure):
-    """C SpPartsIter structure"""
-    _fields_ = [
-        ("_data", ctypes.c_char * _sizeof_parts_iter),
-    ]
+    _fields_ = [("_data", ctypes.c_char * _sizeof_parts_iter)]
 
 
 class _SpParentsIter(Structure):
-    """C SpParentsIter structure"""
-    _fields_ = [
-        ("_data", ctypes.c_char * _sizeof_parents_iter),
-    ]
+    _fields_ = [("_data", ctypes.c_char * _sizeof_parents_iter)]
 
 
 class _SpStatResult(Structure):
@@ -90,16 +83,10 @@ class _SpStatResult(Structure):
 
     def __eq__(self, other):
         if isinstance(other, _SpStatResult):
-            return (self.st_mode == other.st_mode and self.st_ino == other.st_ino and
-                    self.st_dev == other.st_dev and self.st_nlink == other.st_nlink and
-                    self.st_uid == other.st_uid and self.st_gid == other.st_gid and
-                    self.st_size == other.st_size)
-        # Support comparison with os.stat_result
+            return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other)))
         if hasattr(other, 'st_mode'):
-            return (self.st_mode == other.st_mode and self.st_ino == other.st_ino and
-                    self.st_dev == other.st_dev and self.st_nlink == other.st_nlink and
-                    self.st_uid == other.st_uid and self.st_gid == other.st_gid and
-                    self.st_size == other.st_size)
+            other_sp = _SpStatResult(**{n: getattr(other, n) for n, _ in _SpStatResult._fields_ if n != 'valid'}, valid=True)
+            return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other_sp)))
         return NotImplemented
 
     def __repr__(self):
@@ -109,148 +96,101 @@ class _SpStatResult(Structure):
                 f"st_atime={self.st_atime}, st_mtime={self.st_mtime}, st_ctime={self.st_ctime})")
 
 
-# Function signatures
-_lib.sp_path_new_wrap.argtypes = [c_char_p, c_int, POINTER(_SpPath)]
-_lib.sp_path_new_wrap.restype = None
+# ============ Signature helpers ============
 
-_lib.sp_path_new_len_wrap.argtypes = [POINTER(ctypes.c_char), c_size_t, c_int, POINTER(_SpPath)]
-_lib.sp_path_new_len_wrap.restype = None
+def _sig(name, argtypes, restype=None):
+    fn = getattr(_lib, name)
+    fn.argtypes = argtypes
+    fn.restype = restype
 
-_lib.sp_path_convert_wrap.argtypes = [c_char_p, c_int, c_int, POINTER(_SpPath)]
-_lib.sp_path_convert_wrap.restype = None
+_PP = POINTER(_SpPath)
+_PStat = POINTER(_SpStatResult)
 
-_lib.sp_path_copy_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_path_copy_wrap.restype = None
+# Bulk signature setup by pattern
+for n in ['drive', 'root', 'anchor', 'name', 'stem', 'suffix']:
+    _sig(f'sp_{n}_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
 
-_lib.sp_str_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_str_wrap.restype = c_char_p
+for n in ['parent', 'absolute']:
+    _sig(f'sp_{n}_wrap', [_PP, _PP])
 
-_lib.sp_drive_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_drive_wrap.restype = None
+for n in ['with_name', 'with_stem', 'with_suffix', 'join_one']:
+    _sig(f'sp_{n}_wrap', [_PP, c_char_p, _PP])
 
-_lib.sp_root_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_root_wrap.restype = None
+for n in ['joinpath', 'relative_to', 'relative_to_walk_up']:
+    _sig(f'sp_{n}_wrap', [_PP, _PP, _PP])
 
-_lib.sp_anchor_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_anchor_wrap.restype = None
+for n in ['is_absolute', 'is_reserved', 'is_file', 'is_dir', 'exists',
+          'path_is_error', 'path_error_code', 'relative_to_is_error']:
+    _sig(f'sp_{n}_wrap', [_PP], c_int)
 
-_lib.sp_name_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_name_wrap.restype = None
+for n in ['is_relative_to', 'path_eq']:
+    _sig(f'sp_{n}_wrap', [_PP, _PP], c_int)
 
-_lib.sp_stem_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_stem_wrap.restype = None
+for n in ['path_hash', 'parts_count', 'parents_count']:
+    _sig(f'sp_{n}_wrap', [_PP], ctypes.c_ulong if n == 'path_hash' else c_size_t)
 
-_lib.sp_suffix_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_suffix_wrap.restype = None
+# Remaining signatures
+_sig('sp_path_new_wrap', [c_char_p, c_int, _PP])
+_sig('sp_path_new_len_wrap', [POINTER(ctypes.c_char), c_size_t, c_int, _PP])
+_sig('sp_path_convert_wrap', [c_char_p, c_int, c_int, _PP])
+_sig('sp_path_copy_wrap', [_PP, _PP])
+_sig('sp_str_wrap', [_PP], c_char_p)
+_sig('sp_join_one_len_wrap', [_PP, POINTER(ctypes.c_char), c_size_t, _PP])
+_sig('sp_suffixes_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t), c_size_t], c_size_t)
+_sig('sp_parts_iter_begin_wrap', [_PP, POINTER(_SpPartsIter)])
+_sig('sp_parts_iter_next_wrap', [POINTER(_SpPartsIter), POINTER(c_char_p), POINTER(c_size_t)], c_int)
+_sig('sp_parents_iter_begin_wrap', [_PP, POINTER(_SpParentsIter)])
+_sig('sp_parents_iter_next_wrap', [POINTER(_SpParentsIter), _PP], c_int)
+_sig('sp_is_relative_to_parts_wrap', [_PP, POINTER(c_char_p)], c_int)
+_sig('sp_relative_to_parts_wrap', [_PP, POINTER(c_char_p), c_int, _PP])
+_sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
+_sig('sp_as_posix_wrap', [_PP, c_char_p, c_size_t])
+_sig('sp_cwd_wrap', [c_int, _PP])
+_sig('sp_path_cmp_wrap', [_PP, _PP], c_int)
+_sig('sp_match_wrap', [_PP, c_char_p], c_int)
+_sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
+_sig('sp_stat_wrap', [_PP, _PStat])
+_sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
 
-_lib.sp_suffixes_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), POINTER(c_size_t), c_size_t]
-_lib.sp_suffixes_wrap.restype = c_size_t
 
-_lib.sp_parent_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_parent_wrap.restype = None
+# ============ Property descriptors ============
 
-_lib.sp_parts_count_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_parts_count_wrap.restype = c_size_t
+class _StrViewProp:
+    """Descriptor for string-view properties (drive, root, anchor, name, stem, suffix)"""
+    __slots__ = ('_func',)
+    def __init__(self, name):
+        self._func = getattr(_lib, f'sp_{name}_wrap')
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self
+        data, length = c_char_p(), c_size_t()
+        self._func(byref(obj._sp), byref(data), byref(length))
+        return '' if not data.value or not length.value else data.value[:length.value].decode('utf-8')
 
-_lib.sp_parts_iter_begin_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPartsIter)]
-_lib.sp_parts_iter_begin_wrap.restype = None
 
-_lib.sp_parts_iter_next_wrap.argtypes = [POINTER(_SpPartsIter), POINTER(c_char_p), POINTER(c_size_t)]
-_lib.sp_parts_iter_next_wrap.restype = c_int
+class _PathProp:
+    """Descriptor for path-returning properties (parent)"""
+    __slots__ = ('_func',)
+    def __init__(self, name):
+        self._func = getattr(_lib, f'sp_{name}_wrap')
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self
+        result = obj.__class__.__new__(obj.__class__)
+        result._sp = _SpPath()
+        self._func(byref(obj._sp), byref(result._sp))
+        return result
 
-_lib.sp_parents_iter_begin_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpParentsIter)]
-_lib.sp_parents_iter_begin_wrap.restype = None
 
-_lib.sp_parents_iter_next_wrap.argtypes = [POINTER(_SpParentsIter), POINTER(_SpPath)]
-_lib.sp_parents_iter_next_wrap.restype = c_int
+class _BoolProp:
+    """Descriptor for boolean properties"""
+    __slots__ = ('_func',)
+    def __init__(self, name):
+        self._func = getattr(_lib, f'sp_{name}_wrap')
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self
+        return bool(self._func(byref(obj._sp)))
 
-_lib.sp_join_one_wrap.argtypes = [POINTER(_SpPath), c_char_p, POINTER(_SpPath)]
-_lib.sp_join_one_wrap.restype = None
 
-_lib.sp_join_one_len_wrap.argtypes = [POINTER(_SpPath), POINTER(ctypes.c_char), c_size_t, POINTER(_SpPath)]
-_lib.sp_join_one_len_wrap.restype = None
-
-_lib.sp_joinpath_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_joinpath_wrap.restype = None
-
-_lib.sp_with_name_wrap.argtypes = [POINTER(_SpPath), c_char_p, POINTER(_SpPath)]
-_lib.sp_with_name_wrap.restype = None
-
-_lib.sp_with_stem_wrap.argtypes = [POINTER(_SpPath), c_char_p, POINTER(_SpPath)]
-_lib.sp_with_stem_wrap.restype = None
-
-_lib.sp_with_suffix_wrap.argtypes = [POINTER(_SpPath), c_char_p, POINTER(_SpPath)]
-_lib.sp_with_suffix_wrap.restype = None
-
-_lib.sp_relative_to_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_relative_to_wrap.restype = None
-
-_lib.sp_relative_to_walk_up_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_relative_to_walk_up_wrap.restype = None
-
-_lib.sp_relative_to_is_error_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_relative_to_is_error_wrap.restype = c_int
-
-_lib.sp_is_relative_to_parts_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p)]
-_lib.sp_is_relative_to_parts_wrap.restype = c_int
-
-_lib.sp_relative_to_parts_wrap.argtypes = [POINTER(_SpPath), POINTER(c_char_p), c_int, POINTER(_SpPath)]
-_lib.sp_relative_to_parts_wrap.restype = None
-
-_lib.sp_as_uri_wrap.argtypes = [POINTER(_SpPath), c_char_p, c_size_t]
-_lib.sp_as_uri_wrap.restype = c_size_t
-
-_lib.sp_is_relative_to_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_is_relative_to_wrap.restype = c_int
-
-_lib.sp_is_absolute_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_is_absolute_wrap.restype = c_int
-
-_lib.sp_cwd_wrap.argtypes = [c_int, POINTER(_SpPath)]
-_lib.sp_cwd_wrap.restype = None
-
-_lib.sp_absolute_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_absolute_wrap.restype = None
-
-_lib.sp_path_eq_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_path_eq_wrap.restype = c_int
-
-_lib.sp_path_cmp_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath)]
-_lib.sp_path_cmp_wrap.restype = c_int
-
-_lib.sp_path_hash_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_path_hash_wrap.restype = ctypes.c_ulong
-
-_lib.sp_match_wrap.argtypes = [POINTER(_SpPath), c_char_p]
-_lib.sp_match_wrap.restype = c_int
-
-_lib.sp_match_ex_wrap.argtypes = [POINTER(_SpPath), c_char_p, c_int]
-_lib.sp_match_ex_wrap.restype = c_int
-
-_lib.sp_is_reserved_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_is_reserved_wrap.restype = c_int
-
-_lib.sp_is_file_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_is_file_wrap.restype = c_int
-
-_lib.sp_is_dir_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_is_dir_wrap.restype = c_int
-
-_lib.sp_exists_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_exists_wrap.restype = c_int
-
-_lib.sp_stat_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpStatResult)]
-_lib.sp_stat_wrap.restype = None
-
-_lib.sp_path_is_error_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_path_is_error_wrap.restype = c_int
-
-_lib.sp_path_error_code_wrap.argtypes = [POINTER(_SpPath)]
-_lib.sp_path_error_code_wrap.restype = c_int
-
-_lib.sp_as_posix_wrap.argtypes = [POINTER(_SpPath), c_char_p, c_size_t]
-_lib.sp_as_posix_wrap.restype = None
-
+# ============ Helper functions ============
 
 def _encode(s):
     """Encode string to bytes for C library"""
@@ -259,9 +199,6 @@ def _encode(s):
             "argument should be a str or an os.PathLike object "
             "where __fspath__ returns a str, not 'bytes'"
         )
-    # Use surrogatepass to handle isolated surrogate characters in paths
-    # This allows paths with invalid Unicode to pass through to C,
-    # where filesystem operations will fail gracefully
     return s.encode('utf-8', errors='surrogatepass') if s else b''
 
 
@@ -273,11 +210,7 @@ def _encode_buf(s):
 
 def _decode(b):
     """Decode bytes from C library to string"""
-    if b is None:
-        return ''
-    if isinstance(b, bytes):
-        return b.decode('utf-8')
-    return b
+    return '' if b is None else (b.decode('utf-8') if isinstance(b, bytes) else b)
 
 
 def _get_pathlib_flavor(obj):
@@ -289,8 +222,11 @@ def _get_pathlib_flavor(obj):
     return None
 
 
+# ============ PathParents ============
+
 class _PathParents:
     """Sequence of parent paths, like pathlib._PathParents"""
+    __slots__ = ('_path', '_parents')
 
     def __init__(self, path):
         self._path = path
@@ -315,40 +251,44 @@ class _PathParents:
 
     def __getitem__(self, idx):
         parents = self._compute()
-        if isinstance(idx, slice):
-            return tuple(parents[idx])
-        return parents[idx]
+        return tuple(parents[idx]) if isinstance(idx, slice) else parents[idx]
 
     def __repr__(self):
         return f"<{self._path.__class__.__name__}.parents>"
 
 
+# ============ PurePath ============
+
 class PurePath:
-    """
-    Pure path object - no filesystem access.
-    Compatible with pathlib.PurePath interface.
-    """
+    """Pure path object - no filesystem access."""
 
     __slots__ = ('_sp',)
     _flavor = SP_FLAVOR_NATIVE
-    # Native parser (posixpath on Unix, ntpath on Windows)
     parser = __import__('posixpath') if os.name != 'nt' else __import__('ntpath')
+
+    # String-view properties via descriptors
+    drive = _StrViewProp('drive')
+    root = _StrViewProp('root')
+    anchor = _StrViewProp('anchor')
+    name = _StrViewProp('name')
+    stem = _StrViewProp('stem')
+    suffix = _StrViewProp('suffix')
+
+    # Path-returning properties
+    parent = _PathProp('parent')
 
     @property
     def _flavour(self):
-        """British spelling alias for CPython tests - returns parser module."""
+        """British spelling alias for CPython tests."""
         return self.parser
 
     def __new__(cls, *args, **kwargs):
         if cls is PurePath:
-            # Auto-select based on platform
             cls = PurePosixPath if os.name != 'nt' else PureWindowsPath
         return object.__new__(cls)
 
     def __init__(self, *args, **kwargs):
         self._sp = _SpPath()
-
-        # Check for bytes arguments (not allowed)
         for arg in args:
             if isinstance(arg, bytes):
                 raise TypeError(
@@ -357,61 +297,57 @@ class PurePath:
                 )
 
         if not args:
-            path_buf = _encode_buf(b'')
-            _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
+            _lib.sp_path_new_len_wrap(_encode_buf(b''), 0, self._flavor, byref(self._sp))
         elif len(args) == 1:
             arg = args[0]
             if isinstance(arg, PurePath):
-                # Same flavor: just copy; different flavor: convert
                 if arg._flavor == self._flavor:
                     _lib.sp_path_copy_wrap(byref(arg._sp), byref(self._sp))
                 else:
                     _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(self._sp))
                 return
-            # Check if arg is a pathlib path (for cross-flavor conversion)
             src_flavor = _get_pathlib_flavor(arg)
             if src_flavor is not None:
-                path_str = _encode(str(arg))
-                _lib.sp_path_convert_wrap(path_str, src_flavor, self._flavor, byref(self._sp))
+                _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(self._sp))
             else:
                 path_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
                 _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
         else:
-            # Join multiple args using C library's join (handles absolute paths correctly)
-            first = args[0]
-            if isinstance(first, PurePath):
-                if first._flavor == self._flavor:
-                    _lib.sp_path_copy_wrap(byref(first._sp), byref(self._sp))
-                else:
-                    _lib.sp_path_convert_wrap(_encode(str(first)), first._flavor, self._flavor, byref(self._sp))
+            self._init_multi(args)
+
+    def _init_multi(self, args):
+        """Initialize from multiple path segments"""
+        first = args[0]
+        if isinstance(first, PurePath):
+            if first._flavor == self._flavor:
+                _lib.sp_path_copy_wrap(byref(first._sp), byref(self._sp))
             else:
-                src_flavor = _get_pathlib_flavor(first)
+                _lib.sp_path_convert_wrap(_encode(str(first)), first._flavor, self._flavor, byref(self._sp))
+        else:
+            src_flavor = _get_pathlib_flavor(first)
+            if src_flavor is not None:
+                _lib.sp_path_convert_wrap(_encode(str(first)), src_flavor, self._flavor, byref(self._sp))
+            else:
+                first_buf = _encode_buf(os.fspath(first) if hasattr(os, 'fspath') else str(first))
+                _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
+
+        for arg in args[1:]:
+            if isinstance(arg, PurePath):
+                if arg._flavor == self._flavor:
+                    _lib.sp_joinpath_wrap(byref(self._sp), byref(arg._sp), byref(self._sp))
+                else:
+                    tmp = _SpPath()
+                    _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(tmp))
+                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
+            else:
+                src_flavor = _get_pathlib_flavor(arg)
                 if src_flavor is not None:
-                    _lib.sp_path_convert_wrap(_encode(str(first)), src_flavor, self._flavor, byref(self._sp))
+                    tmp = _SpPath()
+                    _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(tmp))
+                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
                 else:
-                    first_str = os.fspath(first) if hasattr(os, 'fspath') else str(first)
-                    first_buf = _encode_buf(first_str)
-                    _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
-            for arg in args[1:]:
-                if isinstance(arg, PurePath):
-                    if arg._flavor == self._flavor:
-                        _lib.sp_joinpath_wrap(byref(self._sp), byref(arg._sp), byref(self._sp))
-                    else:
-                        # Convert and join
-                        tmp = _SpPath()
-                        _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(tmp))
-                        _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
-                else:
-                    src_flavor = _get_pathlib_flavor(arg)
-                    if src_flavor is not None:
-                        # Convert and join
-                        tmp = _SpPath()
-                        _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(tmp))
-                        _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
-                    else:
-                        arg_str = os.fspath(arg) if hasattr(os, 'fspath') else str(arg)
-                        arg_buf = _encode_buf(arg_str)
-                        _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
+                    arg_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
+                    _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
 
     def __str__(self):
         return _decode(_lib.sp_str_wrap(byref(self._sp)))
@@ -434,23 +370,19 @@ class PurePath:
         return _lib.sp_path_hash_wrap(byref(self._sp))
 
     def __lt__(self, other):
-        if not isinstance(other, PurePath):
-            return NotImplemented
+        if not isinstance(other, PurePath): return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) < 0
 
     def __le__(self, other):
-        if not isinstance(other, PurePath):
-            return NotImplemented
+        if not isinstance(other, PurePath): return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) <= 0
 
     def __gt__(self, other):
-        if not isinstance(other, PurePath):
-            return NotImplemented
+        if not isinstance(other, PurePath): return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) > 0
 
     def __ge__(self, other):
-        if not isinstance(other, PurePath):
-            return NotImplemented
+        if not isinstance(other, PurePath): return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
 
     def __truediv__(self, other):
@@ -459,56 +391,13 @@ class PurePath:
     def __rtruediv__(self, other):
         return self.__class__(other, self)
 
-    def _get_str_view(self, func):
-        """Helper to get string view from C library"""
-        data = c_char_p()
-        length = c_size_t()
-        func(byref(self._sp), byref(data), byref(length))
-        if data.value is None or length.value == 0:
-            return ''
-        return data.value[:length.value].decode('utf-8')
-
-    @property
-    def drive(self):
-        return self._get_str_view(_lib.sp_drive_wrap)
-
-    @property
-    def root(self):
-        return self._get_str_view(_lib.sp_root_wrap)
-
-    @property
-    def anchor(self):
-        return self._get_str_view(_lib.sp_anchor_wrap)
-
-    @property
-    def name(self):
-        return self._get_str_view(_lib.sp_name_wrap)
-
-    @property
-    def stem(self):
-        return self._get_str_view(_lib.sp_stem_wrap)
-
-    @property
-    def suffix(self):
-        return self._get_str_view(_lib.sp_suffix_wrap)
-
     @property
     def suffixes(self):
         data_arr = (c_char_p * SP_MAX_SUFFIXES)()
         len_arr = (c_size_t * SP_MAX_SUFFIXES)()
         count = _lib.sp_suffixes_wrap(byref(self._sp), data_arr, len_arr, SP_MAX_SUFFIXES)
-        result = []
-        for i in range(count):
-            if data_arr[i] and len_arr[i] > 0:
-                result.append(data_arr[i][:len_arr[i]].decode('utf-8'))
-        return result
-
-    @property
-    def parent(self):
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_parent_wrap(byref(self._sp), byref(result._sp))
-        return result
+        return [data_arr[i][:len_arr[i]].decode('utf-8')
+                for i in range(count) if data_arr[i] and len_arr[i] > 0]
 
     @property
     def parents(self):
@@ -519,8 +408,7 @@ class PurePath:
         parts = []
         it = _SpPartsIter()
         _lib.sp_parts_iter_begin_wrap(byref(self._sp), byref(it))
-        data = c_char_p()
-        length = c_size_t()
+        data, length = c_char_p(), c_size_t()
         while _lib.sp_parts_iter_next_wrap(byref(it), byref(data), byref(length)):
             if data.value and length.value > 0:
                 parts.append(data.value[:length.value].decode('utf-8'))
@@ -534,7 +422,7 @@ class PurePath:
     def as_uri(self):
         if not self.is_absolute():
             raise ValueError("relative path can't be expressed as a file URI")
-        buf = create_string_buffer(SP_PATH_MAX * 3)  # URL encoding can expand
+        buf = create_string_buffer(SP_PATH_MAX * 3)
         result_len = _lib.sp_as_uri_wrap(byref(self._sp), buf, SP_PATH_MAX * 3)
         if result_len == 0:
             raise ValueError("relative path can't be expressed as a file URI")
@@ -549,7 +437,6 @@ class PurePath:
         for arg in args:
             if isinstance(arg, bytes):
                 raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        # Convert args to NULL-terminated array of C strings
         parts = [_encode(os.fspath(a) if hasattr(a, '__fspath__') else str(a)) for a in args]
         parts.append(None)
         parts_arr = (c_char_p * len(parts))(*parts)
@@ -562,20 +449,17 @@ class PurePath:
             if isinstance(arg, bytes):
                 raise TypeError("argument should be a str or os.PathLike object, not bytes")
 
-        # Convert args to NULL-terminated array of C strings
         parts = [_encode(os.fspath(a) if hasattr(a, '__fspath__') else str(a)) for a in args]
         parts.append(None)
         parts_arr = (c_char_p * len(parts))(*parts)
 
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
-
         _lib.sp_relative_to_parts_wrap(byref(self._sp), parts_arr, 1 if walk_up else 0, byref(result._sp))
 
         if _lib.sp_relative_to_is_error_wrap(byref(result._sp)):
             other_str = str(self.__class__(*args))
             raise ValueError(f"{str(self)!r} is not relative to {other_str!r}")
-
         return result
 
     def joinpath(self, *others):
@@ -593,59 +477,37 @@ class PurePath:
             if isinstance(other, PurePath):
                 _lib.sp_joinpath_wrap(byref(result._sp), byref(other._sp), byref(result._sp))
             else:
-                other_str = os.fspath(other) if hasattr(os, 'fspath') else str(other)
-                other_buf = _encode_buf(other_str)
+                other_buf = _encode_buf(os.fspath(other) if hasattr(os, 'fspath') else str(other))
                 _lib.sp_join_one_len_wrap(byref(result._sp), other_buf, len(other_buf.raw), byref(result._sp))
+        return result
 
+    def _with_field(self, func_name, value, type_name, err_no_name, err_invalid):
+        if not isinstance(value, str):
+            raise TypeError(f"expected str, not {type(value).__name__}")
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        getattr(_lib, f'sp_{func_name}_wrap')(byref(self._sp), _encode(value), byref(result._sp))
+        err = _lib.sp_path_error_code_wrap(byref(result._sp))
+        if err == SP_ERR_NO_NAME:
+            raise ValueError(f"{self!r} has an empty name")
+        if err == SP_ERR_INVALID_ARG:
+            raise ValueError(f"Invalid {type_name} {value!r}")
         return result
 
     def with_name(self, name):
-        if not isinstance(name, str):
-            raise TypeError(f"expected str, not {type(name).__name__}")
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_with_name_wrap(byref(self._sp), _encode(name), byref(result._sp))
-        err = _lib.sp_path_error_code_wrap(byref(result._sp))
-        if err == SP_ERR_NO_NAME:
-            raise ValueError(f"{self!r} has an empty name")
-        if err == SP_ERR_INVALID_ARG:
-            raise ValueError(f"Invalid name {name!r}")
-        return result
+        return self._with_field('with_name', name, 'name', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
 
     def with_stem(self, stem):
-        if not isinstance(stem, str):
-            raise TypeError(f"expected str, not {type(stem).__name__}")
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_with_stem_wrap(byref(self._sp), _encode(stem), byref(result._sp))
-        err = _lib.sp_path_error_code_wrap(byref(result._sp))
-        if err == SP_ERR_NO_NAME:
-            raise ValueError(f"{self!r} has an empty name")
-        if err == SP_ERR_INVALID_ARG:
-            raise ValueError(f"Invalid stem {stem!r}")
-        return result
+        return self._with_field('with_stem', stem, 'stem', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
 
     def with_suffix(self, suffix):
-        if not isinstance(suffix, str):
-            raise TypeError(f"expected str, not {type(suffix).__name__}")
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_with_suffix_wrap(byref(self._sp), _encode(suffix), byref(result._sp))
-        err = _lib.sp_path_error_code_wrap(byref(result._sp))
-        if err == SP_ERR_NO_NAME:
-            raise ValueError(f"{self!r} has an empty name")
-        if err == SP_ERR_INVALID_ARG:
-            raise ValueError(f"Invalid suffix {suffix!r}")
-        return result
+        return self._with_field('with_suffix', suffix, 'suffix', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
 
     def match(self, pattern, *, case_sensitive=None):
-        """Match this path against a glob pattern."""
         if isinstance(pattern, bytes):
             raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        pattern = str(pattern)
-        # Convert case_sensitive to C convention: -1=default, 0=insensitive, 1=sensitive
         cs_value = -1 if case_sensitive is None else (1 if case_sensitive else 0)
-        result = _lib.sp_match_ex_wrap(byref(self._sp), _encode(pattern), cs_value)
+        result = _lib.sp_match_ex_wrap(byref(self._sp), _encode(str(pattern)), cs_value)
         if result == SP_MATCH_ERR_EMPTY:
             raise ValueError("empty pattern")
         if result == SP_MATCH_ERR_INVALID:
@@ -653,7 +515,6 @@ class PurePath:
         return result == SP_MATCH_YES
 
     def is_reserved(self):
-        """Return True if the path is reserved under Windows."""
         return bool(_lib.sp_is_reserved_wrap(byref(self._sp)))
 
 
@@ -677,12 +538,10 @@ class PureWindowsPath(PurePath):
         return object.__new__(cls)
 
 
-# Concrete Path classes (for compatibility, but without I/O)
+# ============ Concrete Path classes ============
+
 class Path(PurePath):
-    """
-    Path object - NOTE: I/O operations not implemented.
-    This is a pure-computation library.
-    """
+    """Path object with I/O operations."""
     __slots__ = ()
 
     def __new__(cls, *args, **kwargs):
@@ -692,34 +551,28 @@ class Path(PurePath):
 
     @classmethod
     def cwd(cls):
-        """Return a new path pointing to the current working directory."""
         result = cls.__new__(cls)
         result._sp = _SpPath()
         _lib.sp_cwd_wrap(result._flavor, byref(result._sp))
         return result
 
     def absolute(self):
-        """Return an absolute version of this path."""
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
         _lib.sp_absolute_wrap(byref(self._sp), byref(result._sp))
         return result
 
     def is_file(self):
-        """Return True if the path points to a regular file."""
         return bool(_lib.sp_is_file_wrap(byref(self._sp)))
 
     def is_dir(self):
-        """Return True if the path points to a directory."""
         return bool(_lib.sp_is_dir_wrap(byref(self._sp)))
 
     def exists(self):
-        """Return True if the path exists."""
         return bool(_lib.sp_exists_wrap(byref(self._sp)))
 
     def stat(self, *, follow_symlinks=True):
-        """Return stat info for the path."""
-        # Note: follow_symlinks is accepted for API compatibility but not fully implemented
+        assert follow_symlinks, "lstat (follow_symlinks=False) not yet implemented"
         result = _SpStatResult()
         _lib.sp_stat_wrap(byref(self._sp), byref(result))
         if not result.valid:
@@ -728,17 +581,13 @@ class Path(PurePath):
 
 
 class PosixPath(Path, PurePosixPath):
-    """Path with POSIX semantics."""
     __slots__ = ()
-
     def __new__(cls, *args, **kwargs):
         return object.__new__(cls)
 
 
 class WindowsPath(Path, PureWindowsPath):
-    """Path with Windows semantics."""
     __slots__ = ()
-
     def __new__(cls, *args, **kwargs):
         return object.__new__(cls)
 

@@ -214,7 +214,9 @@ typedef struct {
     bool valid;                /* True if stat succeeded */
 } SpStatResult;
 
-SpStatResult sp_stat(const SpPath *p);
+SpStatResult sp_stat(const SpPath *p);  /* follows symlinks; sp_lstat() coming later */
+bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b);
+size_t sp_parents_count(const SpPath *p);
 
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
@@ -1615,6 +1617,25 @@ SpStatResult sp_stat(const SpPath *p) {
 
     result.valid = true;
     return result;
+}
+
+bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
+    if (!a->valid || !b->valid) return false;
+    return a->sp_mode == b->sp_mode &&
+           a->sp_ino == b->sp_ino &&
+           a->sp_dev == b->sp_dev &&
+           a->sp_nlink == b->sp_nlink &&
+           a->sp_uid == b->sp_uid &&
+           a->sp_gid == b->sp_gid &&
+           a->sp_size == b->sp_size;
+}
+
+size_t sp_parents_count(const SpPath *p) {
+    SpParentsIter it = sp_parents_begin(p);
+    SpPath parent;
+    size_t count = 0;
+    while (sp_parents_next(&it, &parent)) count++;
+    return count;
 }
 
 /* ============ Fluent API Implementation ============ */

@@ -419,6 +419,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
               <td>
                 <code class="language-plaintext highlighter-rouge">-&gt;is_file()</code>
                 <code class="language-plaintext highlighter-rouge">-&gt;is_dir()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;exists()</code>
               </td>
               <td>
                 <code class="language-plaintext highlighter-rouge">bool</code>
@@ -828,12 +829,39 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">.is_dir()</code>
               </td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.exists()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_exists()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.exists()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.stat()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_stat()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">len(p.parents)</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_parents_count()</code>
+              </td>
+              <td>-</td>
+            </tr>
           </tbody>
         </table>
         <p>
           <strong>Not implemented:</strong> Most I/O methods (<code
-            class="language-plaintext highlighter-rouge">stat</code>, <code
-            class="language-plaintext highlighter-rouge">exists</code>, <code
             class="language-plaintext highlighter-rouge">mkdir</code>, <code
             class="language-plaintext highlighter-rouge">read_*</code>, <code
             class="language-plaintext highlighter-rouge">write_*</code>, <code

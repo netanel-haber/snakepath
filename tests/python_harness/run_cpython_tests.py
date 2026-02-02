@@ -40,6 +40,11 @@ EXPECTED_FAILURES = {
     ("PathTest", "test_passing_kwargs_deprecated"),
     ("PosixPathTest", "test_passing_kwargs_deprecated"),
 
+    # lstat (follow_symlinks=False) not implemented
+    ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"),
+    ("PathTest", "test_stat_no_follow_symlinks_nosymlink"),
+    ("PosixPathTest", "test_stat_no_follow_symlinks_nosymlink"),
+
     # Cross-flavor comparison - C doesn't raise TypeError
     ("PurePathTest", "test_different_flavours_unordered"),
 

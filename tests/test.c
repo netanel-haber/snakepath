@@ -301,7 +301,28 @@ int main(void) {
     SpStatResult nonexistent_result = sp_stat(&stat_nonexistent);
     ASSERT(nonexistent_result.valid == false);
 
+    /* Test sp_stat_eq */
+    ASSERT(sp_stat_eq(&stat_result, &stat_result) == true);
+    ASSERT(sp_stat_eq(&stat_result, &dir_result) == false);
+    ASSERT(sp_stat_eq(&stat_result, &nonexistent_result) == false);  /* invalid stat */
+
     printf("  stat tests OK\n");
+
+    printf("\nparents_count Tests:\n");
+
+    SpPath pc1 = sp_path_f("/a/b/c/d", P);
+    ASSERT(sp_parents_count(&pc1) == 4);  /* /a/b/c, /a/b, /a, / */
+
+    SpPath pc2 = sp_path_f("a/b/c", P);
+    ASSERT(sp_parents_count(&pc2) == 3);  /* a/b, a, . */
+
+    SpPath pc3 = sp_path_f("/", P);
+    ASSERT(sp_parents_count(&pc3) == 0);  /* root has no parents */
+
+    SpPath pc4 = sp_path_f(".", P);
+    ASSERT(sp_parents_count(&pc4) == 0);  /* current dir has no parents */
+
+    printf("  parents_count tests OK\n");
 
     printf("\n%d assertions passed\n", tests_run);
     return 0;
