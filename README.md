@@ -7,6 +7,7 @@ Vibe-coded with Claude Code + Cursor.
 u=https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &&
 curl -sSLo snakepath.h "$u" &&
 cat <<'EOF' | cc -xc - -o demo &&
+#define SP_PATH_MAX 4096
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
@@ -104,6 +105,7 @@ bool eq = sp_path_eq(&a, &b);
 Enable with `#define SNAKEPATH_FLUENT` before including.
 
 ```c
+#define SP_PATH_MAX 4096
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
@@ -156,9 +158,11 @@ SpFlavor    { SP_FLAVOR_NATIVE, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS }
 Define before including:
 
 ```c
-#define SP_PATH_MAX 4096      // Max path length
-#define SP_MAX_SUFFIXES 16    // Max file extensions
+#define SP_PATH_MAX 4096      // Max path length (REQUIRED)
+#define SP_MAX_SUFFIXES 16    // Max file extensions (optional, default 16)
 ```
+
+**Note:** `SP_PATH_MAX` must be defined before including the header. Use `SP_PATH_MAX_LINUX` (4096) or `SP_PATH_MAX_WINDOWS` (1024) as guidance.
 
 ## Platform Behavior
 

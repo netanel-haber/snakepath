@@ -406,6 +406,7 @@
           <pre class="highlight"><code><span class="nv">u</span><span class="o">=</span>https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h <span class="o">&amp;&amp;</span> <span class="se">\</span>
 curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span class="nv">$u</span><span class="s2">"</span> <span class="o">&amp;&amp;</span> <span class="se">\</span>
 <span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="s1">'EOF'</span> | cc <span class="nt">-xc</span> - <span class="nt">-o</span> demo <span class="o">&amp;&amp;</span>
+<span class="cp">#define SP_PATH_MAX 4096</span>
 <span class="cp">#define SNAKEPATH_FLUENT</span>
 <span class="cp">#define SNAKEPATH_IMPLEMENTATION</span>
 <span class="cp">#include</span> <span class="cpf">"snakepath.h"</span>
@@ -505,7 +506,8 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
             <pre
-              class="highlight"><code><span class="cp">#define SNAKEPATH_FLUENT</span>
+              class="highlight"><code><span class="cp">#define SP_PATH_MAX 4096</span>
+<span class="cp">#define SNAKEPATH_FLUENT</span>
 <span class="cp">#define SNAKEPATH_IMPLEMENTATION</span>
 <span class="cp">#include</span> <span class="cpf">"snakepath.h"</span>
 
@@ -658,10 +660,11 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         <p>Define before including:</p>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
-            <pre class="highlight"><code><span class="cp">#define SP_PATH_MAX 4096      </span><span class="c1">// Max path length</span>
-<span class="cp">#define SP_MAX_SUFFIXES 16    </span><span class="c1">// Max file extensions</span></code></pre>
+            <pre class="highlight"><code><span class="cp">#define SP_PATH_MAX 4096      </span><span class="c1">// Max path length (REQUIRED)</span>
+<span class="cp">#define SP_MAX_SUFFIXES 16    </span><span class="c1">// Max file extensions (optional)</span></code></pre>
           </div>
         </div>
+        <p><strong>Note:</strong> <code class="language-plaintext highlighter-rouge">SP_PATH_MAX</code> must be defined before including the header. Use <code class="language-plaintext highlighter-rouge">SP_PATH_MAX_LINUX</code> (4096) or <code class="language-plaintext highlighter-rouge">SP_PATH_MAX_WINDOWS</code> (1024) as guidance.</p>
         <h2 id="platform-behavior">Platform Behavior</h2>
         <table>
           <thead>
