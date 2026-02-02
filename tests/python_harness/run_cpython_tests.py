@@ -316,63 +316,62 @@ EXPECTED_FAILURES = {
     # =========================================================================
     ("WindowsPathTest", "test_absolute"): "!=",
     ("WindowsPathTest", "test_absolute_common"): "!=",
+    ("WindowsPathTest", "test_empty_path"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_expanduser"): "has no attribute 'unset'",
+    ("WindowsPathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
+    ("WindowsPathTest", "test_glob"): "has no attribute 'glob'",
+    ("WindowsPathTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
+    ("WindowsPathTest", "test_glob_common"): "has no attribute 'glob'",
+    ("WindowsPathTest", "test_glob_dotdot"): "has no attribute 'glob'",
+    ("WindowsPathTest", "test_glob_many_open_files"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_group"): "has no attribute 'group'",
+    ("WindowsPathTest", "test_hardlink_to"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_home"): "has no attribute 'home'",
+    ("WindowsPathTest", "test_is_block_device_false"): "has no attribute 'is_block_device'",
+    ("WindowsPathTest", "test_is_char_device_false"): "has no attribute 'is_char_device'",
+    ("WindowsPathTest", "test_is_char_device_true"): "has no attribute 'is_char_device'",
+    ("WindowsPathTest", "test_is_fifo_false"): "has no attribute 'is_fifo'",
+    ("WindowsPathTest", "test_is_fifo_true"): "has no attribute 'is_fifo'",
+    ("WindowsPathTest", "test_is_junction"): "has no attribute 'is_junction'",
+    ("WindowsPathTest", "test_is_mount"): "has no attribute 'is_mount'",
+    ("WindowsPathTest", "test_is_socket_false"): "has no attribute 'is_socket'",
+    ("WindowsPathTest", "test_is_socket_true"): "has no attribute 'is_socket'",
+    ("WindowsPathTest", "test_is_symlink"): "has no attribute 'is_symlink'",
+    ("WindowsPathTest", "test_iterdir"): "has no attribute 'iterdir'",
+    ("WindowsPathTest", "test_iterdir_nodir"): "has no attribute 'iterdir'",
+    ("WindowsPathTest", "test_lstat_nosymlink"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_mkdir"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_concurrent_parent_creation"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_exist_ok"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_mkdir_exist_ok_root"): "has no attribute 'resolve'",
+    ("WindowsPathTest", "test_mkdir_exist_ok_with_parent"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_no_parents_file"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_parents"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_with_child_file"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_mkdir_with_unknown_drive"): "has no attribute 'mkdir'",
+    ("WindowsPathTest", "test_open_common"): "has no attribute 'open'",
+    ("WindowsPathTest", "test_owner"): "has no attribute 'stat'",
     ("WindowsPathTest", "test_parts_interning"): "is not",
     ("WindowsPathTest", "test_passing_kwargs_deprecated"): "DeprecationWarning not triggered",
+    ("WindowsPathTest", "test_pickling_common"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_read_write_bytes"): "has no attribute 'write_bytes'",
+    ("WindowsPathTest", "test_read_write_text"): "has no attribute 'write_text'",
+    ("WindowsPathTest", "test_rename"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_replace"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute 'resolve'",
+    ("WindowsPathTest", "test_rglob"): "has no attribute 'rglob'",
+    ("WindowsPathTest", "test_rglob_common"): "has no attribute 'rglob'",
+    ("WindowsPathTest", "test_rmdir"): "has no attribute 'iterdir'",
+    ("WindowsPathTest", "test_samefile"): "has no attribute 'samefile'",
+    ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"): "has no attribute 'stat'",
+    ("WindowsPathTest", "test_touch_common"): "has no attribute 'touch'",
+    ("WindowsPathTest", "test_touch_nochange"): "has no attribute 'touch'",
+    ("WindowsPathTest", "test_unlink"): "has no attribute 'unlink'",
+    ("WindowsPathTest", "test_unlink_missing_ok"): "has no attribute 'unlink'",
+    ("WindowsPathTest", "test_with"): "has no attribute 'iterdir'",
     ("WindowsPathTest", "test_with_segments"): "has no attribute 'session_id'",
-    # TEMPORARILY COMMENTED OUT - need to get specific attribute names from CI
-    # ("WindowsPathTest", "test_empty_path"): "has no attribute",
-    # ("WindowsPathTest", "test_expanduser"): "has no attribute",
-    # ("WindowsPathTest", "test_expanduser_common"): "has no attribute",
-    # ("WindowsPathTest", "test_glob"): "has no attribute",
-    # ("WindowsPathTest", "test_glob_above_recursion_limit"): "has no attribute",
-    # ("WindowsPathTest", "test_glob_case_sensitive"): "has no attribute",
-    # ("WindowsPathTest", "test_glob_common"): "has no attribute",
-    # ("WindowsPathTest", "test_glob_dotdot"): "has no attribute",
-    # ("WindowsPathTest", "test_glob_many_open_files"): "has no attribute",
-    # ("WindowsPathTest", "test_group"): "has no attribute",
-    # ("WindowsPathTest", "test_hardlink_to"): "has no attribute",
-    # ("WindowsPathTest", "test_home"): "has no attribute",
-    # ("WindowsPathTest", "test_is_block_device_false"): "has no attribute",
-    # ("WindowsPathTest", "test_is_char_device_false"): "has no attribute",
-    # ("WindowsPathTest", "test_is_char_device_true"): "has no attribute",
-    # ("WindowsPathTest", "test_is_fifo_false"): "has no attribute",
-    # ("WindowsPathTest", "test_is_fifo_true"): "has no attribute",
-    # ("WindowsPathTest", "test_is_junction"): "has no attribute",
-    # ("WindowsPathTest", "test_is_mount"): "has no attribute",
-    # ("WindowsPathTest", "test_is_socket_false"): "has no attribute",
-    # ("WindowsPathTest", "test_is_socket_true"): "has no attribute",
-    # ("WindowsPathTest", "test_is_symlink"): "has no attribute",
-    # ("WindowsPathTest", "test_iterdir"): "has no attribute",
-    # ("WindowsPathTest", "test_iterdir_nodir"): "has no attribute",
-    # ("WindowsPathTest", "test_lstat_nosymlink"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_concurrent_parent_creation"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_exist_ok"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_exist_ok_root"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_exist_ok_with_parent"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_no_parents_file"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_parents"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_with_child_file"): "has no attribute",
-    # ("WindowsPathTest", "test_mkdir_with_unknown_drive"): "has no attribute",
-    # ("WindowsPathTest", "test_open_common"): "has no attribute",
-    # ("WindowsPathTest", "test_owner"): "has no attribute",
-    # ("WindowsPathTest", "test_pickling_common"): "has no attribute",
-    # ("WindowsPathTest", "test_read_write_bytes"): "has no attribute",
-    # ("WindowsPathTest", "test_read_write_text"): "has no attribute",
-    # ("WindowsPathTest", "test_rename"): "has no attribute",
-    # ("WindowsPathTest", "test_replace"): "has no attribute",
-    # ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute",
-    # ("WindowsPathTest", "test_rglob"): "has no attribute",
-    # ("WindowsPathTest", "test_rglob_common"): "has no attribute",
-    # ("WindowsPathTest", "test_rmdir"): "has no attribute",
-    # ("WindowsPathTest", "test_samefile"): "has no attribute",
-    # ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"): "has no attribute",
-    # ("WindowsPathTest", "test_touch_common"): "has no attribute",
-    # ("WindowsPathTest", "test_touch_nochange"): "has no attribute",
-    # ("WindowsPathTest", "test_unlink"): "has no attribute",
-    # ("WindowsPathTest", "test_unlink_missing_ok"): "has no attribute",
-    # ("WindowsPathTest", "test_with"): "has no attribute",
-    # ("WindowsPathTest", "test_write_text_with_newlines"): "has no attribute",
+    ("WindowsPathTest", "test_write_text_with_newlines"): "has no attribute 'write_text'",
 }
 
 
@@ -470,6 +469,79 @@ def setup_pathlib_patch():
     sys.modules['test.support.os_helper'] = os_helper
 
 
+class QuietExpectedFailuresResult(unittest.TextTestResult):
+    """Custom TestResult that suppresses output for expected failures."""
+
+    def _is_expected(self, test, err):
+        """Check if this failure/error is expected."""
+        test_class = test.__class__.__name__
+        test_method = test._testMethodName
+        key = (test_class, test_method)
+        if key in EXPECTED_FAILURES:
+            expected_msg = EXPECTED_FAILURES[key]
+            # Format the error to check against expected message
+            err_str = self._exc_info_to_string(err, test)
+            return expected_msg in err_str
+        return False
+
+    def addError(self, test, err):
+        """Called when a test raises an unexpected exception."""
+        if self._is_expected(test, err):
+            # Silently record as expected
+            self.errors.append((test, self._exc_info_to_string(err, test)))
+            if self.showAll:
+                self.stream.writeln("expected error")
+            elif self.dots:
+                self.stream.write('x')
+                self.stream.flush()
+        else:
+            super().addError(test, err)
+
+    def addFailure(self, test, err):
+        """Called when a test fails."""
+        if self._is_expected(test, err):
+            # Silently record as expected
+            self.failures.append((test, self._exc_info_to_string(err, test)))
+            if self.showAll:
+                self.stream.writeln("expected failure")
+            elif self.dots:
+                self.stream.write('x')
+                self.stream.flush()
+        else:
+            super().addFailure(test, err)
+
+    def printErrors(self):
+        """Only print unexpected errors."""
+        unexpected_errors = []
+        unexpected_failures = []
+
+        for test, err in self.errors:
+            test_class = test.__class__.__name__
+            test_method = test._testMethodName
+            key = (test_class, test_method)
+            if key in EXPECTED_FAILURES and EXPECTED_FAILURES[key] in err:
+                continue
+            unexpected_errors.append((test, err))
+
+        for test, err in self.failures:
+            test_class = test.__class__.__name__
+            test_method = test._testMethodName
+            key = (test_class, test_method)
+            if key in EXPECTED_FAILURES and EXPECTED_FAILURES[key] in err:
+                continue
+            unexpected_failures.append((test, err))
+
+        if unexpected_errors or unexpected_failures:
+            self.stream.writeln()
+            self.printErrorList('ERROR', unexpected_errors)
+            self.printErrorList('FAIL', unexpected_failures)
+
+
+class QuietRunner(unittest.TextTestRunner):
+    """Test runner that uses QuietExpectedFailuresResult."""
+    resultclass = QuietExpectedFailuresResult
+
+
 def run_tests():
     """Run CPython tests against snakepath."""
     setup_tests()
@@ -514,8 +586,8 @@ def run_tests():
 
     print(f"\nLoaded {loaded_count} test classes\n")
 
-    # Run
-    runner = unittest.TextTestRunner(verbosity=2)
+    # Run with quiet runner that suppresses expected failures
+    runner = QuietRunner(verbosity=2)
     result = runner.run(suite)
 
     # Check expected failures
@@ -558,8 +630,10 @@ def run_tests():
         print(f"UNEXPECTED FAILURES: {len(unexpected_failures)}, ERRORS: {len(unexpected_errors)}")
         for test, tb in unexpected_failures:
             print(f"  FAIL: {test}")
+            print(tb)
         for test, tb in unexpected_errors:
             print(f"  ERROR: {test}")
+            print(tb)
         return_code = 1
     print("=" * 70)
 
