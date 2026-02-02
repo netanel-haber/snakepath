@@ -256,6 +256,17 @@ int main(void) {
     /* Non-existent directory should return false */
     ASSERT(SPF("/nonexistent/dir")->is_dir() == false);
 
+    /* ============ exists (fluent) ============ */
+
+    /* Existing file should return true */
+    ASSERT(SPF(__FILE__)->exists() == true);
+
+    /* Existing directory should return true */
+    ASSERT(SPF(".")->exists() == true);
+
+    /* Non-existent path should return false */
+    ASSERT(SPF("/nonexistent/path")->exists() == false);
+
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);
     return 0;

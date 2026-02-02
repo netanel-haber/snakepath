@@ -265,6 +265,22 @@ int main(void) {
 
     printf("  is_dir tests OK\n");
 
+    printf("\nexists Tests:\n");
+
+    /* Test exists - existing file */
+    SpPath exists_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    ASSERT(sp_exists(&exists_file) == true);
+
+    /* Test exists - existing directory */
+    SpPath exists_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
+    ASSERT(sp_exists(&exists_dir) == true);
+
+    /* Test exists - nonexistent path */
+    SpPath not_exists = sp_path_f("/nonexistent/path/file.txt", P);
+    ASSERT(sp_exists(&not_exists) == false);
+
+    printf("  exists tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }

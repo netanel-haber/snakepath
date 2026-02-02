@@ -95,6 +95,7 @@ SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_se
 WRAP_BOOL_UNARY(is_reserved)
 WRAP_BOOL_UNARY(is_file)
 WRAP_BOOL_UNARY(is_dir)
+WRAP_BOOL_UNARY(exists)
 SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
 SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
 
