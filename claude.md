@@ -33,6 +33,13 @@ cd tests/python_harness && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c 
 python run_cpython_tests.py
 ```
 
+### Python Tests Gotcha: Cascading EXPECTED_FAILURES Updates
+When implementing a new method (e.g., `exists()`), you must update EXPECTED_FAILURES in two ways:
+1. **Remove** direct test entries (e.g., `test_exists`) since they now pass
+2. **Update error messages** for tests that were failing due to the missing method but actually test something else
+
+Example: `test_mkdir` was expected to fail with `"has no attribute 'exists'"` because `exists()` is called first in the test. After implementing `exists()`, it now fails with `"has no attribute 'mkdir'"` - update the error message accordingly.
+
 ### Adding New Methods Checklist
 1. `snakepath.h`: Add declaration and implementation
 2. `snakepath.h` (fluent): Add to struct and X-macro lists if needed
