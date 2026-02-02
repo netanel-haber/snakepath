@@ -196,6 +196,7 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Re
 bool sp_is_reserved(const SpPath *p);
 bool sp_is_file(const SpPath *p);
 bool sp_is_dir(const SpPath *p);
+bool sp_exists(const SpPath *p);
 
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
@@ -243,6 +244,7 @@ struct sp_fluent_ {
     bool (*is_relative_to)(const SpPath *);
     bool (*is_file)(void);
     bool (*is_dir)(void);
+    bool (*exists)(void);
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
@@ -1494,6 +1496,21 @@ bool sp_is_dir(const SpPath *p) {
 #endif
 }
 
+bool sp_exists(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    /* Check for embedded null bytes - such paths can't exist */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    return GetFileAttributesA(path_str) != INVALID_FILE_ATTRIBUTES;
+#else
+    struct stat st;
+    return stat(path_str, &st) == 0;
+#endif
+}
+
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
 
@@ -1517,7 +1534,8 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(str, const char *, sp_str(&sp_priv_f_ctx))                                                                       \
     X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
     X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
-    X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))
+    X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))                                                                         \
+    X(exists, bool, sp_exists(&sp_priv_f_ctx))
 #define SP_FLUENT_TERM_STR(X)                                                                                          \
     X(name, SpStr, sp_name)                                                                                            \
     X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
@@ -1568,6 +1586,7 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {sp_priv_f_path_,
                                                         sp_priv_f_is_relative_to_,
                                                         sp_priv_f_is_file_,
                                                         sp_priv_f_is_dir_,
+                                                        sp_priv_f_exists_,
                                                         sp_priv_f_parent_,
                                                         sp_priv_f_join_,
                                                         sp_priv_f_with_name_,
