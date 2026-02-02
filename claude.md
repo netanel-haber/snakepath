@@ -55,6 +55,12 @@ Example: `test_mkdir` was expected to fail with `"has no attribute 'exists'"` be
 - CI requires a PR to run (doesn't trigger on branch push alone)
 - Use `gh` CLI to monitor CI: `gh run list`, `gh run view <id>`
 
+### CI Output Preferences
+- Keep "Starting build/test" log messages in nob - they help track parallel job progress
+- Python test runner uses `verbosity=1` (dots) for compact output
+- Expected test failures are grouped by reason with counts, not listed individually
+- The Windows MSVC environment dump in CI is collapsed by default (inside `##[group]`)
+
 ### Known Issues
 - Windows CI has race condition with parallel MSVC builds (pre-existing)
 - Clang `-Wnrvo` warning in `sp_path_convert` (pre-existing)
