@@ -120,7 +120,6 @@ EXPECTED_FAILURES = {
     # PathSubclassTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
     # =========================================================================
     ("PathSubclassTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PathSubclassTest", "test_exists"): "has no attribute 'exists'",
     ("PathSubclassTest", "test_expanduser_common"): "has no attribute 'expanduser'",
     ("PathSubclassTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
     ("PathSubclassTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
@@ -176,9 +175,7 @@ EXPECTED_FAILURES = {
     # =========================================================================
     # PathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
     # =========================================================================
-    ("PathTest", "test_concrete_class"): "has no attribute 'exists'",
     ("PathTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PathTest", "test_exists"): "has no attribute 'exists'",
     ("PathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
     ("PathTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
     ("PathTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
@@ -236,7 +233,6 @@ EXPECTED_FAILURES = {
     # PosixPathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
     # =========================================================================
     ("PosixPathTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PosixPathTest", "test_exists"): "has no attribute 'exists'",
     ("PosixPathTest", "test_expanduser"): "has no attribute 'unset'",
     ("PosixPathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
     ("PosixPathTest", "test_glob"): "has no attribute 'glob'",
@@ -321,7 +317,6 @@ EXPECTED_FAILURES = {
     ("WindowsPathTest", "test_absolute"): "!=",
     ("WindowsPathTest", "test_absolute_common"): "!=",
     ("WindowsPathTest", "test_empty_path"): "has no attribute",
-    ("WindowsPathTest", "test_exists"): "has no attribute",
     ("WindowsPathTest", "test_expanduser"): "has no attribute",
     ("WindowsPathTest", "test_expanduser_common"): "has no attribute",
     ("WindowsPathTest", "test_glob"): "has no attribute",
