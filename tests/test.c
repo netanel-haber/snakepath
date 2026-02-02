@@ -281,6 +281,28 @@ int main(void) {
 
     printf("  exists tests OK\n");
 
+    printf("\nstat Tests:\n");
+
+    /* Test stat - existing file */
+    SpPath stat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpStatResult stat_result = sp_stat(&stat_file);
+    ASSERT(stat_result.valid == true);
+    ASSERT(stat_result.sp_size > 0);
+    ASSERT((stat_result.sp_mode & 0170000) == 0100000);  /* S_IFREG - regular file */
+
+    /* Test stat - existing directory */
+    SpPath stat_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
+    SpStatResult dir_result = sp_stat(&stat_dir);
+    ASSERT(dir_result.valid == true);
+    ASSERT((dir_result.sp_mode & 0170000) == 0040000);  /* S_IFDIR - directory */
+
+    /* Test stat - nonexistent path */
+    SpPath stat_nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
+    SpStatResult nonexistent_result = sp_stat(&stat_nonexistent);
+    ASSERT(nonexistent_result.valid == false);
+
+    printf("  stat tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }

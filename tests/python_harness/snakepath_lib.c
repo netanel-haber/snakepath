@@ -96,6 +96,8 @@ WRAP_BOOL_UNARY(is_reserved)
 WRAP_BOOL_UNARY(is_file)
 WRAP_BOOL_UNARY(is_dir)
 WRAP_BOOL_UNARY(exists)
+SP_EXPORT void sp_stat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_stat(p); }
+SP_EXPORT size_t sp_sizeof_stat_result(void) { return sizeof(SpStatResult); }
 SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
 SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
 

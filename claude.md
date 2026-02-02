@@ -33,12 +33,13 @@ cd tests/python_harness && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c 
 python run_cpython_tests.py
 ```
 
-### Python Tests Gotcha: Cascading EXPECTED_FAILURES Updates
-When implementing a new method (e.g., `exists()`), you must update EXPECTED_FAILURES in two ways:
-1. **Remove** direct test entries (e.g., `test_exists`) since they now pass
-2. **Update error messages** for tests that were failing due to the missing method but actually test something else
+### Python Tests: EXPECTED_FAILURES
+`EXPECTED_FAILURES` is a simple set of `(class_name, test_name)` tuples. The test runner reports:
+- **Expected failure that fails** → OK (prints `x`)
+- **Expected failure that passes** → FAIL as "unexpected success" (prints `u`, tells you to remove it)
+- **Unexpected failure** → FAIL (normal test failure)
 
-Example: `test_mkdir` was expected to fail with `"has no attribute 'exists'"` because `exists()` is called first in the test. After implementing `exists()`, it now fails with `"has no attribute 'mkdir'"` - update the error message accordingly.
+When implementing a new method, just run the tests. Any tests that now pass will be reported as "unexpected successes" - remove those from `EXPECTED_FAILURES`.
 
 ### Adding New Methods Checklist
 1. `snakepath.h`: Add declaration and implementation
@@ -53,7 +54,9 @@ Example: `test_mkdir` was expected to fail with `"has no attribute 'exists'"` be
 ### Git Workflow
 - Create feature branches for changes
 - CI requires a PR to run (doesn't trigger on branch push alone)
-- Use `gh` CLI to monitor CI: `gh run list`, `gh run view <id>`
+- Use `gh` CLI to monitor CI: `gh pr checks --watch`, `gh run view <id> --log-failed`
+- When grepping CI logs, always use `-C10` or more for context (e.g., `grep -C10 "error:"`)
+- Expected failures must only be for **unimplemented functionality**, never for bugs
 
 ### CI Output Preferences
 - Keep "Starting build/test" log messages in nob - they help track parallel job progress

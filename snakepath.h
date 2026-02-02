@@ -198,6 +198,24 @@ bool sp_is_file(const SpPath *p);
 bool sp_is_dir(const SpPath *p);
 bool sp_exists(const SpPath *p);
 
+/* Stat result structure - mirrors Python's os.stat_result */
+/* Note: field names use sp_ prefix to avoid macro conflicts with system headers */
+typedef struct {
+    unsigned int sp_mode;      /* File type and permissions */
+    unsigned long long sp_ino; /* Inode number */
+    unsigned long long sp_dev; /* Device ID */
+    unsigned long long sp_nlink; /* Number of hard links */
+    unsigned int sp_uid;       /* User ID of owner */
+    unsigned int sp_gid;       /* Group ID of owner */
+    long long sp_size;         /* Total size in bytes */
+    double sp_atime;           /* Time of last access */
+    double sp_mtime;           /* Time of last modification */
+    double sp_ctime;           /* Time of last status change (Unix) / creation (Windows) */
+    bool valid;                /* True if stat succeeded */
+} SpStatResult;
+
+SpStatResult sp_stat(const SpPath *p);
+
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
 static inline int sp_path_error_code(const SpPath *p) {
@@ -1509,6 +1527,94 @@ bool sp_exists(const SpPath *p) {
     struct stat st;
     return stat(path_str, &st) == 0;
 #endif
+}
+
+SpStatResult sp_stat(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpStatResult result = SP_PRIV_ZERO;
+    result.valid = false;
+
+    /* Check for embedded null bytes - such paths can't exist */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return result;
+    }
+
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* Use pure Windows APIs to match Python's os.stat() behavior */
+    HANDLE hFile = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(hFile, &info)) {
+        CloseHandle(hFile);
+        return result;
+    }
+
+    /* Try GetFileInformationByHandleEx for 64-bit volume serial (Windows 8+, like Python) */
+    typedef struct { ULONGLONG VolumeSerialNumber; BYTE FileId[16]; } SP_FILE_ID_INFO;
+    SP_FILE_ID_INFO fii;
+    /* FileIdInfo = 18; cast for C++ compatibility */
+    if (GetFileInformationByHandleEx(hFile, SP_PRIV_CAST(FILE_INFO_BY_HANDLE_CLASS, 18), &fii, sizeof(fii))) {
+        result.sp_dev = fii.VolumeSerialNumber;
+        /* Use 128-bit file ID, take lower 64 bits like Python */
+        memcpy(&result.sp_ino, fii.FileId, sizeof(result.sp_ino));
+    } else {
+        /* Fallback to 32-bit values */
+        result.sp_dev = SP_PRIV_CAST(unsigned long long, info.dwVolumeSerialNumber);
+        result.sp_ino = (SP_PRIV_CAST(unsigned long long, info.nFileIndexHigh) << 32) |
+                        SP_PRIV_CAST(unsigned long long, info.nFileIndexLow);
+    }
+    CloseHandle(hFile);
+
+    result.sp_nlink = SP_PRIV_CAST(unsigned long long, info.nNumberOfLinks);
+
+    /* Mode: derive from attributes */
+    result.sp_mode = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+        result.sp_mode &= ~0222;
+    }
+
+    /* Size */
+    result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) |
+                     SP_PRIV_CAST(long long, info.nFileSizeLow);
+
+    /* Times: convert FILETIME to Unix timestamp */
+    #define SP_FILETIME_TO_UNIX(ft) \
+        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+    result.sp_atime = SP_FILETIME_TO_UNIX(info.ftLastAccessTime);
+    result.sp_mtime = SP_FILETIME_TO_UNIX(info.ftLastWriteTime);
+    result.sp_ctime = SP_FILETIME_TO_UNIX(info.ftCreationTime);
+    #undef SP_FILETIME_TO_UNIX
+
+    result.sp_uid = 0;
+    result.sp_gid = 0;
+#else
+    struct stat st;
+    if (stat(path_str, &st) != 0) {
+        return result;
+    }
+
+    result.sp_mode = SP_PRIV_CAST(unsigned int, st.st_mode);
+    result.sp_ino = SP_PRIV_CAST(unsigned long long, st.st_ino);
+    result.sp_dev = SP_PRIV_CAST(unsigned long long, st.st_dev);
+    result.sp_nlink = SP_PRIV_CAST(unsigned long long, st.st_nlink);
+    result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
+    result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
+    result.sp_size = SP_PRIV_CAST(long long, st.st_size);
+
+    /* Use standard time_t fields for C99 compatibility (second resolution) */
+    result.sp_atime = SP_PRIV_CAST(double, st.st_atime);
+    result.sp_mtime = SP_PRIV_CAST(double, st.st_mtime);
+    result.sp_ctime = SP_PRIV_CAST(double, st.st_ctime);
+#endif
+
+    result.valid = true;
+    return result;
 }
 
 /* ============ Fluent API Implementation ============ */

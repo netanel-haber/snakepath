@@ -72,6 +72,43 @@ class _SpParentsIter(Structure):
     ]
 
 
+class _SpStatResult(Structure):
+    """C SpStatResult structure - mirrors Python's os.stat_result"""
+    _fields_ = [
+        ("st_mode", ctypes.c_uint),
+        ("st_ino", ctypes.c_ulonglong),
+        ("st_dev", ctypes.c_ulonglong),
+        ("st_nlink", ctypes.c_ulonglong),
+        ("st_uid", ctypes.c_uint),
+        ("st_gid", ctypes.c_uint),
+        ("st_size", ctypes.c_longlong),
+        ("st_atime", ctypes.c_double),
+        ("st_mtime", ctypes.c_double),
+        ("st_ctime", ctypes.c_double),
+        ("valid", ctypes.c_bool),
+    ]
+
+    def __eq__(self, other):
+        if isinstance(other, _SpStatResult):
+            return (self.st_mode == other.st_mode and self.st_ino == other.st_ino and
+                    self.st_dev == other.st_dev and self.st_nlink == other.st_nlink and
+                    self.st_uid == other.st_uid and self.st_gid == other.st_gid and
+                    self.st_size == other.st_size)
+        # Support comparison with os.stat_result
+        if hasattr(other, 'st_mode'):
+            return (self.st_mode == other.st_mode and self.st_ino == other.st_ino and
+                    self.st_dev == other.st_dev and self.st_nlink == other.st_nlink and
+                    self.st_uid == other.st_uid and self.st_gid == other.st_gid and
+                    self.st_size == other.st_size)
+        return NotImplemented
+
+    def __repr__(self):
+        return (f"os.stat_result(st_mode={self.st_mode}, st_ino={self.st_ino}, "
+                f"st_dev={self.st_dev}, st_nlink={self.st_nlink}, st_uid={self.st_uid}, "
+                f"st_gid={self.st_gid}, st_size={self.st_size}, "
+                f"st_atime={self.st_atime}, st_mtime={self.st_mtime}, st_ctime={self.st_ctime})")
+
+
 # Function signatures
 _lib.sp_path_new_wrap.argtypes = [c_char_p, c_int, POINTER(_SpPath)]
 _lib.sp_path_new_wrap.restype = None
@@ -201,6 +238,9 @@ _lib.sp_is_dir_wrap.restype = c_int
 
 _lib.sp_exists_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_exists_wrap.restype = c_int
+
+_lib.sp_stat_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpStatResult)]
+_lib.sp_stat_wrap.restype = None
 
 _lib.sp_path_is_error_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_path_is_error_wrap.restype = c_int
@@ -676,6 +716,15 @@ class Path(PurePath):
     def exists(self):
         """Return True if the path exists."""
         return bool(_lib.sp_exists_wrap(byref(self._sp)))
+
+    def stat(self, *, follow_symlinks=True):
+        """Return stat info for the path."""
+        # Note: follow_symlinks is accepted for API compatibility but not fully implemented
+        result = _SpStatResult()
+        _lib.sp_stat_wrap(byref(self._sp), byref(result))
+        if not result.valid:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return result
 
 
 class PosixPath(Path, PurePosixPath):
