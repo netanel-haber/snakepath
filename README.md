@@ -1,7 +1,9 @@
 Snakepath:
-C99 STB-style header-only based on [python's pathlib library](https://docs.python.org/3/library/pathlib.html), because I love pathlib. 
-POSIX + Windows. No malloc. 
+C99 STB-style header-only based on [python's pathlib library](https://docs.python.org/3/library/pathlib.html), because I love pathlib.
+POSIX + Windows. No malloc.
 Vibe-coded with Claude Code + Cursor.
+
+The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
 
 ```c
 u=https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &&
