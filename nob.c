@@ -129,8 +129,9 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #ifdef _WIN32
     if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
         nob_cmd_append(&cmd, "/Od", "/Zi");
-        /* Use /Fd to give each build its own PDB file for parallel compilation */
+        /* Use /Fd and /Fo to give each build its own PDB and OBJ file for parallel compilation */
         nob_cmd_append(&cmd, nob_temp_sprintf("/Fd:%.*s.pdb", (int)(strlen(cfg.output) - 4), cfg.output));
+        nob_cmd_append(&cmd, nob_temp_sprintf("/Fo%.*s.obj", (int)(strlen(cfg.output) - 4), cfg.output));
         nob_cmd_append(&cmd, "/Fe:", cfg.output);
     } else
 #endif
@@ -182,9 +183,11 @@ static bool run_valgrind(const char *exe) {
 static const char *all_artifacts[] = {
 #ifdef _WIN32
     "tests/test_msvc.exe", "tests/test_msvc_cpp.exe", "tests/test_fluent_msvc.exe", "demo.exe",
-    /* PDB and obj files from MSVC */
+    /* PDB and obj files from MSVC (now in tests/ directory to avoid conflicts) */
     "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
     "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "demo.obj",
+    /* Legacy obj files in root (clean these up too) */
+    "test.obj", "test_fluent_api.obj",
     "tests/python_harness/snakepath.dll",
 #else
     "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",

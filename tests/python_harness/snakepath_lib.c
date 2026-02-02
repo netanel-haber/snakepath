@@ -1,5 +1,6 @@
 /* snakepath_lib.c - Shared library wrapper for Python bindings */
 
+#define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for cross-platform compatibility */
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 
@@ -48,6 +49,11 @@ WRAP_PATH_CSTR(with_stem)
 WRAP_PATH_CSTR(with_suffix)
 WRAP_PATH_CSTR(join_one)
 
+SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, SpPath *out) {
+    SpStr sv = {s, len};
+    *out = sp_join_sv(p, sv);
+}
+
 /* Path + Path -> Path */
 WRAP_PATH_PATH(joinpath)
 WRAP_PATH_PATH(relative_to)
@@ -86,7 +92,9 @@ SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_pat
 SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
 SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern) { return sp_match(p, pattern); }
 SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_sensitive) { return sp_match_ex(p, pattern, case_sensitive); }
-SP_EXPORT int sp_is_reserved_wrap(const SpPath *p) { return sp_is_reserved(p) ? 1 : 0; }
+WRAP_BOOL_UNARY(is_reserved)
+WRAP_BOOL_UNARY(is_file)
+WRAP_BOOL_UNARY(is_dir)
 SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
 SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
 
@@ -94,6 +102,11 @@ SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_co
 
 SP_EXPORT void sp_path_new_wrap(const char *s, int flavor, SpPath *out) {
     *out = sp_path_new(s, (SpPathOpts){(SpFlavor)flavor});
+}
+
+SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
+    SpStr sv = {s, len};
+    *out = sp_path_from_sv(sv, (SpFlavor)flavor);
 }
 
 SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {

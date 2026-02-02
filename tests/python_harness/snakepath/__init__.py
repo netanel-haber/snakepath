@@ -76,6 +76,9 @@ class _SpParentsIter(Structure):
 _lib.sp_path_new_wrap.argtypes = [c_char_p, c_int, POINTER(_SpPath)]
 _lib.sp_path_new_wrap.restype = None
 
+_lib.sp_path_new_len_wrap.argtypes = [POINTER(ctypes.c_char), c_size_t, c_int, POINTER(_SpPath)]
+_lib.sp_path_new_len_wrap.restype = None
+
 _lib.sp_path_convert_wrap.argtypes = [c_char_p, c_int, c_int, POINTER(_SpPath)]
 _lib.sp_path_convert_wrap.restype = None
 
@@ -126,6 +129,9 @@ _lib.sp_parents_iter_next_wrap.restype = c_int
 
 _lib.sp_join_one_wrap.argtypes = [POINTER(_SpPath), c_char_p, POINTER(_SpPath)]
 _lib.sp_join_one_wrap.restype = None
+
+_lib.sp_join_one_len_wrap.argtypes = [POINTER(_SpPath), POINTER(ctypes.c_char), c_size_t, POINTER(_SpPath)]
+_lib.sp_join_one_len_wrap.restype = None
 
 _lib.sp_joinpath_wrap.argtypes = [POINTER(_SpPath), POINTER(_SpPath), POINTER(_SpPath)]
 _lib.sp_joinpath_wrap.restype = None
@@ -187,6 +193,12 @@ _lib.sp_match_ex_wrap.restype = c_int
 _lib.sp_is_reserved_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_is_reserved_wrap.restype = c_int
 
+_lib.sp_is_file_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_file_wrap.restype = c_int
+
+_lib.sp_is_dir_wrap.argtypes = [POINTER(_SpPath)]
+_lib.sp_is_dir_wrap.restype = c_int
+
 _lib.sp_path_is_error_wrap.argtypes = [POINTER(_SpPath)]
 _lib.sp_path_is_error_wrap.restype = c_int
 
@@ -204,7 +216,16 @@ def _encode(s):
             "argument should be a str or an os.PathLike object "
             "where __fspath__ returns a str, not 'bytes'"
         )
-    return s.encode('utf-8') if s else b''
+    # Use surrogatepass to handle isolated surrogate characters in paths
+    # This allows paths with invalid Unicode to pass through to C,
+    # where filesystem operations will fail gracefully
+    return s.encode('utf-8', errors='surrogatepass') if s else b''
+
+
+def _encode_buf(s):
+    """Encode string to a ctypes buffer that preserves embedded nulls"""
+    encoded = _encode(s) if isinstance(s, str) else (s if s else b'')
+    return create_string_buffer(encoded, len(encoded))
 
 
 def _decode(b):
@@ -293,8 +314,8 @@ class PurePath:
                 )
 
         if not args:
-            path_str = b''
-            _lib.sp_path_new_wrap(path_str, self._flavor, byref(self._sp))
+            path_buf = _encode_buf(b'')
+            _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
         elif len(args) == 1:
             arg = args[0]
             if isinstance(arg, PurePath):
@@ -310,8 +331,8 @@ class PurePath:
                 path_str = _encode(str(arg))
                 _lib.sp_path_convert_wrap(path_str, src_flavor, self._flavor, byref(self._sp))
             else:
-                path_str = _encode(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
-                _lib.sp_path_new_wrap(path_str, self._flavor, byref(self._sp))
+                path_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
+                _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
         else:
             # Join multiple args using C library's join (handles absolute paths correctly)
             first = args[0]
@@ -326,7 +347,8 @@ class PurePath:
                     _lib.sp_path_convert_wrap(_encode(str(first)), src_flavor, self._flavor, byref(self._sp))
                 else:
                     first_str = os.fspath(first) if hasattr(os, 'fspath') else str(first)
-                    _lib.sp_path_new_wrap(_encode(first_str), self._flavor, byref(self._sp))
+                    first_buf = _encode_buf(first_str)
+                    _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
             for arg in args[1:]:
                 if isinstance(arg, PurePath):
                     if arg._flavor == self._flavor:
@@ -345,7 +367,8 @@ class PurePath:
                         _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
                     else:
                         arg_str = os.fspath(arg) if hasattr(os, 'fspath') else str(arg)
-                        _lib.sp_join_one_wrap(byref(self._sp), _encode(arg_str), byref(self._sp))
+                        arg_buf = _encode_buf(arg_str)
+                        _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
 
     def __str__(self):
         return _decode(_lib.sp_str_wrap(byref(self._sp)))
@@ -528,7 +551,8 @@ class PurePath:
                 _lib.sp_joinpath_wrap(byref(result._sp), byref(other._sp), byref(result._sp))
             else:
                 other_str = os.fspath(other) if hasattr(os, 'fspath') else str(other)
-                _lib.sp_join_one_wrap(byref(result._sp), _encode(other_str), byref(result._sp))
+                other_buf = _encode_buf(other_str)
+                _lib.sp_join_one_len_wrap(byref(result._sp), other_buf, len(other_buf.raw), byref(result._sp))
 
         return result
 
@@ -637,6 +661,14 @@ class Path(PurePath):
         result._sp = _SpPath()
         _lib.sp_absolute_wrap(byref(self._sp), byref(result._sp))
         return result
+
+    def is_file(self):
+        """Return True if the path points to a regular file."""
+        return bool(_lib.sp_is_file_wrap(byref(self._sp)))
+
+    def is_dir(self):
+        """Return True if the path points to a directory."""
+        return bool(_lib.sp_is_dir_wrap(byref(self._sp)))
 
 
 class PosixPath(Path, PurePosixPath):

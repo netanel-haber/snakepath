@@ -1,3 +1,4 @@
+#define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for cross-platform compatibility */
 #define SNAKEPATH_FLUENT
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"

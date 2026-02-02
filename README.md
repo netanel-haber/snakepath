@@ -77,6 +77,7 @@ while (sp_parents_next(&pit, &par)) { /* use par */ }
 
 ```c
 SpPath joined = sp_join_one(&p, "subdir");
+SpPath joined = sp_join_sv(&p, sv);          // Join with SpStr (preserves embedded nulls)
 SpPath joined = sp_join(&p, "a", "b", "c");  // C only (variadic)
 SpPath joined = sp_joinpath(&p, &other);
 ```
@@ -140,6 +141,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
+| `->is_file()` `->is_dir()` | `bool` |
 
 ## Core Types
 
@@ -243,8 +245,36 @@ Use `sp_suffix()` if you only want the final extension (`.gz`).
 | `.absolute()` | `sp_absolute()` | `.absolute()` |
 | `.as_uri()` | `sp_as_uri()` | - |
 | `Path.cwd()` | `sp_cwd()` | - |
+| `.is_file()` | `sp_is_file()` | `.is_file()` |
+| `.is_dir()` | `sp_is_dir()` | `.is_dir()` |
 
 **Not implemented:** Most I/O methods (`stat`, `exists`, `mkdir`, `read_*`, `write_*`, `glob`, etc.)
+
+## Adding New Methods to the Library
+
+When adding a new method, you need to update multiple files. The library provides wrapper macros in `tests/python_harness/snakepath_lib.c` to simplify Python bindings.
+
+### Wrapper Macros
+
+| Macro | Signature | Use For |
+|-------|-----------|---------|
+| `WRAP_STR(fn)` | `Path → SpStr` | String view getters (name, stem, suffix, etc.) |
+| `WRAP_PATH_UNARY(fn)` | `Path → Path` | Unary path transforms (parent, absolute) |
+| `WRAP_PATH_CSTR(fn)` | `Path + cstr → Path` | Methods taking a string arg (with_name, join_one) |
+| `WRAP_PATH_PATH(fn)` | `Path + Path → Path` | Methods taking another path (joinpath, relative_to) |
+| `WRAP_BOOL_UNARY(fn)` | `Path → bool` | Boolean queries (is_absolute, is_file) |
+| `WRAP_BOOL_BINARY(fn)` | `Path + Path → bool` | Binary predicates (path_eq, is_relative_to) |
+
+### Checklist for New Methods
+
+1. **`snakepath.h`**: Add function declaration and implementation
+2. **`snakepath.h` (fluent)**: Add to struct and X-macro lists if fluent API needed
+3. **`tests/test.c`**: Add boring API tests
+4. **`tests/test_fluent_api.c`**: Add fluent API tests (if applicable)
+5. **`snakepath_lib.c`**: Add wrapper using appropriate macro
+6. **`snakepath/__init__.py`**: Add ctypes signature and Python method
+7. **`run_cpython_tests.py`**: Remove method from `EXPECTED_FAILURES` if previously listed
+8. **`README.md`**: Update Pathlib Mapping table
 </details>
 
 <details>
