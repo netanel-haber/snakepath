@@ -5,6 +5,12 @@ Downloads test file from CPython's test directory.
 """
 
 import sys
+
+# Fix Windows console encoding (Turkish İ etc can't print on cp1252)
+if sys.platform == 'win32' and sys.stdout.encoding != 'utf-8':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 import unittest
 import urllib.request
 from pathlib import Path
