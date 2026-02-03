@@ -76,10 +76,14 @@ static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), Join
 
 int main(void) {
     /* Initialize unique test directory names based on PID to avoid race conditions */
-    int pid = (int)sp_getpid();
-    snprintf(test_dir_mkdir_temp, sizeof(test_dir_mkdir_temp), "./test_mkdir_temp_%d", pid);
-    snprintf(test_dir_mkdir_nested, sizeof(test_dir_mkdir_nested), "./test_mkdir_nested_%d", pid);
-    snprintf(test_dir_glob, sizeof(test_dir_glob), "./test_glob_dir_%d", pid);
+#ifdef __cplusplus
+    long pid = static_cast<long>(sp_getpid());
+#else
+    long pid = (long)sp_getpid();
+#endif
+    snprintf(test_dir_mkdir_temp, sizeof(test_dir_mkdir_temp), "./test_mkdir_temp_%ld", pid);
+    snprintf(test_dir_mkdir_nested, sizeof(test_dir_mkdir_nested), "./test_mkdir_nested_%ld", pid);
+    snprintf(test_dir_glob, sizeof(test_dir_glob), "./test_glob_dir_%ld", pid);
 
     printf("POSIX Tests:\n");
     
