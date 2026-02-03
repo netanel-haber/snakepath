@@ -1,4 +1,7 @@
 /* test.c - Rigorous pathlib tests for snakepath.h */
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
+#endif
 #define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for CI compatibility */
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
