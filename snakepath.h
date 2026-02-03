@@ -9,6 +9,7 @@
 #ifndef SNAKEPATH_H
 #define SNAKEPATH_H
 
+#define _POSIX_C_SOURCE 200112L /* For realpath() - TODO: replace this later
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
