@@ -34,12 +34,15 @@ python run_cpython_tests.py
 ```
 
 ### Python Tests: EXPECTED_FAILURES
-`EXPECTED_FAILURES` is a simple set of `(class_name, test_name)` tuples. The test runner reports:
-- **Expected failure that fails** → OK (prints `x`)
-- **Expected failure that passes** → FAIL as "unexpected success" (prints `u`, tells you to remove it)
-- **Unexpected failure** → FAIL (normal test failure)
+`EXPECTED_FAILURES` is a dict mapping `(class_name, test_name)` to an expected error substring. The test runner:
+- Verifies each failure contains the expected error message (reason verification)
+- Reports "unexpected success" if an expected failure passes
+- Reports "wrong reason" if a test fails but with a different error message
 
-When implementing a new method, just run the tests. Any tests that now pass will be reported as "unexpected successes" - remove those from `EXPECTED_FAILURES`.
+**When implementing new I/O methods** (like `stat()`), cascading updates are needed:
+- Tests that previously failed with `"has no attribute 'stat'"` will now fail for different reasons
+- Example: `test_group` changes from `"has no attribute 'stat'"` to `"has no attribute 'group'"`
+- Run tests locally and update each entry's expected error message accordingly
 
 ### Adding New Methods Checklist
 1. `snakepath.h`: Add declaration and implementation
@@ -67,8 +70,16 @@ When implementing a new method, just run the tests. Any tests that now pass will
 ### Known Issues
 - Windows CI has race condition with parallel MSVC builds (pre-existing)
 - Clang `-Wnrvo` warning in `sp_path_convert` (pre-existing)
+- Windows console encoding: Turkish İ (U+0130) can't print on cp1252, fixed with UTF-8 wrapper in run_cpython_tests.py
 
 ## Technical Details
+
+### Parent Iteration
+Parent iteration (`sp_parents_begin/next`, `sp_parents_count`) terminates at the path's anchor:
+- Absolute paths terminate at `/` (root has 0 parents)
+- Relative paths terminate at `.` (current dir has 0 parents)
+- `/a/b/c/d` has 4 parents: `/a/b/c`, `/a/b`, `/a`, `/`
+- `a/b/c` has 3 parents: `a/b`, `a`, `.`
 
 ### Embedded Null Handling
 Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
@@ -81,6 +92,12 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 - `snakepath/__init__.py`: ctypes bindings, handles Unicode encoding
 - Use `create_string_buffer()` + explicit length for embedded nulls
 - Use `surrogatepass` encoding for invalid Unicode in paths
+
+### stat() Implementation
+- `sp_stat()` follows symlinks (like Python's `Path.stat()` with default `follow_symlinks=True`)
+- `sp_lstat()` (no symlink following) is not yet implemented
+- Python binding asserts `follow_symlinks=True` and raises AssertionError otherwise
+- `sp_stat_eq()` compares two stat results (mode, ino, dev, nlink, uid, gid, size)
 
 ### API Patterns
 | Pattern | C string | String view | SpPath |
