@@ -54,7 +54,14 @@ typedef struct {
     bool sanitizers;
     const char *name;
     const char *output;
+    const char *source;       /* NULL for test configs that share source */
+    const char *extra_define; /* Optional extra define */
 } BuildConfig;
+
+/* Helper for running commands with optional async */
+static bool nob_cmd_run_maybe_async(Nob_Cmd *cmd, Nob_Procs *procs) {
+    return procs ? nob_cmd_run(cmd, .async = procs) : nob_cmd_run(cmd);
+}
 
 static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     switch (compiler) {
@@ -145,26 +152,13 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
     }
 
     nob_cmd_append(&cmd, source);
-
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run_maybe_async(&cmd, procs);
 }
 
 static bool run_test_async(const char *exe, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, exe);
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run_maybe_async(&cmd, procs);
 }
 
 #ifndef _WIN32
@@ -223,14 +217,7 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
     nob_cmd_append(&cmd, "-o", "tests/python_harness/libsnakepath.so");
     nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
 #endif
-
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run_maybe_async(&cmd, procs);
 }
 
 /* Run Python tests */
@@ -255,6 +242,22 @@ static bool run_python_tests(void) {
 
     nob_cmd_append(&cmd, python, "tests/python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
+}
+
+/* Build all configs with given source file */
+static void build_configs(BuildConfig *configs, size_t count, const char *source, Nob_Procs *procs) {
+    for (size_t i = 0; i < count; i++) {
+        nob_log(NOB_INFO, "  Starting build: %s", configs[i].name);
+        build_source_async(configs[i], source, configs[i].extra_define, procs);
+    }
+}
+
+/* Run all test executables from configs */
+static void run_configs(BuildConfig *configs, size_t count, Nob_Procs *procs) {
+    for (size_t i = 0; i < count; i++) {
+        nob_log(NOB_INFO, "  Starting test: %s", configs[i].name);
+        run_test_async(configs[i].output, procs);
+    }
 }
 
 static bool clean_artifacts(void) {
@@ -344,17 +347,8 @@ int main(int argc, char **argv) {
 
     /* Phase 1: Build everything in parallel */
     nob_log(NOB_INFO, "=== Building all targets ===");
-
-    for (size_t i = 0; i < test_count; i++) {
-        nob_log(NOB_INFO, "  Starting build: %s", test_configs[i].name);
-        build_source_async(test_configs[i], "tests/test.c", NULL, &procs);
-    }
-
-    for (size_t i = 0; i < fluent_count; i++) {
-        nob_log(NOB_INFO, "  Starting build: %s", fluent_configs[i].name);
-        build_source_async(fluent_configs[i], "tests/test_fluent_api.c", NULL, &procs);
-    }
-
+    build_configs(test_configs, test_count, "tests/test.c", &procs);
+    build_configs(fluent_configs, fluent_count, "tests/test_fluent_api.c", &procs);
     nob_log(NOB_INFO, "  Starting build: %s", demo_config.name);
     build_source_async(demo_config, "demo.c", NULL, &procs);
 
@@ -377,16 +371,8 @@ int main(int argc, char **argv) {
 
     /* Phase 2: Run all tests in parallel */
     nob_log(NOB_INFO, "=== Running all tests ===");
-
-    for (size_t i = 0; i < test_count; i++) {
-        nob_log(NOB_INFO, "  Starting test: %s", test_configs[i].name);
-        run_test_async(test_configs[i].output, &procs);
-    }
-
-    for (size_t i = 0; i < fluent_count; i++) {
-        nob_log(NOB_INFO, "  Starting test: %s", fluent_configs[i].name);
-        run_test_async(fluent_configs[i].output, &procs);
-    }
+    run_configs(test_configs, test_count, &procs);
+    run_configs(fluent_configs, fluent_count, &procs);
 
     if (!nob_procs_wait(procs)) {
         nob_log(NOB_ERROR, "Some tests failed");

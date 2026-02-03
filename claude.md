@@ -104,3 +104,66 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 |---------|----------|-------------|--------|
 | Create | `sp_path_new()` | `sp_path_from_sv()` | `sp_path_copy()` |
 | Join | `sp_join_one()` | `sp_join_sv()` | `sp_joinpath()` |
+
+## Chore Spec: Code Compression Guidelines
+
+When performing code cleanup/compression, follow these rules:
+
+### What Counts as Semantic Compression
+**DO**:
+- Extract duplicate logic into shared helper functions (e.g., `sp_priv_has_embedded_null()` used by 5 functions)
+- Consolidate similar code paths (e.g., table-driven tests instead of repetitive individual tests)
+- Remove truly redundant code paths that do the same thing
+- Unify repeated patterns with helper functions or macros
+
+**Examples of real semantic compression**:
+```c
+// BEFORE: duplicate null-check in 5 functions
+bool sp_is_file(const SpPath *p) {
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    // ...
+}
+
+// AFTER: extracted to shared helper
+static inline bool sp_priv_has_embedded_null(const SpPath *p) {
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return true;
+    }
+    return false;
+}
+bool sp_is_file(const SpPath *p) {
+    if (sp_priv_has_embedded_null(p)) return false;
+    // ...
+}
+```
+
+### What Does NOT Count as Semantic Compression
+**DO NOT**:
+- Remove whitespace or newlines to reduce line count
+- Remove braces from single-line if statements
+- Convert if/else to ternary operators
+- Collapse multiple statements onto single lines
+- Use boolean logic tricks to reduce visual lines
+- Remove comments to save lines
+- Any formatting change that doesn't reduce actual code logic
+
+**Examples of what NOT to do**:
+```c
+// BAD: collapsing lines is not semantic compression
+if (x) return true; else return false;  // was 4 lines
+
+// BAD: ternary for complex logic
+return cond1 ? (cond2 ? a : b) : (cond3 ? c : d);
+
+// BAD: removing braces
+if (x) y();  // was { y(); }
+```
+
+### Verification
+After compression:
+1. All existing tests must pass
+2. No functionality should change
+3. Code should remain readable and maintainable
+4. Platform-specific code (#ifdef blocks) should NOT be unified if the implementations differ meaningfully

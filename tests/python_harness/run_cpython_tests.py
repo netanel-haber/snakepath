@@ -615,63 +615,42 @@ class QuietExpectedFailuresResult(unittest.TextTestResult):
 
     def _is_expected(self, test, err):
         """Check if this failure/error is expected."""
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
+        key = (test.__class__.__name__, test._testMethodName)
         if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            # Format the error to check against expected message
-            err_str = self._exc_info_to_string(err, test)
-            return expected_msg in err_str
+            return _EXPECTED_FAILURES_BY_TEST[key] in self._exc_info_to_string(err, test)
         return False
 
-    def addError(self, test, err):
-        """Called when a test raises an unexpected exception."""
+    def _handle_expected(self, test, err, storage, label, parent_method):
+        """Handle an error/failure, checking if it's expected."""
         if self._is_expected(test, err):
-            # Silently record as expected
-            self.errors.append((test, self._exc_info_to_string(err, test)))
+            storage.append((test, self._exc_info_to_string(err, test)))
             if self.showAll:
-                self.stream.writeln("expected error")
+                self.stream.writeln(f"expected {label}")
             elif self.dots:
                 self.stream.write('x')
                 self.stream.flush()
         else:
-            super().addError(test, err)
+            parent_method(test, err)
+
+    def addError(self, test, err):
+        self._handle_expected(test, err, self.errors, "error", super().addError)
 
     def addFailure(self, test, err):
-        """Called when a test fails."""
-        if self._is_expected(test, err):
-            # Silently record as expected
-            self.failures.append((test, self._exc_info_to_string(err, test)))
-            if self.showAll:
-                self.stream.writeln("expected failure")
-            elif self.dots:
-                self.stream.write('x')
-                self.stream.flush()
-        else:
-            super().addFailure(test, err)
+        self._handle_expected(test, err, self.failures, "failure", super().addFailure)
+
+    def _filter_unexpected(self, items):
+        """Filter to only unexpected items."""
+        unexpected = []
+        for test, err in items:
+            key = (test.__class__.__name__, test._testMethodName)
+            if key not in _EXPECTED_FAILURES_BY_TEST or _EXPECTED_FAILURES_BY_TEST[key] not in err:
+                unexpected.append((test, err))
+        return unexpected
 
     def printErrors(self):
         """Only print unexpected errors."""
-        unexpected_errors = []
-        unexpected_failures = []
-
-        for test, err in self.errors:
-            test_class = test.__class__.__name__
-            test_method = test._testMethodName
-            key = (test_class, test_method)
-            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
-                continue
-            unexpected_errors.append((test, err))
-
-        for test, err in self.failures:
-            test_class = test.__class__.__name__
-            test_method = test._testMethodName
-            key = (test_class, test_method)
-            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
-                continue
-            unexpected_failures.append((test, err))
-
+        unexpected_errors = self._filter_unexpected(self.errors)
+        unexpected_failures = self._filter_unexpected(self.failures)
         if unexpected_errors or unexpected_failures:
             self.stream.writeln()
             self.printErrorList('ERROR', unexpected_errors)
@@ -730,30 +709,19 @@ def run_tests():
 
     # Check expected failures, grouped by reason
     expected_by_reason = {}  # reason -> list of test names
-    unexpected_failures = []
-    unexpected_errors = []
+    unexpected = {'failures': [], 'errors': []}
 
-    for test, traceback in result.failures:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
-        if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            if expected_msg in traceback:
-                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
-                continue
-        unexpected_failures.append((test, traceback))
+    def process_results(items, category):
+        for test, traceback in items:
+            test_class, test_method = test.__class__.__name__, test._testMethodName
+            key = (test_class, test_method)
+            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in traceback:
+                expected_by_reason.setdefault(_EXPECTED_FAILURES_BY_TEST[key], []).append(f"{test_class}.{test_method}")
+            else:
+                unexpected[category].append((test, traceback))
 
-    for test, traceback in result.errors:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
-        if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            if expected_msg in traceback:
-                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
-                continue
-        unexpected_errors.append((test, traceback))
+    process_results(result.failures, 'failures')
+    process_results(result.errors, 'errors')
 
     # Check for unexpected successes (tests in EXPECTED_FAILURES that passed)
     failed_keys = set()
@@ -787,18 +755,16 @@ def run_tests():
         for test_name in sorted(unexpected_successes):
             print(f"  {test_name}")
 
-    if not unexpected_failures and not unexpected_errors and not unexpected_successes:
+    if not unexpected['failures'] and not unexpected['errors'] and not unexpected_successes:
         print("\nSUCCESS")
         return_code = 0
     else:
-        if unexpected_failures or unexpected_errors:
-            print(f"\nUNEXPECTED: {len(unexpected_failures)} failures, {len(unexpected_errors)} errors")
-            for test, tb in unexpected_failures:
-                print(f"  FAIL: {test}")
-                print(tb)
-            for test, tb in unexpected_errors:
-                print(f"  ERROR: {test}")
-                print(tb)
+        if unexpected['failures'] or unexpected['errors']:
+            print(f"\nUNEXPECTED: {len(unexpected['failures'])} failures, {len(unexpected['errors'])} errors")
+            for label, items in [('FAIL', unexpected['failures']), ('ERROR', unexpected['errors'])]:
+                for test, tb in items:
+                    print(f"  {label}: {test}")
+                    print(tb)
         return_code = 1
 
     return return_code

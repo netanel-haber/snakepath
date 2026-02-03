@@ -232,6 +232,21 @@ def _get_pathlib_flavor(obj):
     return None
 
 
+def _path_to_sp(arg, dest_flavor, out_sp):
+    """Convert any path-like to SpPath, handling flavor conversion"""
+    if isinstance(arg, PurePath):
+        if arg._flavor == dest_flavor:
+            _lib.sp_path_copy_wrap(byref(arg._sp), byref(out_sp))
+        else:
+            _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, dest_flavor, byref(out_sp))
+        return True
+    src_flavor = _get_pathlib_flavor(arg)
+    if src_flavor is not None:
+        _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, dest_flavor, byref(out_sp))
+        return True
+    return False  # Caller must handle as raw string
+
+
 # ============ PathParents ============
 
 class _PathParents:
@@ -310,16 +325,7 @@ class PurePath:
             _lib.sp_path_new_len_wrap(_encode_buf(b''), 0, self._flavor, byref(self._sp))
         elif len(args) == 1:
             arg = args[0]
-            if isinstance(arg, PurePath):
-                if arg._flavor == self._flavor:
-                    _lib.sp_path_copy_wrap(byref(arg._sp), byref(self._sp))
-                else:
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(self._sp))
-                return
-            src_flavor = _get_pathlib_flavor(arg)
-            if src_flavor is not None:
-                _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(self._sp))
-            else:
+            if not _path_to_sp(arg, self._flavor, self._sp):
                 path_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
                 _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
         else:
@@ -328,36 +334,17 @@ class PurePath:
     def _init_multi(self, args):
         """Initialize from multiple path segments"""
         first = args[0]
-        if isinstance(first, PurePath):
-            if first._flavor == self._flavor:
-                _lib.sp_path_copy_wrap(byref(first._sp), byref(self._sp))
-            else:
-                _lib.sp_path_convert_wrap(_encode(str(first)), first._flavor, self._flavor, byref(self._sp))
-        else:
-            src_flavor = _get_pathlib_flavor(first)
-            if src_flavor is not None:
-                _lib.sp_path_convert_wrap(_encode(str(first)), src_flavor, self._flavor, byref(self._sp))
-            else:
-                first_buf = _encode_buf(os.fspath(first) if hasattr(os, 'fspath') else str(first))
-                _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
+        if not _path_to_sp(first, self._flavor, self._sp):
+            first_buf = _encode_buf(os.fspath(first) if hasattr(os, 'fspath') else str(first))
+            _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
 
         for arg in args[1:]:
-            if isinstance(arg, PurePath):
-                if arg._flavor == self._flavor:
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(arg._sp), byref(self._sp))
-                else:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
+            tmp = _SpPath()
+            if _path_to_sp(arg, self._flavor, tmp):
+                _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
             else:
-                src_flavor = _get_pathlib_flavor(arg)
-                if src_flavor is not None:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
-                else:
-                    arg_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
-                    _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
+                arg_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
+                _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
 
     def __str__(self):
         return _decode(_lib.sp_str_wrap(byref(self._sp)))
@@ -379,21 +366,14 @@ class PurePath:
     def __hash__(self):
         return _lib.sp_path_hash_wrap(byref(self._sp))
 
-    def __lt__(self, other):
+    def _cmp(self, other, op):
         if not isinstance(other, PurePath): return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) < 0
+        return op(_lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)), 0)
 
-    def __le__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) <= 0
-
-    def __gt__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) > 0
-
-    def __ge__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
+    def __lt__(self, other): return self._cmp(other, int.__lt__)
+    def __le__(self, other): return self._cmp(other, int.__le__)
+    def __gt__(self, other): return self._cmp(other, int.__gt__)
+    def __ge__(self, other): return self._cmp(other, int.__ge__)
 
     def __truediv__(self, other):
         return self.joinpath(other)
@@ -484,8 +464,9 @@ class PurePath:
         _lib.sp_path_copy_wrap(byref(self._sp), byref(result._sp))
 
         for other in others:
-            if isinstance(other, PurePath):
-                _lib.sp_joinpath_wrap(byref(result._sp), byref(other._sp), byref(result._sp))
+            tmp = _SpPath()
+            if _path_to_sp(other, self._flavor, tmp):
+                _lib.sp_joinpath_wrap(byref(result._sp), byref(tmp), byref(result._sp))
             else:
                 other_buf = _encode_buf(os.fspath(other) if hasattr(os, 'fspath') else str(other))
                 _lib.sp_join_one_len_wrap(byref(result._sp), other_buf, len(other_buf.raw), byref(result._sp))
@@ -589,21 +570,20 @@ class Path(PurePath):
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return result
 
+    _MKDIR_ERRORS = {
+        SP_MKDIR_ERR_EXISTS: (FileExistsError, 17, "File exists"),
+        SP_MKDIR_ERR_EXISTS_NOT_DIR: (FileExistsError, 17, "File exists"),
+        SP_MKDIR_ERR_NOT_FOUND: (FileNotFoundError, 2, "No such file or directory"),
+        SP_MKDIR_ERR_NOT_DIR: (NotADirectoryError, 20, "Not a directory"),
+        SP_MKDIR_ERR_PERMISSION: (PermissionError, 13, "Permission denied"),
+    }
+
     def mkdir(self, mode=0o777, parents=False, exist_ok=False):
         result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0)
         if result == SP_MKDIR_OK:
             return
-        path_str = str(self)
-        if result == SP_MKDIR_ERR_EXISTS or result == SP_MKDIR_ERR_EXISTS_NOT_DIR:
-            raise FileExistsError(17, "File exists", path_str)
-        elif result == SP_MKDIR_ERR_NOT_FOUND:
-            raise FileNotFoundError(2, "No such file or directory", path_str)
-        elif result == SP_MKDIR_ERR_NOT_DIR:
-            raise NotADirectoryError(20, "Not a directory", path_str)
-        elif result == SP_MKDIR_ERR_PERMISSION:
-            raise PermissionError(13, "Permission denied", path_str)
-        else:
-            raise OSError(0, "Unknown error", path_str)
+        err = Path._MKDIR_ERRORS.get(result, (OSError, 0, "Unknown error"))
+        raise err[0](err[1], err[2], str(self))
 
 
 class PosixPath(Path, PurePosixPath):

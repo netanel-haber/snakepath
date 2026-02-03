@@ -374,6 +374,14 @@ static inline void sp_priv_append_cstr(SpPath *r, const char *s, size_t len) {
     }
 }
 
+/* Check for embedded null bytes - paths with embedded nulls can't exist on filesystem */
+static inline bool sp_priv_has_embedded_null(const SpPath *p) {
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return true;
+    }
+    return false;
+}
+
 static inline bool sp_priv_has_drive(const char *s, size_t len, SpFlavor flavor) {
     if (!sp_priv_is_windows_flavor(flavor)) return false;
     return len >= 2 && sp_priv_is_drive_letter(s[0]) && s[1] == ':';
@@ -1496,10 +1504,7 @@ bool sp_is_reserved(const SpPath *p) {
 
 bool sp_is_file(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    /* Check for embedded null bytes - such paths can't exist */
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return false;
-    }
+    if (sp_priv_has_embedded_null(p)) return false;
     const char *path_str = sp_str(p);
 #ifdef SP_WINDOWS
     DWORD attrs = GetFileAttributesA(path_str);
@@ -1514,10 +1519,7 @@ bool sp_is_file(const SpPath *p) {
 
 bool sp_is_dir(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    /* Check for embedded null bytes - such paths can't exist */
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return false;
-    }
+    if (sp_priv_has_embedded_null(p)) return false;
     const char *path_str = sp_str(p);
 #ifdef SP_WINDOWS
     DWORD attrs = GetFileAttributesA(path_str);
@@ -1532,10 +1534,7 @@ bool sp_is_dir(const SpPath *p) {
 
 bool sp_exists(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    /* Check for embedded null bytes - such paths can't exist */
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return false;
-    }
+    if (sp_priv_has_embedded_null(p)) return false;
     const char *path_str = sp_str(p);
 #ifdef SP_WINDOWS
     return GetFileAttributesA(path_str) != INVALID_FILE_ATTRIBUTES;
@@ -1549,12 +1548,7 @@ SpStatResult sp_stat(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpStatResult result = SP_PRIV_ZERO;
     result.valid = false;
-
-    /* Check for embedded null bytes - such paths can't exist */
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return result;
-    }
-
+    if (sp_priv_has_embedded_null(p)) return result;
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
@@ -1654,15 +1648,8 @@ size_t sp_parents_count(const SpPath *p) {
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
     SP_ASSERT_PATH_INVARIANT(p);
-
-    /* mode=0 means use default; umask applied by OS */
-    if (mode == 0) mode = SP_MKDIR_DEF_MODE;
-
-    /* Check for embedded null bytes - such paths can't be created */
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return SP_MKDIR_ERR_OTHER;
-    }
-
+    if (mode == 0) mode = SP_MKDIR_DEF_MODE;  /* mode=0 means use default; umask applied by OS */
+    if (sp_priv_has_embedded_null(p)) return SP_MKDIR_ERR_OTHER;
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
