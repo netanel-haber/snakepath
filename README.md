@@ -298,8 +298,14 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.is_socket()` | `sp_is_socket()` | `.is_socket()` |
 | `.is_mount()` | `sp_is_mount()` | `.is_mount()` |
 | `.is_junction()` | `sp_is_junction()` | `.is_junction()` |
+| `.lstat()` | `sp_lstat()` | - |
+| `.readlink()` | `sp_readlink()` | - |
+| `.resolve()` | `sp_resolve()` | - |
+| `.symlink_to()` | `sp_symlink_to()` | - |
+| `.hardlink_to()` | `sp_hardlink_to()` | - |
+| `.samefile()` | `sp_samefile()` | - |
 
-**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `symlink_to`, `hardlink_to`, `resolve`, `readlink`, `owner`, `group`, `chmod`, `lstat`, `samefile`, `expanduser`, `home`
+**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `owner`, `group`, `chmod`, `expanduser`, `home`
 
 ## Adding New Methods to the Library
 

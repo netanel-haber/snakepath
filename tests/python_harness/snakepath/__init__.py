@@ -166,7 +166,14 @@ _sig('sp_path_cmp_wrap', [_PP, _PP], c_int)
 _sig('sp_match_wrap', [_PP, c_char_p], c_int)
 _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_stat_wrap', [_PP, _PStat])
+_sig('sp_lstat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
+# Symlink & link operations
+_sig('sp_readlink_wrap', [_PP, _PP])
+_sig('sp_resolve_wrap', [_PP, c_int, _PP])
+_sig('sp_symlink_to_wrap', [_PP, _PP, c_int], c_int)
+_sig('sp_hardlink_to_wrap', [_PP, _PP], c_int)
+_sig('sp_samefile_wrap', [_PP, _PP], c_int)
 _sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int], c_int)
 # Glob iterator
 _sizeof_glob_iter = _lib.sp_sizeof_glob_iter()
@@ -620,12 +627,81 @@ class Path(PurePath):
         return bool(_lib.sp_is_junction_wrap(byref(self._sp)))
 
     def stat(self, *, follow_symlinks=True):
-        assert follow_symlinks, "lstat (follow_symlinks=False) not yet implemented"
         result = _SpStatResult()
-        _lib.sp_stat_wrap(byref(self._sp), byref(result))
+        if follow_symlinks:
+            _lib.sp_stat_wrap(byref(self._sp), byref(result))
+        else:
+            _lib.sp_lstat_wrap(byref(self._sp), byref(result))
         if not result.valid:
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return result
+
+    def lstat(self):
+        """Like stat(), but does not follow symbolic links."""
+        return self.stat(follow_symlinks=False)
+
+    def readlink(self):
+        """Return the path to which the symbolic link points."""
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_readlink_wrap(byref(self._sp), byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise OSError(22, "Invalid argument", str(self))
+        return result
+
+    def resolve(self, strict=False):
+        """Make the path absolute, resolving all symlinks."""
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_resolve_wrap(byref(self._sp), 1 if strict else 0, byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return result
+
+    def symlink_to(self, target, target_is_directory=False):
+        """Make this path a symlink pointing to target."""
+        if isinstance(target, PurePath):
+            target_sp = target._sp
+        else:
+            target_path = self.__class__.__new__(self.__class__)
+            target_path._sp = _SpPath()
+            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
+            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
+            target_sp = target_path._sp
+        if not _lib.sp_symlink_to_wrap(byref(self._sp), byref(target_sp), 1 if target_is_directory else 0):
+            raise OSError(1, "Operation not permitted", str(self))
+
+    def hardlink_to(self, target):
+        """Make this path a hard link pointing to target."""
+        if isinstance(target, PurePath):
+            target_sp = target._sp
+        else:
+            target_path = self.__class__.__new__(self.__class__)
+            target_path._sp = _SpPath()
+            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
+            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
+            target_sp = target_path._sp
+        if not _lib.sp_hardlink_to_wrap(byref(self._sp), byref(target_sp)):
+            raise OSError(1, "Operation not permitted", str(self))
+
+    def samefile(self, other_path):
+        """Return True if both paths refer to the same file."""
+        # First check that both paths exist (Python raises FileNotFoundError if either doesn't exist)
+        if not self.exists():
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        if isinstance(other_path, PurePath):
+            other_sp = other_path._sp
+            if not _lib.sp_exists_wrap(byref(other_sp)):
+                raise FileNotFoundError(2, "No such file or directory", str(other_path))
+        else:
+            other = self.__class__.__new__(self.__class__)
+            other._sp = _SpPath()
+            other_buf = _encode_buf(os.fspath(other_path) if hasattr(os, 'fspath') else str(other_path))
+            _lib.sp_path_new_len_wrap(other_buf, len(other_buf.raw), self._flavor, byref(other._sp))
+            other_sp = other._sp
+            if not _lib.sp_exists_wrap(byref(other_sp)):
+                raise FileNotFoundError(2, "No such file or directory", str(other_path))
+        return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other_sp)))
 
     def mkdir(self, mode=0o777, parents=False, exist_ok=False):
         result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0)

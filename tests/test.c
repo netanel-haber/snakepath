@@ -397,6 +397,64 @@ int main(void) {
 
     printf("  mkdir tests OK\n");
 
+    /* lstat tests */
+    printf("\nlstat Tests:\n");
+
+    /* Test lstat on regular file */
+    SpPath lstat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpStatResult lstat_res = sp_lstat(&lstat_file);
+    ASSERT(lstat_res.valid == true);
+    ASSERT(lstat_res.sp_size > 0);
+
+    /* Test lstat on nonexistent file */
+    SpPath lstat_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
+    SpStatResult lstat_nonexist_res = sp_lstat(&lstat_nonexist);
+    ASSERT(lstat_nonexist_res.valid == false);
+
+    printf("  lstat tests OK\n");
+
+    /* resolve tests */
+    printf("\nresolve Tests:\n");
+
+    /* Test resolve on current directory */
+    SpPath resolve_cwd = sp_path_f(".", SP_FLAVOR_NATIVE);
+    SpPath resolved = sp_resolve(&resolve_cwd, false);
+    ASSERT(sp_is_absolute(&resolved));
+    ASSERT(resolved.len > 0);
+
+    /* Test resolve strict mode on existing file */
+    SpPath resolve_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpPath resolved_file = sp_resolve(&resolve_file, true);
+    ASSERT(sp_is_absolute(&resolved_file));
+    ASSERT(!sp_path_is_error(&resolved_file));
+
+    /* Test resolve strict mode on nonexistent path */
+    SpPath resolve_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
+    SpPath resolved_nonexist = sp_resolve(&resolve_nonexist, true);
+    ASSERT(sp_path_is_error(&resolved_nonexist));
+
+    printf("  resolve tests OK\n");
+
+    /* samefile tests */
+    printf("\nsamefile Tests:\n");
+
+    /* Test samefile with same path */
+    SpPath same1 = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpPath same2 = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    ASSERT(sp_samefile(&same1, &same2) == true);
+
+    /* Test samefile with different paths */
+    SpPath diff1 = sp_path_f(".", SP_FLAVOR_NATIVE);
+    SpPath diff2 = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    ASSERT(sp_samefile(&diff1, &diff2) == false);
+
+    /* Test samefile with nonexistent path */
+    SpPath nonexist1 = sp_path_f("/nonexistent1", P);
+    SpPath nonexist2 = sp_path_f("/nonexistent2", P);
+    ASSERT(sp_samefile(&nonexist1, &nonexist2) == false);
+
+    printf("  samefile tests OK\n");
+
     /* Glob tests */
     printf("\nGlob Tests:\n");
 

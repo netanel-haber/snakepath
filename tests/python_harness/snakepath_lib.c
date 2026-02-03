@@ -104,7 +104,19 @@ WRAP_BOOL_UNARY(is_socket)
 WRAP_BOOL_UNARY(is_mount)
 WRAP_BOOL_UNARY(is_junction)
 SP_EXPORT void sp_stat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_stat(p); }
+SP_EXPORT void sp_lstat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_lstat(p); }
 SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
+
+/* Symlink & link operations */
+SP_EXPORT void sp_readlink_wrap(const SpPath *p, SpPath *out) { *out = sp_readlink(p); }
+SP_EXPORT void sp_resolve_wrap(const SpPath *p, int strict, SpPath *out) { *out = sp_resolve(p, strict != 0); }
+SP_EXPORT int sp_symlink_to_wrap(const SpPath *p, const SpPath *target, int target_is_directory) {
+    return sp_symlink_to(p, target, target_is_directory != 0) ? 1 : 0;
+}
+SP_EXPORT int sp_hardlink_to_wrap(const SpPath *p, const SpPath *target) {
+    return sp_hardlink_to(p, target) ? 1 : 0;
+}
+WRAP_BOOL_BINARY(samefile)
 SP_EXPORT size_t sp_parents_count_wrap(const SpPath *p) { return sp_parents_count(p); }
 SP_EXPORT size_t sp_sizeof_stat_result(void) { return sizeof(SpStatResult); }
 SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }

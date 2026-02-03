@@ -165,15 +165,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_group"),
     ],
 
-    "has no attribute 'hardlink_to'": [
-        ("PathSubclassTest", "test_hardlink_to"),
-        ("PathSubclassTest", "test_link_to_not_implemented"),
-        ("PathTest", "test_hardlink_to"),
-        ("PathTest", "test_link_to_not_implemented"),
-        ("PosixPathTest", "test_hardlink_to"),
-        ("PosixPathTest", "test_link_to_not_implemented"),
-        ("WindowsPathTest", "test_hardlink_to"),
-    ],
 
     # =========================================================================
     # home() not implemented
@@ -215,24 +206,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_with"),
     ],
 
-    "has no attribute 'lstat'": [
-        ("PathSubclassTest", "test_lstat_nosymlink"),
-        ("PathTest", "test_lstat_nosymlink"),
-        ("PosixPathTest", "test_lstat_nosymlink"),
-        ("WindowsPathTest", "test_lstat_nosymlink"),
-    ],
-
-    "has no attribute 'resolve'": [
-        ("PathSubclassTest", "test_mkdir_exist_ok_root"),
-        ("PathSubclassTest", "test_resolve_nonexist_relative_issue38671"),
-        ("PathTest", "test_mkdir_exist_ok_root"),
-        ("PathTest", "test_resolve_nonexist_relative_issue38671"),
-        ("PosixPathTest", "test_mkdir_exist_ok_root"),
-        ("PosixPathTest", "test_resolve_nonexist_relative_issue38671"),
-        ("PosixPathTest", "test_resolve_root"),
-        ("WindowsPathTest", "test_mkdir_exist_ok_root"),
-        ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"),
-    ],
 
     "has no attribute 'open'": [
         ("PathSubclassTest", "test_open_common"),
@@ -282,19 +255,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_replace"),
     ],
 
-    "has no attribute 'samefile'": [
-        ("PathSubclassTest", "test_samefile"),
-        ("PathTest", "test_samefile"),
-        ("PosixPathTest", "test_samefile"),
-        ("WindowsPathTest", "test_samefile"),
-    ],
-
-    "lstat (follow_symlinks=False) not yet implemented": [
-        ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"),
-        ("PathTest", "test_stat_no_follow_symlinks_nosymlink"),
-        ("PosixPathTest", "test_stat_no_follow_symlinks_nosymlink"),
-        ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"),
-    ],
 
     "has no attribute 'touch'": [
         ("PathSubclassTest", "test_touch_common"),
@@ -335,6 +295,17 @@ EXPECTED_FAILURES = {
     "WindowsPath": [
         ("WindowsPathAsPureTest", "test_eq"),
     ],
+
+    # =========================================================================
+    # link_to() is deprecated API - hardlink_to() replaced it
+    # Test expects NotImplementedError but we implement hardlink_to() directly
+    # =========================================================================
+    "Operation not permitted": [
+        ("PathSubclassTest", "test_link_to_not_implemented"),
+        ("PathTest", "test_link_to_not_implemented"),
+        ("PosixPathTest", "test_link_to_not_implemented"),
+    ],
+
 }
 
 # Build reverse lookup: (class_name, test_name) -> expected_error_substring
