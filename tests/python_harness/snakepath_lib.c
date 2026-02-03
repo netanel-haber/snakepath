@@ -156,3 +156,15 @@ SP_EXPORT int sp_match_yes(void) { return SP_MATCH_YES; }
 SP_EXPORT int sp_match_no(void) { return SP_MATCH_NO; }
 SP_EXPORT int sp_match_err_empty(void) { return SP_MATCH_ERR_EMPTY; }
 SP_EXPORT int sp_match_err_invalid(void) { return SP_MATCH_ERR_INVALID; }
+
+/* mkdir */
+SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok) {
+    return sp_mkdir(p, mode, parents != 0, exist_ok != 0);
+}
+SP_EXPORT int sp_mkdir_ok(void) { return SP_MKDIR_OK; }
+SP_EXPORT int sp_mkdir_err_exists(void) { return SP_MKDIR_ERR_EXISTS; }
+SP_EXPORT int sp_mkdir_err_not_found(void) { return SP_MKDIR_ERR_NOT_FOUND; }
+SP_EXPORT int sp_mkdir_err_not_dir(void) { return SP_MKDIR_ERR_NOT_DIR; }
+SP_EXPORT int sp_mkdir_err_permission(void) { return SP_MKDIR_ERR_PERMISSION; }
+SP_EXPORT int sp_mkdir_err_other(void) { return SP_MKDIR_ERR_OTHER; }
+SP_EXPORT int sp_mkdir_err_exists_not_dir(void) { return SP_MKDIR_ERR_EXISTS_NOT_DIR; }

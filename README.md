@@ -266,9 +266,10 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.is_dir()` | `sp_is_dir()` | `.is_dir()` |
 | `.exists()` | `sp_exists()` | `.exists()` |
 | `.stat()` | `sp_stat()` | - |
+| `.mkdir()` | `sp_mkdir()` | - |
 | `len(p.parents)` | `sp_parents_count()` | - |
 
-**Not implemented:** Most I/O methods (`mkdir`, `read_*`, `write_*`, `glob`, etc.)
+**Not implemented:** Most I/O methods (`read_*`, `write_*`, `glob`, etc.)
 
 ## Adding New Methods to the Library
 
