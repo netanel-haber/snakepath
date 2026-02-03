@@ -149,19 +149,6 @@ EXPECTED_FAILURES = {
         ("PathTest", "test_unsupported_flavour"),
     ],
 
-    # =========================================================================
-    # stat() attribute missing - tests that require stat() functionality
-    # =========================================================================
-    "has no attribute 'stat'": [
-        ("PathSubclassTest", "test_empty_path"),
-        ("PathSubclassTest", "test_pickling_common"),
-        ("PathTest", "test_empty_path"),
-        ("PathTest", "test_pickling_common"),
-        ("PosixPathTest", "test_empty_path"),
-        ("PosixPathTest", "test_pickling_common"),
-        ("WindowsPathTest", "test_empty_path"),
-        ("WindowsPathTest", "test_pickling_common"),
-    ],
 
     # =========================================================================
     # expanduser() not implemented
@@ -804,6 +791,24 @@ def run_tests():
                 continue
         unexpected_errors.append((test, traceback))
 
+    # Check for unexpected successes (tests in EXPECTED_FAILURES that passed)
+    failed_keys = set()
+    for test, _ in result.failures + result.errors:
+        test_class = test.__class__.__name__
+        test_method = test._testMethodName
+        failed_keys.add((test_class, test_method))
+
+    skipped_keys = set()
+    for test, _ in result.skipped:
+        test_class = test.__class__.__name__
+        test_method = test._testMethodName
+        skipped_keys.add((test_class, test_method))
+
+    unexpected_successes = []
+    for key in _EXPECTED_FAILURES_BY_TEST:
+        if key not in failed_keys and key not in skipped_keys:
+            unexpected_successes.append(f"{key[0]}.{key[1]}")
+
     # Summary
     expected_total = sum(len(tests) for tests in expected_by_reason.values())
     print(f"\nRan {result.testsRun} tests, {expected_total} expected failures")
@@ -813,17 +818,23 @@ def run_tests():
         for reason, tests in sorted(expected_by_reason.items(), key=lambda x: -len(x[1])):
             print(f"  {reason!r}: {len(tests)} tests")
 
-    if not unexpected_failures and not unexpected_errors:
+    if unexpected_successes:
+        print(f"\nUNEXPECTED SUCCESSES ({len(unexpected_successes)} tests passed that were expected to fail):")
+        for test_name in sorted(unexpected_successes):
+            print(f"  {test_name}")
+
+    if not unexpected_failures and not unexpected_errors and not unexpected_successes:
         print("\nSUCCESS")
         return_code = 0
     else:
-        print(f"\nUNEXPECTED: {len(unexpected_failures)} failures, {len(unexpected_errors)} errors")
-        for test, tb in unexpected_failures:
-            print(f"  FAIL: {test}")
-            print(tb)
-        for test, tb in unexpected_errors:
-            print(f"  ERROR: {test}")
-            print(tb)
+        if unexpected_failures or unexpected_errors:
+            print(f"\nUNEXPECTED: {len(unexpected_failures)} failures, {len(unexpected_errors)} errors")
+            for test, tb in unexpected_failures:
+                print(f"  FAIL: {test}")
+                print(tb)
+            for test, tb in unexpected_errors:
+                print(f"  ERROR: {test}")
+                print(tb)
         return_code = 1
 
     return return_code
