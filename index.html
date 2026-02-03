@@ -449,6 +449,34 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">bool</code>
               </td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_symlink()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_mount()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_junction()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">bool</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_block_device()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_char_device()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">bool</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_fifo()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;is_socket()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">bool</code>
+              </td>
+            </tr>
           </tbody>
         </table>
         <h2 id="core-types">Core Types</h2>
@@ -919,6 +947,83 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
               </td>
               <td>-</td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_symlink()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_symlink()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_symlink()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_block_device()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_block_device()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_block_device()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_char_device()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_char_device()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_char_device()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_fifo()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_fifo()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_fifo()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_socket()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_socket()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_socket()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_mount()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_mount()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_mount()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_junction()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_is_junction()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.is_junction()</code>
+              </td>
+            </tr>
           </tbody>
         </table>
         <p>
@@ -944,13 +1049,6 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
           <code class="language-plaintext highlighter-rouge">chmod</code>,
           <code class="language-plaintext highlighter-rouge">lstat</code>,
           <code class="language-plaintext highlighter-rouge">samefile</code>,
-          <code class="language-plaintext highlighter-rouge">is_symlink</code>,
-          <code class="language-plaintext highlighter-rouge">is_mount</code>,
-          <code class="language-plaintext highlighter-rouge">is_junction</code>,
-          <code class="language-plaintext highlighter-rouge">is_block_device</code>,
-          <code class="language-plaintext highlighter-rouge">is_char_device</code>,
-          <code class="language-plaintext highlighter-rouge">is_fifo</code>,
-          <code class="language-plaintext highlighter-rouge">is_socket</code>,
           <code class="language-plaintext highlighter-rouge">expanduser</code>,
           <code class="language-plaintext highlighter-rouge">home</code>
         </p>

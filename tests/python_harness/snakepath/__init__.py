@@ -134,6 +134,8 @@ for n in ['joinpath', 'relative_to', 'relative_to_walk_up']:
     _sig(f'sp_{n}_wrap', [_PP, _PP, _PP])
 
 for n in ['is_absolute', 'is_reserved', 'is_file', 'is_dir', 'exists',
+          'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
+          'is_socket', 'is_mount', 'is_junction',
           'path_is_error', 'path_error_code', 'relative_to_is_error']:
     _sig(f'sp_{n}_wrap', [_PP], c_int)
 
@@ -595,6 +597,27 @@ class Path(PurePath):
 
     def exists(self):
         return bool(_lib.sp_exists_wrap(byref(self._sp)))
+
+    def is_symlink(self):
+        return bool(_lib.sp_is_symlink_wrap(byref(self._sp)))
+
+    def is_block_device(self):
+        return bool(_lib.sp_is_block_device_wrap(byref(self._sp)))
+
+    def is_char_device(self):
+        return bool(_lib.sp_is_char_device_wrap(byref(self._sp)))
+
+    def is_fifo(self):
+        return bool(_lib.sp_is_fifo_wrap(byref(self._sp)))
+
+    def is_socket(self):
+        return bool(_lib.sp_is_socket_wrap(byref(self._sp)))
+
+    def is_mount(self):
+        return bool(_lib.sp_is_mount_wrap(byref(self._sp)))
+
+    def is_junction(self):
+        return bool(_lib.sp_is_junction_wrap(byref(self._sp)))
 
     def stat(self, *, follow_symlinks=True):
         assert follow_symlinks, "lstat (follow_symlinks=False) not yet implemented"

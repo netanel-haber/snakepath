@@ -229,6 +229,13 @@ bool sp_is_reserved(const SpPath *p);
 bool sp_is_file(const SpPath *p);
 bool sp_is_dir(const SpPath *p);
 bool sp_exists(const SpPath *p);
+bool sp_is_symlink(const SpPath *p);
+bool sp_is_block_device(const SpPath *p);
+bool sp_is_char_device(const SpPath *p);
+bool sp_is_fifo(const SpPath *p);
+bool sp_is_socket(const SpPath *p);
+bool sp_is_mount(const SpPath *p);
+bool sp_is_junction(const SpPath *p);
 
 /* Stat result structure - mirrors Python's os.stat_result */
 /* Note: field names use sp_ prefix to avoid macro conflicts with system headers */
@@ -331,6 +338,13 @@ struct sp_fluent_ {
     bool (*is_file)(void);
     bool (*is_dir)(void);
     bool (*exists)(void);
+    bool (*is_symlink)(void);
+    bool (*is_block_device)(void);
+    bool (*is_char_device)(void);
+    bool (*is_fifo)(void);
+    bool (*is_socket)(void);
+    bool (*is_mount)(void);
+    bool (*is_junction)(void);
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
@@ -371,6 +385,23 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <unistd.h>
 #include <errno.h>
 #define sp_priv_getcwd getcwd
+/* C99 workaround - lstat exists but isn't declared without feature test macros */
+extern int lstat(const char *path, struct stat *buf);
+#ifndef S_IFMT
+#define S_IFMT 0170000
+#endif
+#ifndef S_IFSOCK
+#define S_IFSOCK 0140000
+#endif
+#ifndef S_IFLNK
+#define S_IFLNK 0120000
+#endif
+#ifndef S_ISLNK
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#endif
+#ifndef S_ISSOCK
+#define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
+#endif
 #endif
 
 #ifdef __cplusplus
@@ -1559,7 +1590,14 @@ bool sp_is_file(const SpPath *p) {
 #ifdef SP_WINDOWS
     DWORD attrs = GetFileAttributesA(path_str);
     if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-    return (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) return false;
+    /* Exclude character devices (NUL, CON, etc.) */
+    HANDLE h = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD type = GetFileType(h);
+    CloseHandle(h);
+    return type == FILE_TYPE_DISK;
 #else
     struct stat st;
     if (stat(path_str, &st) != 0) return false;
@@ -1597,6 +1635,158 @@ bool sp_exists(const SpPath *p) {
 #else
     struct stat st;
     return stat(path_str, &st) == 0;
+#endif
+}
+
+bool sp_is_symlink(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    struct stat st;
+    if (lstat(path_str, &st) != 0) return false;
+    return S_ISLNK(st.st_mode);
+#endif
+}
+
+bool sp_is_block_device(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+#ifdef SP_WINDOWS
+    /* Windows doesn't have block devices in the POSIX sense */
+    (void)p;
+    return false;
+#else
+    const char *path_str = sp_str(p);
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISBLK(st.st_mode);
+#endif
+}
+
+bool sp_is_char_device(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    /* On Windows, check for special device names like NUL, CON, etc. */
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    /* Windows character devices are accessed via special names - use GetFileType */
+    HANDLE h = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD type = GetFileType(h);
+    CloseHandle(h);
+    return type == FILE_TYPE_CHAR;
+#else
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISCHR(st.st_mode);
+#endif
+}
+
+bool sp_is_fifo(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+#ifdef SP_WINDOWS
+    /* Windows doesn't have FIFOs in the POSIX sense */
+    (void)p;
+    return false;
+#else
+    const char *path_str = sp_str(p);
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISFIFO(st.st_mode);
+#endif
+}
+
+bool sp_is_socket(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+#ifdef SP_WINDOWS
+    /* Windows doesn't have Unix domain sockets as filesystem objects */
+    (void)p;
+    return false;
+#else
+    const char *path_str = sp_str(p);
+    struct stat st;
+    if (stat(path_str, &st) != 0) return false;
+    return S_ISSOCK(st.st_mode);
+#endif
+}
+
+bool sp_is_mount(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    const char *path_str = sp_str(p);
+#ifdef SP_WINDOWS
+    /* On Windows, check if path is a drive root or mount point */
+    char vol_path[SP_PATH_MAX];
+    if (!GetVolumePathNameA(path_str, vol_path, SP_PATH_MAX)) return false;
+    /* Compare the volume path with the actual path (normalized) */
+    size_t vlen = strlen(vol_path);
+    size_t plen = p->len > 0 ? p->len : 1;
+    /* Remove trailing backslash from both for comparison */
+    if (vlen > 0 && vol_path[vlen - 1] == '\\') vlen--;
+    if (plen > 0 && (path_str[plen - 1] == '\\' || path_str[plen - 1] == '/')) plen--;
+    /* Path is a mount point if it equals the volume path */
+    return sp_priv_str_eq_ci(path_str, plen, vol_path, vlen);
+#else
+    struct stat st_path, st_parent;
+    if (lstat(path_str, &st_path) != 0) return false;
+    /* Must be a directory to be a mount point */
+    if (!S_ISDIR(st_path.st_mode)) return false;
+    /* Get parent path */
+    SpPath parent = sp_parent(p);
+    const char *parent_str = sp_str(&parent);
+    if (lstat(parent_str, &st_parent) != 0) return false;
+    /* Path is a mount point if it's on a different device than its parent */
+    if (st_path.st_dev != st_parent.st_dev) return true;
+    /* Or if path == parent (root case: / has parent /) */
+    return st_path.st_ino == st_parent.st_ino;
+#endif
+}
+
+bool sp_is_junction(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+#ifdef SP_WINDOWS
+    const char *path_str = sp_str(p);
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    /* Must be a directory with reparse point attribute */
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    if (!(attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    /* Check if it's specifically a junction (IO_REPARSE_TAG_MOUNT_POINT) */
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(path_str, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    /* Junction has IO_REPARSE_TAG_MOUNT_POINT (0xA0000003) */
+    return fd.dwReserved0 == 0xA0000003;
+#else
+    /* Junctions don't exist on POSIX systems */
+    (void)p;
+    return false;
 #endif
 }
 
@@ -2154,7 +2344,14 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
     X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
     X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))                                                                         \
-    X(exists, bool, sp_exists(&sp_priv_f_ctx))
+    X(exists, bool, sp_exists(&sp_priv_f_ctx))                                                                         \
+    X(is_symlink, bool, sp_is_symlink(&sp_priv_f_ctx))                                                                 \
+    X(is_block_device, bool, sp_is_block_device(&sp_priv_f_ctx))                                                       \
+    X(is_char_device, bool, sp_is_char_device(&sp_priv_f_ctx))                                                         \
+    X(is_fifo, bool, sp_is_fifo(&sp_priv_f_ctx))                                                                       \
+    X(is_socket, bool, sp_is_socket(&sp_priv_f_ctx))                                                                   \
+    X(is_mount, bool, sp_is_mount(&sp_priv_f_ctx))                                                                     \
+    X(is_junction, bool, sp_is_junction(&sp_priv_f_ctx))
 #define SP_FLUENT_TERM_STR(X)                                                                                          \
     X(name, SpStr, sp_name)                                                                                            \
     X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
@@ -2206,6 +2403,13 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {sp_priv_f_path_,
                                                         sp_priv_f_is_file_,
                                                         sp_priv_f_is_dir_,
                                                         sp_priv_f_exists_,
+                                                        sp_priv_f_is_symlink_,
+                                                        sp_priv_f_is_block_device_,
+                                                        sp_priv_f_is_char_device_,
+                                                        sp_priv_f_is_fifo_,
+                                                        sp_priv_f_is_socket_,
+                                                        sp_priv_f_is_mount_,
+                                                        sp_priv_f_is_junction_,
                                                         sp_priv_f_parent_,
                                                         sp_priv_f_join_,
                                                         sp_priv_f_with_name_,
