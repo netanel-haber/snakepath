@@ -96,6 +96,13 @@ WRAP_BOOL_UNARY(is_reserved)
 WRAP_BOOL_UNARY(is_file)
 WRAP_BOOL_UNARY(is_dir)
 WRAP_BOOL_UNARY(exists)
+WRAP_BOOL_UNARY(is_symlink)
+WRAP_BOOL_UNARY(is_block_device)
+WRAP_BOOL_UNARY(is_char_device)
+WRAP_BOOL_UNARY(is_fifo)
+WRAP_BOOL_UNARY(is_socket)
+WRAP_BOOL_UNARY(is_mount)
+WRAP_BOOL_UNARY(is_junction)
 SP_EXPORT void sp_stat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_stat(p); }
 SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
 SP_EXPORT size_t sp_parents_count_wrap(const SpPath *p) { return sp_parents_count(p); }

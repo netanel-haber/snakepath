@@ -185,65 +185,15 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_home"),
     ],
 
-    "has no attribute 'is_block_device'": [
-        ("PathSubclassTest", "test_is_block_device_false"),
-        ("PathTest", "test_is_block_device_false"),
-        ("PosixPathTest", "test_is_block_device_false"),
-        ("WindowsPathTest", "test_is_block_device_false"),
-    ],
-
-    "has no attribute 'is_char_device'": [
-        ("PathSubclassTest", "test_is_char_device_false"),
-        ("PathSubclassTest", "test_is_char_device_true"),
-        ("PathTest", "test_is_char_device_false"),
-        ("PathTest", "test_is_char_device_true"),
-        ("PosixPathTest", "test_is_char_device_false"),
-        ("PosixPathTest", "test_is_char_device_true"),
-        ("WindowsPathTest", "test_is_char_device_false"),
-        ("WindowsPathTest", "test_is_char_device_true"),
-    ],
-
-    "has no attribute 'is_fifo'": [
-        ("PathSubclassTest", "test_is_fifo_false"),
-        ("PathSubclassTest", "test_is_fifo_true"),
-        ("PathTest", "test_is_fifo_false"),
-        ("PathTest", "test_is_fifo_true"),
-        ("PosixPathTest", "test_is_fifo_false"),
-        ("PosixPathTest", "test_is_fifo_true"),
-        ("WindowsPathTest", "test_is_fifo_false"),
-        ("WindowsPathTest", "test_is_fifo_true"),
-    ],
-
-    "has no attribute 'is_junction'": [
+    # =========================================================================
+    # test_is_junction tests Python's internal _flavour.isjunction delegation
+    # We implement is_junction directly in C, bypassing the mock pattern
+    # =========================================================================
+    "MagicMock": [
         ("PathSubclassTest", "test_is_junction"),
         ("PathTest", "test_is_junction"),
         ("PosixPathTest", "test_is_junction"),
         ("WindowsPathTest", "test_is_junction"),
-    ],
-
-    "has no attribute 'is_mount'": [
-        ("PathSubclassTest", "test_is_mount"),
-        ("PathTest", "test_is_mount"),
-        ("PosixPathTest", "test_is_mount"),
-        ("WindowsPathTest", "test_is_mount"),
-    ],
-
-    "has no attribute 'is_socket'": [
-        ("PathSubclassTest", "test_is_socket_false"),
-        ("PathSubclassTest", "test_is_socket_true"),
-        ("PathTest", "test_is_socket_false"),
-        ("PathTest", "test_is_socket_true"),
-        ("PosixPathTest", "test_is_socket_false"),
-        ("PosixPathTest", "test_is_socket_true"),
-        ("WindowsPathTest", "test_is_socket_false"),
-        ("WindowsPathTest", "test_is_socket_true"),
-    ],
-
-    "has no attribute 'is_symlink'": [
-        ("PathSubclassTest", "test_is_symlink"),
-        ("PathTest", "test_is_symlink"),
-        ("PosixPathTest", "test_is_symlink"),
-        ("WindowsPathTest", "test_is_symlink"),
     ],
 
     "has no attribute 'iterdir'": [

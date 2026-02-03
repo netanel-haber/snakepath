@@ -164,6 +164,9 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
 | `->is_file()` `->is_dir()` `->exists()` | `bool` |
+| `->is_symlink()` `->is_mount()` `->is_junction()` | `bool` |
+| `->is_block_device()` `->is_char_device()` | `bool` |
+| `->is_fifo()` `->is_socket()` | `bool` |
 
 ## Core Types
 
@@ -288,8 +291,15 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.glob()` | `sp_glob_begin/next/end()` | - |
 | `.rglob()` | `sp_rglob_begin/next/end()` | - |
 | `len(p.parents)` | `sp_parents_count()` | - |
+| `.is_symlink()` | `sp_is_symlink()` | `.is_symlink()` |
+| `.is_block_device()` | `sp_is_block_device()` | `.is_block_device()` |
+| `.is_char_device()` | `sp_is_char_device()` | `.is_char_device()` |
+| `.is_fifo()` | `sp_is_fifo()` | `.is_fifo()` |
+| `.is_socket()` | `sp_is_socket()` | `.is_socket()` |
+| `.is_mount()` | `sp_is_mount()` | `.is_mount()` |
+| `.is_junction()` | `sp_is_junction()` | `.is_junction()` |
 
-**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `symlink_to`, `hardlink_to`, `resolve`, `readlink`, `owner`, `group`, `chmod`, `lstat`, `samefile`, `is_symlink`, `is_mount`, `is_junction`, `is_block_device`, `is_char_device`, `is_fifo`, `is_socket`, `expanduser`, `home`
+**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `symlink_to`, `hardlink_to`, `resolve`, `readlink`, `owner`, `group`, `chmod`, `lstat`, `samefile`, `expanduser`, `home`
 
 ## Adding New Methods to the Library
 

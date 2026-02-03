@@ -121,3 +121,41 @@ The library has three iterators:
 - `SpGlobIter` - directory traversal for glob matching
 
 All follow the same API pattern (`begin`/`next`/`end`).
+
+## Implementation Gameplan
+
+Remaining pathlib methods to implement (excluding read/write/text/bytes/open), organized into 4 PRs:
+
+### Group 1: File type predicates (7 methods) ✅ COMPLETE
+All are stat-based file type checks:
+- `is_symlink` - check if path is a symbolic link (uses lstat)
+- `is_block_device` - check if path is a block device
+- `is_char_device` - check if path is a character device
+- `is_fifo` - check if path is a FIFO/named pipe
+- `is_socket` - check if path is a socket
+- `is_mount` - check if path is a mount point (POSIX)
+- `is_junction` - check if path is a junction (Windows)
+
+### Group 2: Symlink & link operations (6 methods)
+- `lstat` - stat without following symlinks
+- `readlink` - read symlink target
+- `resolve` - resolve to canonical absolute path
+- `symlink_to` - create symbolic link
+- `hardlink_to` - create hard link
+- `samefile` - check if two paths point to same file
+
+### Group 3: File/directory modification (6 methods)
+- `touch` - create file or update timestamps
+- `unlink` - delete file
+- `rmdir` - delete empty directory
+- `rename` - rename file/directory
+- `replace` - replace target with this file
+- `chmod` - change file permissions
+
+### Group 4: Directory traversal & user info (6 methods)
+- `iterdir` - iterate directory contents
+- `walk` - recursive directory traversal
+- `owner` - get file owner name
+- `group` - get file group name
+- `expanduser` - expand `~` to home directory
+- `home` - get user's home directory
