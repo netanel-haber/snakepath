@@ -106,16 +106,15 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 | Join | `sp_join_one()` | `sp_join_sv()` | `sp_joinpath()` |
 
 ### Glob Implementation
-- `sp_glob_begin_ex()` / `sp_glob_next()` / `sp_glob_end()` iterator pattern
-- `sp_rglob_begin_ex()` just prepends `**/` and delegates to glob - good code reuse
+- `sp_glob()` / `sp_rglob()` callback-based API using simple recursion
+- `sp_rglob()` just prepends `**/` and delegates to glob - good code reuse
 - Uses `SpCaseSensitivity` enum: `SP_CASE_PLATFORM_DEFAULT`, `SP_CASE_SENSITIVE`, `SP_CASE_INSENSITIVE`
-- Thread-local static storage for iterator (non-reentrant per thread)
-- Stack-based directory traversal for `**` patterns
+- Callback signature: `bool (*SpGlobCallback)(const SpPath *match, void *user_data)` - return false to stop
+- No thread-local storage or manual stack - uses natural call stack for recursion
 
 ### Iterator Patterns
-The library has three iterators with different purposes:
+The library has two iterators:
 - `SpPartsIter` - string cursor over path components
 - `SpParentsIter` - generates derived parent paths
-- `SpGlobIter` - filesystem traversal with pattern matching
 
-These don't share enough structure for nob.h-style macro abstraction - they just follow the same API pattern (`begin`/`next`/`end`).
+These don't share enough structure for nob.h-style macro abstraction - they just follow the same API pattern (`begin`/`next`).

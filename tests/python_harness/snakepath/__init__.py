@@ -166,10 +166,10 @@ _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
 _sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int], c_int)
-_sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int], ctypes.c_void_p)
-_sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int], ctypes.c_void_p)
-_sig('sp_glob_next_wrap', [ctypes.c_void_p, _PP], c_int)
-_sig('sp_glob_end_wrap', [ctypes.c_void_p])
+# Glob callback type: bool (*)(const SpPath *match, void *user_data)
+_GlobCallback = ctypes.CFUNCTYPE(c_int, _PP, ctypes.c_void_p)
+_sig('sp_glob_wrap', [_PP, c_char_p, c_int, _GlobCallback, ctypes.c_void_p], c_int)
+_sig('sp_rglob_wrap', [_PP, c_char_p, c_int, _GlobCallback, ctypes.c_void_p], c_int)
 
 
 # ============ Property descriptors ============
@@ -630,20 +630,20 @@ class Path(PurePath):
         else:
             cs = SP_CASE_INSENSITIVE
 
-        # Start glob iterator
-        it = _lib.sp_glob_begin_wrap(byref(self._sp), _encode(pattern_str), cs)
-        if not it:
-            return
+        # Collect results via callback
+        results = []
+        path_class = self.__class__
 
-        try:
-            out = _SpPath()
-            while _lib.sp_glob_next_wrap(it, byref(out)):
-                result = self.__class__.__new__(self.__class__)
-                result._sp = _SpPath()
-                _lib.sp_path_copy_wrap(byref(out), byref(result._sp))
-                yield result
-        finally:
-            _lib.sp_glob_end_wrap(it)
+        @_GlobCallback
+        def collect(match_ptr, _user_data):
+            result = path_class.__new__(path_class)
+            result._sp = _SpPath()
+            _lib.sp_path_copy_wrap(match_ptr, byref(result._sp))
+            results.append(result)
+            return 1  # continue
+
+        _lib.sp_glob_wrap(byref(self._sp), _encode(pattern_str), cs, collect, None)
+        return iter(results)
 
     def rglob(self, pattern, *, case_sensitive=None):
         """Recursively yield all existing files matching pattern."""
@@ -659,20 +659,20 @@ class Path(PurePath):
         else:
             cs = SP_CASE_INSENSITIVE
 
-        # Start rglob iterator
-        it = _lib.sp_rglob_begin_wrap(byref(self._sp), _encode(pattern_str), cs)
-        if not it:
-            return
+        # Collect results via callback
+        results = []
+        path_class = self.__class__
 
-        try:
-            out = _SpPath()
-            while _lib.sp_glob_next_wrap(it, byref(out)):
-                result = self.__class__.__new__(self.__class__)
-                result._sp = _SpPath()
-                _lib.sp_path_copy_wrap(byref(out), byref(result._sp))
-                yield result
-        finally:
-            _lib.sp_glob_end_wrap(it)
+        @_GlobCallback
+        def collect(match_ptr, _user_data):
+            result = path_class.__new__(path_class)
+            result._sp = _SpPath()
+            _lib.sp_path_copy_wrap(match_ptr, byref(result._sp))
+            results.append(result)
+            return 1  # continue
+
+        _lib.sp_rglob_wrap(byref(self._sp), _encode(pattern_str), cs, collect, None)
+        return iter(results)
 
 
 class PosixPath(Path, PurePosixPath):

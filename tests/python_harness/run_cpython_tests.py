@@ -123,7 +123,6 @@ EXPECTED_FAILURES = {
     # =========================================================================
     # test_absolute_common - uses mock.patch("os.getcwd") which doesn't affect C
     # Our C library calls getcwd() directly, bypassing Python's mock
-    # test_glob_many_open_files - order differs from Python impl
     # =========================================================================
     "!=": [
         ("PathSubclassTest", "test_absolute_common"),
@@ -131,9 +130,6 @@ EXPECTED_FAILURES = {
         ("PosixPathTest", "test_absolute_common"),
         ("WindowsPathTest", "test_absolute"),
         ("WindowsPathTest", "test_absolute_common"),
-        ("PathSubclassTest", "test_glob_many_open_files"),
-        ("PathTest", "test_glob_many_open_files"),
-        ("PosixPathTest", "test_glob_many_open_files"),
         ("WindowsPathTest", "test_glob_many_open_files"),
     ],
 

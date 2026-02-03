@@ -34,6 +34,20 @@ static int sv_eq(SpStr a, const char *b) {
 typedef struct { const char *path; const char *expected; } SVTest;
 typedef struct { const char *path; const char *arg; const char *expected; } JoinTest;
 
+/* Glob callback context */
+typedef struct { int count; int txt_count; } GlobCtx;
+
+static bool glob_counter(const SpPath *match, void *user_data) {
+#ifdef __cplusplus
+    GlobCtx *ctx = static_cast<GlobCtx *>(user_data);
+#else
+    GlobCtx *ctx = (GlobCtx *)user_data;
+#endif
+    ctx->count++;
+    if (strstr(sp_str(match), ".txt")) ctx->txt_count++;
+    return true;
+}
+
 #define P SP_FLAVOR_POSIX
 #define W SP_FLAVOR_WINDOWS
 
@@ -394,37 +408,22 @@ int main(void) {
     if (f3) fclose(f3);
 
     /* Test basic glob *.txt */
-    SpGlobIter *git = sp_glob_begin(&glob_base, "*.txt");
-    ASSERT(git != NULL);
-    SpPath match;
-    int txt_count = 0;
-    while (sp_glob_next(git, &match)) {
-        /* Should find file1.txt */
-        if (strstr(sp_str(&match), "file1.txt")) txt_count++;
-    }
-    sp_glob_end(git);
-    ASSERT(txt_count == 1);
+    GlobCtx ctx1 = {0, 0};
+    bool glob_ok = sp_glob(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT, glob_counter, &ctx1);
+    ASSERT(glob_ok);
+    ASSERT(ctx1.txt_count == 1);  /* Should find file1.txt */
 
     /* Test recursive glob */
-    git = sp_glob_begin(&glob_base, "**/*.txt");
-    ASSERT(git != NULL);
-    txt_count = 0;
-    while (sp_glob_next(git, &match)) {
-        if (strstr(sp_str(&match), ".txt")) txt_count++;
-    }
-    sp_glob_end(git);
-    /* Should find file1.txt and file3.txt */
-    ASSERT(txt_count >= 1);  /* At least file1.txt or file3.txt */
+    GlobCtx ctx2 = {0, 0};
+    glob_ok = sp_glob(&glob_base, "**/*.txt", SP_CASE_PLATFORM_DEFAULT, glob_counter, &ctx2);
+    ASSERT(glob_ok);
+    ASSERT(ctx2.txt_count >= 1);  /* Should find file1.txt and file3.txt */
 
     /* Test rglob */
-    git = sp_rglob_begin(&glob_base, "*.txt");
-    ASSERT(git != NULL);
-    txt_count = 0;
-    while (sp_glob_next(git, &match)) {
-        if (strstr(sp_str(&match), ".txt")) txt_count++;
-    }
-    sp_glob_end(git);
-    ASSERT(txt_count >= 1);
+    GlobCtx ctx3 = {0, 0};
+    glob_ok = sp_rglob(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT, glob_counter, &ctx3);
+    ASSERT(glob_ok);
+    ASSERT(ctx3.txt_count >= 1);
 
     /* Cleanup */
     remove("./test_glob_dir/file1.txt");
