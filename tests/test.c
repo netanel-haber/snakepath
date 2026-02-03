@@ -6,6 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Platform-specific rmdir */
+#ifdef _WIN32
+#include <direct.h>
+#define sp_rmdir _rmdir
+#else
+#include <unistd.h>
+#define sp_rmdir rmdir
+#endif
+
 static int tests_run = 0;
 
 /* Inline string view comparison (like nob_sv_eq) */
@@ -330,7 +339,7 @@ int main(void) {
     SpPath mkdir_test = sp_path_f("./test_mkdir_temp", SP_FLAVOR_NATIVE);
 
     /* First ensure it doesn't exist (cleanup from previous failed runs) */
-    rmdir(sp_str(&mkdir_test));
+    sp_rmdir(sp_str(&mkdir_test));
 
     /* Test basic mkdir */
     int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
@@ -346,7 +355,7 @@ int main(void) {
     ASSERT(mkdir_result == SP_MKDIR_OK);
 
     /* Cleanup */
-    rmdir(sp_str(&mkdir_test));
+    sp_rmdir(sp_str(&mkdir_test));
 
     /* Test mkdir with parents=true */
     SpPath mkdir_nested = sp_path_f("./test_mkdir_nested/subdir/deep", SP_FLAVOR_NATIVE);
@@ -355,9 +364,9 @@ int main(void) {
     ASSERT(sp_is_dir(&mkdir_nested) == true);
 
     /* Cleanup nested dirs */
-    rmdir("./test_mkdir_nested/subdir/deep");
-    rmdir("./test_mkdir_nested/subdir");
-    rmdir("./test_mkdir_nested");
+    sp_rmdir("./test_mkdir_nested/subdir/deep");
+    sp_rmdir("./test_mkdir_nested/subdir");
+    sp_rmdir("./test_mkdir_nested");
 
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
