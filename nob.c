@@ -324,6 +324,7 @@ int main(int argc, char **argv) {
         {COMPILER_MSVC,     false, "MSVC (C)",   "tests/test_msvc.exe"},
         {COMPILER_MSVC_CPP, false, "MSVC (C++)", "tests/test_msvc_cpp.exe"},
     };
+    size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
     BuildConfig fluent_configs[] = {
         {COMPILER_MSVC, false, "MSVC Fluent", "tests/test_fluent_msvc.exe"},
     };
