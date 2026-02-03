@@ -34,7 +34,7 @@ python run_cpython_tests.py
 ```
 
 ### Python Tests: EXPECTED_FAILURES
-`EXPECTED_FAILURES` is a dict mapping `(class_name, test_name)` to an expected error substring. The test runner:
+`EXPECTED_FAILURES` is a dict mapping expected error substrings to lists of `(class_name, test_name)` tuples. The test runner:
 - Verifies each failure contains the expected error message (reason verification)
 - Reports "unexpected success" if an expected failure passes
 - Reports "wrong reason" if a test fails but with a different error message
@@ -42,7 +42,7 @@ python run_cpython_tests.py
 **When implementing new I/O methods** (like `stat()`), cascading updates are needed:
 - Tests that previously failed with `"has no attribute 'stat'"` will now fail for different reasons
 - Example: `test_group` changes from `"has no attribute 'stat'"` to `"has no attribute 'group'"`
-- Run tests locally and update each entry's expected error message accordingly
+- Run tests locally and move tests between reason groups accordingly
 
 ### Adding New Methods Checklist
 1. `snakepath.h`: Add declaration and implementation
