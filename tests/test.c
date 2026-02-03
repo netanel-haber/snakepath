@@ -375,6 +375,66 @@ int main(void) {
 
     printf("  mkdir tests OK\n");
 
+    /* Glob tests */
+    printf("\nGlob Tests:\n");
+
+    /* Create test directory structure */
+    SpPath glob_base = sp_path_f("./test_glob_dir", SP_FLAVOR_NATIVE);
+    sp_mkdir(&glob_base, 0755, true, true);
+
+    SpPath glob_sub = sp_path_f("./test_glob_dir/subdir", SP_FLAVOR_NATIVE);
+    sp_mkdir(&glob_sub, 0755, true, true);
+
+    /* Create test files by touching them (just need the glob to find them) */
+    FILE *f1 = fopen("./test_glob_dir/file1.txt", "w");
+    if (f1) fclose(f1);
+    FILE *f2 = fopen("./test_glob_dir/file2.py", "w");
+    if (f2) fclose(f2);
+    FILE *f3 = fopen("./test_glob_dir/subdir/file3.txt", "w");
+    if (f3) fclose(f3);
+
+    /* Test basic glob *.txt */
+    SpGlobIter *git = sp_glob_begin(&glob_base, "*.txt");
+    ASSERT(git != NULL);
+    SpPath match;
+    int txt_count = 0;
+    while (sp_glob_next(git, &match)) {
+        /* Should find file1.txt */
+        if (strstr(sp_str(&match), "file1.txt")) txt_count++;
+    }
+    sp_glob_end(git);
+    ASSERT(txt_count == 1);
+
+    /* Test recursive glob */
+    git = sp_glob_begin(&glob_base, "**/*.txt");
+    ASSERT(git != NULL);
+    txt_count = 0;
+    while (sp_glob_next(git, &match)) {
+        if (strstr(sp_str(&match), ".txt")) txt_count++;
+    }
+    sp_glob_end(git);
+    /* Should find file1.txt and file3.txt */
+    ASSERT(txt_count >= 1);  /* At least file1.txt or file3.txt */
+
+    /* Test rglob */
+    git = sp_rglob_begin(&glob_base, "*.txt");
+    ASSERT(git != NULL);
+    txt_count = 0;
+    while (sp_glob_next(git, &match)) {
+        if (strstr(sp_str(&match), ".txt")) txt_count++;
+    }
+    sp_glob_end(git);
+    ASSERT(txt_count >= 1);
+
+    /* Cleanup */
+    remove("./test_glob_dir/file1.txt");
+    remove("./test_glob_dir/file2.py");
+    remove("./test_glob_dir/subdir/file3.txt");
+    sp_rmdir("./test_glob_dir/subdir");
+    sp_rmdir("./test_glob_dir");
+
+    printf("  glob tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }

@@ -861,6 +861,33 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
             </tr>
             <tr>
               <td>
+                <code class="language-plaintext highlighter-rouge">.mkdir()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_mkdir()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.glob()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_glob_begin_ex/next/end()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.rglob()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_rglob_begin_ex/next/end()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
                 <code class="language-plaintext highlighter-rouge">len(p.parents)</code>
               </td>
               <td>
@@ -871,11 +898,37 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
           </tbody>
         </table>
         <p>
-          <strong>Not implemented:</strong> Most I/O methods (<code
-            class="language-plaintext highlighter-rouge">mkdir</code>, <code
-            class="language-plaintext highlighter-rouge">read_*</code>, <code
-            class="language-plaintext highlighter-rouge">write_*</code>, <code
-            class="language-plaintext highlighter-rouge">glob</code>, etc.)
+          <strong>Not implemented:</strong>
+          <code class="language-plaintext highlighter-rouge">iterdir</code>,
+          <code class="language-plaintext highlighter-rouge">walk</code>,
+          <code class="language-plaintext highlighter-rouge">read_bytes</code>,
+          <code class="language-plaintext highlighter-rouge">read_text</code>,
+          <code class="language-plaintext highlighter-rouge">write_bytes</code>,
+          <code class="language-plaintext highlighter-rouge">write_text</code>,
+          <code class="language-plaintext highlighter-rouge">open</code>,
+          <code class="language-plaintext highlighter-rouge">touch</code>,
+          <code class="language-plaintext highlighter-rouge">unlink</code>,
+          <code class="language-plaintext highlighter-rouge">rmdir</code>,
+          <code class="language-plaintext highlighter-rouge">rename</code>,
+          <code class="language-plaintext highlighter-rouge">replace</code>,
+          <code class="language-plaintext highlighter-rouge">symlink_to</code>,
+          <code class="language-plaintext highlighter-rouge">hardlink_to</code>,
+          <code class="language-plaintext highlighter-rouge">resolve</code>,
+          <code class="language-plaintext highlighter-rouge">readlink</code>,
+          <code class="language-plaintext highlighter-rouge">owner</code>,
+          <code class="language-plaintext highlighter-rouge">group</code>,
+          <code class="language-plaintext highlighter-rouge">chmod</code>,
+          <code class="language-plaintext highlighter-rouge">lstat</code>,
+          <code class="language-plaintext highlighter-rouge">samefile</code>,
+          <code class="language-plaintext highlighter-rouge">is_symlink</code>,
+          <code class="language-plaintext highlighter-rouge">is_mount</code>,
+          <code class="language-plaintext highlighter-rouge">is_junction</code>,
+          <code class="language-plaintext highlighter-rouge">is_block_device</code>,
+          <code class="language-plaintext highlighter-rouge">is_char_device</code>,
+          <code class="language-plaintext highlighter-rouge">is_fifo</code>,
+          <code class="language-plaintext highlighter-rouge">is_socket</code>,
+          <code class="language-plaintext highlighter-rouge">expanduser</code>,
+          <code class="language-plaintext highlighter-rouge">home</code>
         </p>
       </details>
       <details>

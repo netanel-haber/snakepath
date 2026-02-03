@@ -168,3 +168,22 @@ SP_EXPORT int sp_mkdir_err_not_dir(void) { return SP_MKDIR_ERR_NOT_DIR; }
 SP_EXPORT int sp_mkdir_err_permission(void) { return SP_MKDIR_ERR_PERMISSION; }
 SP_EXPORT int sp_mkdir_err_other(void) { return SP_MKDIR_ERR_OTHER; }
 SP_EXPORT int sp_mkdir_err_exists_not_dir(void) { return SP_MKDIR_ERR_EXISTS_NOT_DIR; }
+
+/* glob */
+SP_EXPORT SpGlobIter *sp_glob_begin_wrap(const SpPath *p, const char *pattern, int cs) {
+    return sp_glob_begin_ex(p, pattern, (SpCaseSensitivity)cs);
+}
+SP_EXPORT SpGlobIter *sp_rglob_begin_wrap(const SpPath *p, const char *pattern, int cs) {
+    return sp_rglob_begin_ex(p, pattern, (SpCaseSensitivity)cs);
+}
+
+/* Case sensitivity enum values */
+SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }
+SP_EXPORT int sp_case_sensitive(void) { return SP_CASE_SENSITIVE; }
+SP_EXPORT int sp_case_insensitive(void) { return SP_CASE_INSENSITIVE; }
+SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) {
+    return sp_glob_next(it, out) ? 1 : 0;
+}
+SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) {
+    sp_glob_end(it);
+}

@@ -267,9 +267,11 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.exists()` | `sp_exists()` | `.exists()` |
 | `.stat()` | `sp_stat()` | - |
 | `.mkdir()` | `sp_mkdir()` | - |
+| `.glob()` | `sp_glob_begin_ex/next/end()` | - |
+| `.rglob()` | `sp_rglob_begin_ex/next/end()` | - |
 | `len(p.parents)` | `sp_parents_count()` | - |
 
-**Not implemented:** Most I/O methods (`read_*`, `write_*`, `glob`, etc.)
+**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `symlink_to`, `hardlink_to`, `resolve`, `readlink`, `owner`, `group`, `chmod`, `lstat`, `samefile`, `is_symlink`, `is_mount`, `is_junction`, `is_block_device`, `is_char_device`, `is_fifo`, `is_socket`, `expanduser`, `home`
 
 ## Adding New Methods to the Library
 

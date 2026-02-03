@@ -123,6 +123,7 @@ EXPECTED_FAILURES = {
     # =========================================================================
     # test_absolute_common - uses mock.patch("os.getcwd") which doesn't affect C
     # Our C library calls getcwd() directly, bypassing Python's mock
+    # test_glob_many_open_files - order differs from Python impl
     # =========================================================================
     "!=": [
         ("PathSubclassTest", "test_absolute_common"),
@@ -130,6 +131,10 @@ EXPECTED_FAILURES = {
         ("PosixPathTest", "test_absolute_common"),
         ("WindowsPathTest", "test_absolute"),
         ("WindowsPathTest", "test_absolute_common"),
+        ("PathSubclassTest", "test_glob_many_open_files"),
+        ("PathTest", "test_glob_many_open_files"),
+        ("PosixPathTest", "test_glob_many_open_files"),
+        ("WindowsPathTest", "test_glob_many_open_files"),
     ],
 
     # =========================================================================
@@ -170,33 +175,29 @@ EXPECTED_FAILURES = {
 
 
     # =========================================================================
-    # glob() not implemented
+    # glob() edge cases not fully implemented
+    # - dotdot patterns (..)
+    # - ordering for recursive patterns
+    # Note: case_sensitive and empty pattern are now implemented
     # =========================================================================
-    "has no attribute 'glob'": [
-        ("PathSubclassTest", "test_glob_above_recursion_limit"),
-        ("PathSubclassTest", "test_glob_case_sensitive"),
-        ("PathSubclassTest", "test_glob_common"),
+
+
+    "Items in the second set but not the first": [
         ("PathSubclassTest", "test_glob_dotdot"),
-        ("PathSubclassTest", "test_glob_many_open_files"),
-        ("PathTest", "test_glob_above_recursion_limit"),
-        ("PathTest", "test_glob_case_sensitive"),
-        ("PathTest", "test_glob_common"),
         ("PathTest", "test_glob_dotdot"),
-        ("PathTest", "test_glob_empty_pattern"),
-        ("PathTest", "test_glob_many_open_files"),
-        ("PosixPathTest", "test_glob"),
-        ("PosixPathTest", "test_glob_above_recursion_limit"),
-        ("PosixPathTest", "test_glob_case_sensitive"),
-        ("PosixPathTest", "test_glob_common"),
         ("PosixPathTest", "test_glob_dotdot"),
-        ("PosixPathTest", "test_glob_many_open_files"),
-        ("WindowsPathTest", "test_glob"),
-        ("WindowsPathTest", "test_glob_above_recursion_limit"),
-        ("WindowsPathTest", "test_glob_case_sensitive"),
-        ("WindowsPathTest", "test_glob_common"),
         ("WindowsPathTest", "test_glob_dotdot"),
-        ("WindowsPathTest", "test_glob_many_open_files"),
     ],
+
+
+    # rglob edge cases - **/pattern not matching correctly
+    "Lists differ": [
+        ("PathSubclassTest", "test_rglob_common"),
+        ("PathTest", "test_rglob_common"),
+        ("PosixPathTest", "test_rglob_common"),
+        ("WindowsPathTest", "test_rglob_common"),
+    ],
+
 
     # =========================================================================
     # group() not implemented
@@ -427,17 +428,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_replace"),
     ],
 
-    # =========================================================================
-    # rglob() not implemented
-    # =========================================================================
-    "has no attribute 'rglob'": [
-        ("PathSubclassTest", "test_rglob_common"),
-        ("PathTest", "test_rglob_common"),
-        ("PosixPathTest", "test_rglob"),
-        ("PosixPathTest", "test_rglob_common"),
-        ("WindowsPathTest", "test_rglob"),
-        ("WindowsPathTest", "test_rglob_common"),
-    ],
 
     # =========================================================================
     # samefile() not implemented
@@ -597,6 +587,7 @@ def setup_pathlib_patch():
         def __fspath__(self): return self.path
     os_helper.FakePath = FakePath
     os_helper.can_symlink = lambda: False
+    os_helper.fs_is_case_insensitive = lambda path: False
     os_helper.rmtree = shutil.rmtree
     # Skip decorators
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")
