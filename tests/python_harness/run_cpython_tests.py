@@ -341,9 +341,10 @@ def setup_tests():
         download_file(url, dest)
 
 
-def setup_pathlib_patch():
+def setup_pathlib_patch(testfn=None):
     """Patch pathlib module to use snakepath."""
     import types
+    import tempfile
 
     # Create pathlib module with snakepath classes
     pathlib_pkg = types.ModuleType('pathlib')
@@ -386,10 +387,11 @@ def setup_pathlib_patch():
     sys.modules['test.support'] = test_support
 
     # Stub test.support.os_helper
-    import tempfile
     import shutil
     os_helper = types.ModuleType('test.support.os_helper')
-    os_helper.TESTFN = str(Path(tempfile.gettempdir()) / 'test_pathlib_tmp')
+    if testfn is None:
+        testfn = str(Path(tempfile.gettempdir()) / 'test_pathlib_tmp')
+    os_helper.TESTFN = testfn
     os_helper.FS_NONASCII = '\xe9'
     class FakePath:
         def __init__(self, path): self.path = path
@@ -483,50 +485,138 @@ class QuietRunner(unittest.TextTestRunner):
     resultclass = QuietExpectedFailuresResult
 
 
+def run_single_class(class_info):
+    """Run a single test class in a subprocess. Returns (class_name, results_dict)."""
+    import os
+    import tempfile
+    import shutil
+
+    class_name, module_name = class_info
+
+    # Create unique temp directory for this class
+    unique_tmp = os.path.join(tempfile.gettempdir(), f'test_pathlib_{class_name}_{os.getpid()}')
+
+    # Clear cached modules to force fresh import with new TESTFN
+    for mod_name in list(sys.modules.keys()):
+        if 'cpython_tests' in mod_name or mod_name == 'pathlib' or mod_name.startswith('test.'):
+            del sys.modules[mod_name]
+
+    # Re-setup environment in subprocess with unique temp dir
+    setup_pathlib_patch(unique_tmp)
+    sys.path.insert(0, str(TEST_DIR.parent))
+
+    try:
+        __import__(module_name)
+        module = sys.modules[module_name]
+        test_class = getattr(module, class_name)
+    except Exception as e:
+        return (class_name, {'error': str(e), 'tests_run': 0, 'failures': [], 'errors': [], 'skipped': []})
+
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    for method_name in loader.getTestCaseNames(test_class):
+        suite.addTest(test_class(method_name))
+
+    # Run with a stream that captures output
+    import io
+    stream = io.StringIO()
+    runner = QuietRunner(stream=stream, verbosity=0)
+    result = runner.run(suite)
+
+    # Cleanup unique temp directory
+    if os.path.exists(unique_tmp):
+        shutil.rmtree(unique_tmp, ignore_errors=True)
+
+    # Convert result to serializable dict
+    def test_to_tuple(test, tb):
+        return (test.__class__.__name__, test._testMethodName, tb)
+
+    return (class_name, {
+        'tests_run': result.testsRun,
+        'failures': [test_to_tuple(t, tb) for t, tb in result.failures],
+        'errors': [test_to_tuple(t, tb) for t, tb in result.errors],
+        'skipped': [test_to_tuple(t, tb) for t, tb in result.skipped],
+    })
+
+
 def run_tests():
     """Run CPython tests against snakepath."""
+    import multiprocessing
+    import os
+
     setup_tests()
     setup_pathlib_patch()
 
     # Add test dir to path
     sys.path.insert(0, str(TEST_DIR.parent))
 
-    print("\nRunning CPython pathlib tests against snakepath\n")
+    print("\nRunning CPython pathlib tests against snakepath (parallel by class)\n")
 
-    # Discover and load tests
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
-    loaded_count = 0
-
+    # Discover test classes
     module_name = f"cpython_tests.{TEST_FILE[:-3]}"
+    test_classes = []
 
     try:
         __import__(module_name)
         module = sys.modules[module_name]
 
+        loader = unittest.TestLoader()
         for name in dir(module):
             obj = getattr(module, name)
             if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
                 if obj is unittest.TestCase:
                     continue
-
-                class_loaded = False
-                for method_name in loader.getTestCaseNames(obj):
-                    suite.addTest(obj(method_name))
-                    class_loaded = True
-
-                if class_loaded:
-                    loaded_count += 1
+                # Check it has test methods
+                if loader.getTestCaseNames(obj):
+                    test_classes.append((name, module_name))
     except Exception as e:
         print(f"  ERROR loading {TEST_FILE}: {e}")
         import traceback
         traceback.print_exc()
+        return 1
 
-    print(f"\nLoaded {loaded_count} test classes\n")
+    print(f"Found {len(test_classes)} test classes, running in parallel...\n")
 
-    # Run with quiet runner - use verbosity=1 (dots) for shorter CI output
-    runner = QuietRunner(verbosity=1)
-    result = runner.run(suite)
+    # Run test classes in parallel using spawn context for clean isolation
+    num_workers = min(len(test_classes), os.cpu_count() or 4)
+    ctx = multiprocessing.get_context('spawn')
+    with ctx.Pool(num_workers) as pool:
+        results_list = pool.map(run_single_class, test_classes)
+
+    # Aggregate results
+    class AggregatedResult:
+        def __init__(self):
+            self.testsRun = 0
+            self.failures = []
+            self.errors = []
+            self.skipped = []
+
+    result = AggregatedResult()
+
+    # Create mock test objects for the results
+    class MockTest:
+        def __init__(self, class_name, method_name):
+            self._testMethodName = method_name
+            self.__class__ = type(class_name, (), {'__name__': class_name})
+
+    for class_name, res in results_list:
+        if 'error' in res:
+            print(f"  ERROR in {class_name}: {res['error']}")
+            continue
+
+        result.testsRun += res['tests_run']
+
+        for cls, method, tb in res['failures']:
+            mock = MockTest(cls, method)
+            result.failures.append((mock, tb))
+
+        for cls, method, tb in res['errors']:
+            mock = MockTest(cls, method)
+            result.errors.append((mock, tb))
+
+        for cls, method, tb in res['skipped']:
+            mock = MockTest(cls, method)
+            result.skipped.append((mock, tb))
 
     # Check expected failures, grouped by reason
     expected_by_reason = {}  # reason -> list of test names
