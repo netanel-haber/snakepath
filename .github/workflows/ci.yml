@@ -29,6 +29,8 @@ jobs:
 
       - name: Run build and tests
         run: ./nob
+        env:
+          SNAKEPATH_SANITIZE: "1"
 
   build-windows:
     runs-on: windows-latest

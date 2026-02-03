@@ -57,6 +57,7 @@ typedef struct {
 } BuildConfig;
 
 static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
+    bool no_nrvo = getenv("SNAKEPATH_NO_NRVO") != NULL;
     switch (compiler) {
     case COMPILER_GCC:
         nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS, GCC_WARNINGS, GCC_C_WARNINGS);
@@ -64,6 +65,7 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     case COMPILER_CLANG:
         nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS);
         nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_C_EXCLUSIONS);
+        if (no_nrvo) nob_cmd_append(cmd, "-Wno-nrvo");
         break;
     case COMPILER_GPP:
         nob_cmd_append(cmd, BASE_WARNINGS, GCC_WARNINGS);
@@ -71,6 +73,7 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     case COMPILER_CLANGPP:
         nob_cmd_append(cmd, BASE_WARNINGS);
         nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_CPP_EXCLUSIONS);
+        if (no_nrvo) nob_cmd_append(cmd, "-Wno-nrvo");
         break;
 #ifdef _WIN32
     case COMPILER_MSVC:
@@ -137,8 +140,12 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #endif
     {
         if (cfg.sanitizers) {
-            nob_cmd_append(&cmd, "-fsanitize=address,undefined");
+            nob_cmd_append(&cmd, "-fsanitize=address,undefined,leak");
+            nob_cmd_append(&cmd, "-fsanitize=pointer-compare,pointer-subtract");
+            nob_cmd_append(&cmd, "-fsanitize=float-divide-by-zero,float-cast-overflow");
+            nob_cmd_append(&cmd, "-fsanitize-address-use-after-scope");
             nob_cmd_append(&cmd, "-fno-omit-frame-pointer");
+            nob_cmd_append(&cmd, "-fno-common");
         }
         nob_cmd_append(&cmd, "-g", "-O0");
         nob_cmd_append(&cmd, "-o", cfg.output);
@@ -323,7 +330,11 @@ int main(int argc, char **argv) {
     BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "demo.exe"};
     const char *demo_output = "demo.exe";
 #else
-    BuildConfig test_configs[] = {
+    bool use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
+    bool skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;  /* For Termux where gcc is clang */
+
+    /* Full configs with sanitizers */
+    BuildConfig test_configs_full[] = {
         {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
         {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
         {COMPILER_GCC,     true,  "GCC + sanitizers",   "./tests/test_gcc_san"},
@@ -331,16 +342,53 @@ int main(int argc, char **argv) {
         {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
         {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
     };
-    BuildConfig fluent_configs[] = {
+    /* No sanitizers */
+    BuildConfig test_configs_no_san[] = {
+        {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
+    };
+    /* Clang-only (for Termux where gcc is clang) */
+    BuildConfig test_configs_clang_only[] = {
+        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
+    };
+
+    BuildConfig *test_configs;
+    size_t test_count;
+    if (skip_gcc) {
+        test_configs = test_configs_clang_only;
+        test_count = sizeof(test_configs_clang_only) / sizeof(test_configs_clang_only[0]);
+        nob_log(NOB_INFO, "SNAKEPATH_SKIP_GCC set - using clang only");
+    } else if (use_sanitizers) {
+        test_configs = test_configs_full;
+        test_count = sizeof(test_configs_full) / sizeof(test_configs_full[0]);
+        nob_log(NOB_INFO, "SNAKEPATH_SANITIZE set - including sanitizer builds");
+    } else {
+        test_configs = test_configs_no_san;
+        test_count = sizeof(test_configs_no_san) / sizeof(test_configs_no_san[0]);
+    }
+
+    BuildConfig fluent_configs_full[] = {
         {COMPILER_GCC,   false, "GCC Fluent",   "./tests/test_fluent_gcc"},
         {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
     };
-    BuildConfig demo_config = {COMPILER_GCC, false, "Demo", "./demo"};
+    BuildConfig fluent_configs_clang[] = {
+        {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
+    };
+    BuildConfig *fluent_configs = skip_gcc ? fluent_configs_clang : fluent_configs_full;
+    BuildConfig demo_config = skip_gcc
+        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "./demo"}
+        : (BuildConfig){COMPILER_GCC, false, "Demo", "./demo"};
     const char *demo_output = "./demo";
 #endif
 
-    size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
+#ifdef _WIN32
     size_t fluent_count = sizeof(fluent_configs) / sizeof(fluent_configs[0]);
+#else
+    size_t fluent_count = skip_gcc ? 1 : 2;
+#endif
 
     /* Phase 1: Build everything in parallel */
     nob_log(NOB_INFO, "=== Building all targets ===");
