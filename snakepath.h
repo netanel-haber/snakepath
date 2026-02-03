@@ -128,7 +128,7 @@ typedef struct {
 #define SP_GLOB_MAX_DEPTH 32
 #endif
 #ifndef SP_GLOB_MAX_SEGMENTS
-#define SP_GLOB_MAX_SEGMENTS 32
+#define SP_GLOB_MAX_SEGMENTS 64  /* Support patterns with many segments (e.g., 50 ../..) */
 #endif
 #ifndef SP_GLOB_PATTERN_MAX
 #define SP_GLOB_PATTERN_MAX 256
@@ -144,6 +144,7 @@ typedef struct {
         size_t seg_count;
         bool dir_only;
         bool case_insensitive;
+        bool yield_base_pending;  /* When pattern starts with **, yield base dir first */
         SpFlavor flavor;
         SpPath dirs[SP_GLOB_MAX_DEPTH];
         size_t seg_idxs[SP_GLOB_MAX_DEPTH];
@@ -368,6 +369,7 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>  /* for realpath */
 #define sp_priv_getcwd getcwd
 #endif
 
@@ -1907,7 +1909,14 @@ static void *sp_priv_glob_open_dir(const SpPath *dir) {
     HANDLE h = FindFirstFileA(search, &fd);
     return (h == INVALID_HANDLE_VALUE) ? NULL : h;
 #else
-    return opendir(dir->len == 0 ? "." : dir->buf);
+    const char *path = (dir->len == 0) ? "." : dir->buf;
+    /* Use realpath to resolve .. components before opening (some systems reject opendir on paths with ..) */
+    char resolved[SP_PATH_MAX];
+    if (realpath(path, resolved) != NULL) {
+        return opendir(resolved);
+    }
+    /* Fallback to direct open if realpath fails */
+    return opendir(path);
 #endif
 }
 
@@ -1939,11 +1948,27 @@ SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitiv
     it.priv_.dirs[0] = *base;
     it.priv_.seg_idxs[0] = 0;
     it.priv_.handles[0] = h;
+
+    /* When pattern is just ** (single segment), yield base directory first */
+    if (it.priv_.seg_types[0] == SP_GLOB_SEG_DOUBLESTAR && it.priv_.seg_count == 1) {
+        it.priv_.yield_base_pending = true;
+    }
+
     return it;
 }
 
 bool sp_glob_next(SpGlobIter *it, SpPath *out) {
     if (!it || it->depth < 0) return false;
+
+    /* When pattern starts with **, yield base directory first */
+    if (it->priv_.yield_base_pending) {
+        it->priv_.yield_base_pending = false;
+        /* Only yield base if it matches dir_only constraint */
+        if (!it->priv_.dir_only || sp_is_dir(&it->priv_.dirs[0])) {
+            *out = it->priv_.dirs[0];
+            return true;
+        }
+    }
 
     while (it->depth >= 0) {
         int d = it->depth;
@@ -1957,6 +1982,53 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         int stype = it->priv_.seg_types[seg_idx];
         bool is_last = (seg_idx == it->priv_.seg_count - 1);
         bool ci = it->priv_.case_insensitive;
+
+        /* Special handling for literal . and .. segments - don't use readdir, just synthesize */
+        /* This avoids opendir() issues on paths with .. (fails on some systems) */
+        if (stype == SP_GLOB_SEG_LITERAL &&
+            ((pat[0] == '.' && pat[1] == '\0') || (pat[0] == '.' && pat[1] == '.' && pat[2] == '\0'))) {
+            SpPath full = sp_join_one(dir, pat);
+            bool isdir = sp_is_dir(&full);
+            if (isdir) {
+                if (is_last) {
+                    if (!it->priv_.dir_only || isdir) {
+                        it->priv_.seg_idxs[d] = seg_idx + 1;  /* Advance so we don't yield again */
+                        *out = full;
+                        return true;
+                    }
+                } else {
+                    /* Check if next segment is also a literal . or .. */
+                    const char *npat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
+                    int ntype = it->priv_.seg_types[seg_idx + 1];
+                    bool next_is_dot = (ntype == SP_GLOB_SEG_LITERAL) &&
+                        ((npat[0] == '.' && npat[1] == '\0') || (npat[0] == '.' && npat[1] == '.' && npat[2] == '\0'));
+
+                    if (next_is_dot) {
+                        /* Both current and next are dots - just advance without opening */
+                        it->priv_.seg_idxs[d] = seg_idx + 1;
+                        it->priv_.dirs[d] = full;
+                        continue;
+                    }
+
+                    /* Next segment needs directory iteration - reopen at new path */
+                    sp_priv_glob_close_handle(h);
+                    it->priv_.handles[d] = NULL;
+                    void *nh = sp_priv_glob_open_dir(&full);
+                    if (nh) {
+                        it->priv_.handles[d] = nh;
+                        it->priv_.seg_idxs[d] = seg_idx + 1;
+                        it->priv_.dirs[d] = full;
+                        continue;
+                    }
+                    /* Reopen failed - pop to previous depth */
+                    it->depth--;
+                    continue;
+                }
+            }
+            /* Path doesn't exist or isn't a directory - pop */
+            sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--;
+            continue;
+        }
 
         const char *name = NULL;
 #ifdef SP_WINDOWS
@@ -1999,16 +2071,27 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
                     if (nlast && (!it->priv_.dir_only || isdir)) { *out = full; return true; }
                     if (!nlast && isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
                         void *nh = sp_priv_glob_open_dir(&full);
-                        if (nh) { it->depth++; it->priv_.dirs[it->depth] = full; it->priv_.seg_idxs[it->depth] = seg_idx + 2; it->priv_.handles[it->depth] = nh; }
+                        if (nh) {
+                            size_t next_seg = seg_idx + 2;
+                            bool next_is_last_doublestar = (it->priv_.seg_types[next_seg] == SP_GLOB_SEG_DOUBLESTAR) &&
+                                                          (next_seg == it->priv_.seg_count - 1);
+                            it->depth++;
+                            it->priv_.dirs[it->depth] = full;
+                            it->priv_.seg_idxs[it->depth] = next_seg;
+                            it->priv_.handles[it->depth] = nh;
+                            /* If pushing to a trailing **, yield this dir (** matches zero subdirs) */
+                            if (next_is_last_doublestar) { *out = full; return true; }
+                        }
                     }
                 }
             }
-            /* ** at end yields everything; also recurse into subdirs continuing ** */
-            if (is_last && (!it->priv_.dir_only || isdir)) { *out = full; return true; }
+            /* ** at end yields only directories (Python behavior: ** matches directory paths) */
+            /* Set up recursion BEFORE yielding so we continue exploring subdirs */
             if (isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
                 void *nh = sp_priv_glob_open_dir(&full);
                 if (nh) { it->depth++; it->priv_.dirs[it->depth] = full; it->priv_.seg_idxs[it->depth] = seg_idx; it->priv_.handles[it->depth] = nh; }
             }
+            if (is_last && isdir) { *out = full; return true; }
         } else {
             bool match = (stype == SP_GLOB_SEG_LITERAL)
                 ? (ci ? sp_priv_str_eq_ci(name, strlen(name), pat, strlen(pat)) : strcmp(name, pat) == 0)

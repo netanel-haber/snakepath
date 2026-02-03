@@ -177,21 +177,8 @@ EXPECTED_FAILURES = {
     # =========================================================================
 
 
-    "Items in the second set but not the first": [
-        ("PathSubclassTest", "test_glob_dotdot"),
-        ("PathTest", "test_glob_dotdot"),
-        ("PosixPathTest", "test_glob_dotdot"),
-        ("WindowsPathTest", "test_glob_dotdot"),
-    ],
 
 
-    # rglob edge cases - **/pattern not matching correctly
-    "Lists differ": [
-        ("PathSubclassTest", "test_rglob_common"),
-        ("PathTest", "test_rglob_common"),
-        ("PosixPathTest", "test_rglob_common"),
-        ("WindowsPathTest", "test_rglob_common"),
-    ],
 
 
     # =========================================================================
