@@ -169,15 +169,17 @@ SP_EXPORT int sp_mkdir_err_permission(void) { return SP_MKDIR_ERR_PERMISSION; }
 SP_EXPORT int sp_mkdir_err_other(void) { return SP_MKDIR_ERR_OTHER; }
 SP_EXPORT int sp_mkdir_err_exists_not_dir(void) { return SP_MKDIR_ERR_EXISTS_NOT_DIR; }
 
-/* glob - callback wrapper for Python */
-typedef int (*SpGlobCallbackWrap)(const SpPath *match, void *user_data);
-
-SP_EXPORT int sp_glob_wrap(const SpPath *p, const char *pattern, int cs, SpGlobCallbackWrap cb, void *user_data) {
-    return sp_glob(p, pattern, (SpCaseSensitivity)cs, (SpGlobCallback)cb, user_data) ? 1 : 0;
+/* glob iterator */
+SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
+SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int cs, SpGlobIter *out) {
+    *out = sp_glob_begin(p, pattern, (SpCaseSensitivity)cs);
 }
-SP_EXPORT int sp_rglob_wrap(const SpPath *p, const char *pattern, int cs, SpGlobCallbackWrap cb, void *user_data) {
-    return sp_rglob(p, pattern, (SpCaseSensitivity)cs, (SpGlobCallback)cb, user_data) ? 1 : 0;
+SP_EXPORT void sp_rglob_begin_wrap(const SpPath *p, const char *pattern, int cs, SpGlobIter *out) {
+    *out = sp_rglob_begin(p, pattern, (SpCaseSensitivity)cs);
 }
+SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) { return sp_glob_next(it, out) ? 1 : 0; }
+SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) { sp_glob_end(it); }
+SP_EXPORT int sp_glob_depth_wrap(SpGlobIter *it) { return it->depth; }
 
 /* Case sensitivity enum values */
 SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }

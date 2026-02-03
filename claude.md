@@ -106,15 +106,18 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 | Join | `sp_join_one()` | `sp_join_sv()` | `sp_joinpath()` |
 
 ### Glob Implementation
-- `sp_glob()` / `sp_rglob()` callback-based API using simple recursion
-- `sp_rglob()` just prepends `**/` and delegates to glob - good code reuse
+- `sp_glob_begin()` / `sp_glob_next()` / `sp_glob_end()` - iterator-based API with internal stack
+- `sp_rglob_begin()` just prepends `**/` and delegates to glob - good code reuse
 - Uses `SpCaseSensitivity` enum: `SP_CASE_PLATFORM_DEFAULT`, `SP_CASE_SENSITIVE`, `SP_CASE_INSENSITIVE`
-- Callback signature: `bool (*SpGlobCallback)(const SpPath *match, void *user_data)` - return false to stop
-- No thread-local storage or manual stack - uses natural call stack for recursion
+- `SpGlobIter` contains an internal stack (no malloc, no thread-local storage)
+- Configurable limits: `SP_GLOB_MAX_DEPTH` (32), `SP_GLOB_MAX_SEGMENTS` (32), `SP_GLOB_PATTERN_MAX` (256)
+- Foreach macros: `SP_GLOB_FOREACH(base, pattern, match)` and `SP_RGLOB_FOREACH(base, pattern, match)`
+- Iterator exposes `depth` field for current recursion level
 
 ### Iterator Patterns
-The library has two iterators:
+The library has three iterators:
 - `SpPartsIter` - string cursor over path components
 - `SpParentsIter` - generates derived parent paths
+- `SpGlobIter` - directory traversal for glob matching
 
-These don't share enough structure for nob.h-style macro abstraction - they just follow the same API pattern (`begin`/`next`).
+All follow the same API pattern (`begin`/`next`/`end`).
