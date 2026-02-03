@@ -274,14 +274,14 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
 
 /* Glob foreach macro - iterates all matches, auto-closes on completion */
 #define SP_GLOB_FOREACH(base, pattern, match_var) \
-    for (struct { SpGlobIter it; int done; } sp__g = { sp_glob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
-         !sp__g.done; sp_glob_end(&sp__g.it), sp__g.done = 1) \
-    for (SpPath match_var; sp_glob_next(&sp__g.it, &match_var); )
+    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_glob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
+         !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
+    for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
 
 #define SP_RGLOB_FOREACH(base, pattern, match_var) \
-    for (struct { SpGlobIter it; int done; } sp__g = { sp_rglob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
-         !sp__g.done; sp_glob_end(&sp__g.it), sp__g.done = 1) \
-    for (SpPath match_var; sp_glob_next(&sp__g.it, &match_var); )
+    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_rglob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
+         !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
+    for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
 
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
@@ -1887,9 +1887,9 @@ static bool sp_priv_glob_match_seg(const char *pat, const char *name, bool ci) {
 static void sp_priv_glob_close_handle(void *h) {
     if (!h) return;
 #ifdef SP_WINDOWS
-    FindClose((HANDLE)h);
+    FindClose(SP_PRIV_CAST(HANDLE, h));
 #else
-    closedir((DIR *)h);
+    closedir(SP_PRIV_CAST(DIR *, h));
 #endif
 }
 
@@ -1961,10 +1961,10 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         const char *name = NULL;
 #ifdef SP_WINDOWS
         WIN32_FIND_DATAA fd;
-        if (!FindNextFileA((HANDLE)h, &fd)) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
+        if (!FindNextFileA(SP_PRIV_CAST(HANDLE, h), &fd)) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
         name = fd.cFileName;
 #else
-        struct dirent *de = readdir((DIR *)h);
+        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, h));
         if (!de) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
         name = de->d_name;
 #endif
