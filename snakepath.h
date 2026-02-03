@@ -311,8 +311,9 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <windows.h>
 #define sp_priv_getcwd _getcwd
 #else
-#include <unistd.h>
+#include <sys/types.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <errno.h>
 #define sp_priv_getcwd getcwd
 #endif
