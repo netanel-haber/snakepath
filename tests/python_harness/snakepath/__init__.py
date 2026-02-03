@@ -56,6 +56,11 @@ SP_MKDIR_ERR_PERMISSION = _lib.sp_mkdir_err_permission()
 SP_MKDIR_ERR_OTHER = _lib.sp_mkdir_err_other()
 SP_MKDIR_ERR_EXISTS_NOT_DIR = _lib.sp_mkdir_err_exists_not_dir()
 
+# Case sensitivity options for glob/match
+SP_CASE_PLATFORM_DEFAULT = _lib.sp_case_platform_default()
+SP_CASE_SENSITIVE = _lib.sp_case_sensitive()
+SP_CASE_INSENSITIVE = _lib.sp_case_insensitive()
+
 
 class _SpPath(Structure):
     """C SpPath structure"""
@@ -161,6 +166,16 @@ _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
 _sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int], c_int)
+# Glob iterator
+_sizeof_glob_iter = _lib.sp_sizeof_glob_iter()
+class _SpGlobIter(Structure):
+    _fields_ = [('_opaque', ctypes.c_char * _sizeof_glob_iter)]
+_PGlobIter = POINTER(_SpGlobIter)
+_sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
+_sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
+_sig('sp_glob_next_wrap', [_PGlobIter, _PP], c_int)
+_sig('sp_glob_end_wrap', [_PGlobIter])
+_sig('sp_glob_depth_wrap', [_PGlobIter], c_int)
 
 
 # ============ Property descriptors ============
@@ -604,6 +619,50 @@ class Path(PurePath):
             raise PermissionError(13, "Permission denied", path_str)
         else:
             raise OSError(0, "Unknown error", path_str)
+
+    def glob(self, pattern, *, case_sensitive=None):
+        """Iterate over this subtree and yield all existing files matching pattern."""
+        if isinstance(pattern, bytes):
+            raise TypeError("argument should be a str or os.PathLike object, not bytes")
+        pattern_str = str(pattern)
+        if not pattern_str:
+            raise ValueError("Unacceptable pattern: ''")
+
+        cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
+
+        results = []
+        path_class = self.__class__
+        it = _SpGlobIter()
+        match = _SpPath()
+        _lib.sp_glob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
+        while _lib.sp_glob_next_wrap(byref(it), byref(match)):
+            result = path_class.__new__(path_class)
+            result._sp = _SpPath()
+            _lib.sp_path_copy_wrap(byref(match), byref(result._sp))
+            results.append(result)
+        _lib.sp_glob_end_wrap(byref(it))
+        return iter(results)
+
+    def rglob(self, pattern, *, case_sensitive=None):
+        """Recursively yield all existing files matching pattern."""
+        if isinstance(pattern, bytes):
+            raise TypeError("argument should be a str or os.PathLike object, not bytes")
+        pattern_str = str(pattern)
+
+        cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
+
+        results = []
+        path_class = self.__class__
+        it = _SpGlobIter()
+        match = _SpPath()
+        _lib.sp_rglob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
+        while _lib.sp_glob_next_wrap(byref(it), byref(match)):
+            result = path_class.__new__(path_class)
+            result._sp = _SpPath()
+            _lib.sp_path_copy_wrap(byref(match), byref(result._sp))
+            results.append(result)
+        _lib.sp_glob_end_wrap(byref(it))
+        return iter(results)
 
 
 class PosixPath(Path, PurePosixPath):

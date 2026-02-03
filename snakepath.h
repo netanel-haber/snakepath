@@ -75,6 +75,9 @@ extern "C" {
 /* Flavors for explicit platform behavior */
 typedef enum { SP_FLAVOR_NATIVE = 0, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS } SpFlavor;
 
+/* Case sensitivity options for glob/match */
+typedef enum { SP_CASE_PLATFORM_DEFAULT = 0, SP_CASE_SENSITIVE, SP_CASE_INSENSITIVE } SpCaseSensitivity;
+
 /* Assertion macros for runtime invariant checking */
 #define SP_ASSERT_PATH(p) assert((p) != NULL && "path pointer must not be NULL")
 #define SP_ASSERT_FLAVOR(f)                                                                                            \
@@ -119,6 +122,35 @@ typedef struct {
     SpPath current;
     bool done;
 } SpParentsIter;
+
+/* Glob iterator limits */
+#ifndef SP_GLOB_MAX_DEPTH
+#define SP_GLOB_MAX_DEPTH 32
+#endif
+#ifndef SP_GLOB_MAX_SEGMENTS
+#define SP_GLOB_MAX_SEGMENTS 64  /* Support patterns with many segments (e.g., 50 ../..) */
+#endif
+#ifndef SP_GLOB_PATTERN_MAX
+#define SP_GLOB_PATTERN_MAX 256
+#endif
+
+/* Glob iterator */
+typedef struct {
+    int depth;  /* Current depth (0 = base dir), -1 = done/error */
+    struct {
+        char pattern_buf[SP_GLOB_PATTERN_MAX];
+        size_t seg_offsets[SP_GLOB_MAX_SEGMENTS];  /* Offsets into pattern_buf */
+        int seg_types[SP_GLOB_MAX_SEGMENTS];
+        size_t seg_count;
+        bool dir_only;
+        bool case_insensitive;
+        bool yield_base_pending;  /* When pattern starts with **, yield base dir first */
+        SpFlavor flavor;
+        SpPath dirs[SP_GLOB_MAX_DEPTH];
+        size_t seg_idxs[SP_GLOB_MAX_DEPTH];
+        void *handles[SP_GLOB_MAX_DEPTH];
+    } priv_;
+} SpGlobIter;
 
 /* ============ API Macros ============ */
 
@@ -229,6 +261,28 @@ size_t sp_parents_count(const SpPath *p);
 #define SP_MKDIR_DEF_MODE 0777         /* Default mode (0 = use this); umask applied by OS */
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);
+
+/* Glob iterator - iterate over paths matching a pattern
+ * sp_glob_begin:  Initialize iterator, returns iterator with depth=0 (or -1 on error)
+ * sp_glob_next:   Get next match, returns true if found (match written to out)
+ * sp_glob_end:    Close iterator (must be called to release directory handles)
+ * sp_rglob_begin: Like sp_glob_begin but prepends "**\/" to pattern
+ */
+SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs);
+bool sp_glob_next(SpGlobIter *it, SpPath *out);
+void sp_glob_end(SpGlobIter *it);
+SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs);
+
+/* Glob foreach macro - iterates all matches, auto-closes on completion */
+#define SP_GLOB_FOREACH(base, pattern, match_var) \
+    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_glob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
+         !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
+    for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
+
+#define SP_RGLOB_FOREACH(base, pattern, match_var) \
+    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_rglob_begin(base, pattern, SP_CASE_PLATFORM_DEFAULT), 0 }; \
+         !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
+    for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
 
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
@@ -1766,6 +1820,313 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
     }
     return SP_MKDIR_ERR_OTHER;
 #endif
+}
+
+/* ============ Glob Implementation ============ */
+
+/* Include dirent for POSIX or use Windows APIs */
+#ifdef SP_WINDOWS
+/* Already included windows.h above */
+#else
+#include <dirent.h>
+#endif
+
+/* Pattern segment types */
+#define SP_GLOB_SEG_LITERAL 0
+#define SP_GLOB_SEG_PATTERN 1
+#define SP_GLOB_SEG_DOUBLESTAR 2
+
+static bool sp_priv_glob_has_wildcard(const char *s) {
+    for (; *s; s++) if (*s == '*' || *s == '?') return true;
+    return false;
+}
+
+static bool sp_priv_glob_is_doublestar(const char *s) {
+    return s[0] == '*' && s[1] == '*' && s[2] == '\0';
+}
+
+static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor,
+                                          char *buf, size_t buf_size,
+                                          size_t *seg_offsets, int *seg_types, size_t max_segs,
+                                          bool *dir_only) {
+    size_t count = 0;
+    size_t len = strlen(pattern);
+    if (len >= buf_size) len = buf_size - 1;
+    memcpy(buf, pattern, len);
+    buf[len] = '\0';
+    *dir_only = (len > 0 && sp_priv_is_sep(pattern[len - 1], flavor));
+
+    char *p = buf, *start = p;
+    while (*p && count < max_segs) {
+        if (sp_priv_is_sep(*p, flavor)) {
+            *p = '\0';
+            if (p > start) {
+                seg_offsets[count] = SP_PRIV_CAST(size_t, start - buf);
+                seg_types[count] = sp_priv_glob_is_doublestar(start) ? SP_GLOB_SEG_DOUBLESTAR
+                                 : sp_priv_glob_has_wildcard(start) ? SP_GLOB_SEG_PATTERN
+                                 : SP_GLOB_SEG_LITERAL;
+                count++;
+            }
+            start = p + 1;
+        }
+        p++;
+    }
+    if (*start && count < max_segs) {
+        seg_offsets[count] = SP_PRIV_CAST(size_t, start - buf);
+        seg_types[count] = sp_priv_glob_is_doublestar(start) ? SP_GLOB_SEG_DOUBLESTAR
+                         : sp_priv_glob_has_wildcard(start) ? SP_GLOB_SEG_PATTERN
+                         : SP_GLOB_SEG_LITERAL;
+        count++;
+    }
+    return count;
+}
+
+static bool sp_priv_glob_match_seg(const char *pat, const char *name, bool ci) {
+    return sp_priv_fnmatch(pat, strlen(pat), name, strlen(name), ci);
+}
+
+static void sp_priv_glob_close_handle(void *h) {
+    if (!h) return;
+#ifdef SP_WINDOWS
+    FindClose(SP_PRIV_CAST(HANDLE, h));
+#else
+    closedir(SP_PRIV_CAST(DIR *, h));
+#endif
+}
+
+static void *sp_priv_glob_open_dir(const SpPath *dir) {
+#ifdef SP_WINDOWS
+    char search[SP_PATH_MAX + 3];
+    size_t len = dir->len;
+    if (len == 0) { search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0'; }
+    else {
+        memcpy(search, dir->buf, len);
+        if (!sp_priv_is_sep(search[len-1], dir->flavor)) search[len++] = '\\';
+        search[len++] = '*'; search[len] = '\0';
+    }
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(search, &fd);
+    return (h == INVALID_HANDLE_VALUE) ? NULL : h;
+#else
+    const char *path = (dir->len == 0) ? "." : dir->buf;
+    return opendir(path);
+#endif
+}
+
+SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs) {
+    SpGlobIter it;
+    memset(&it, 0, sizeof(it));
+    it.depth = -1;
+
+    if (!base || !pattern || !*pattern) return it;
+    SP_ASSERT_PATH_INVARIANT(base);
+
+    it.priv_.flavor = base->flavor;
+    switch (cs) {
+        case SP_CASE_PLATFORM_DEFAULT: it.priv_.case_insensitive = sp_priv_is_windows_flavor(base->flavor); break;
+        case SP_CASE_SENSITIVE:        it.priv_.case_insensitive = false; break;
+        case SP_CASE_INSENSITIVE:      it.priv_.case_insensitive = true; break;
+        default:                       it.priv_.case_insensitive = sp_priv_is_windows_flavor(base->flavor); break;
+    }
+
+    it.priv_.seg_count = sp_priv_glob_parse_pattern(pattern, base->flavor,
+        it.priv_.pattern_buf, SP_GLOB_PATTERN_MAX,
+        it.priv_.seg_offsets, it.priv_.seg_types, SP_GLOB_MAX_SEGMENTS, &it.priv_.dir_only);
+    if (it.priv_.seg_count == 0) return it;
+
+    void *h = sp_priv_glob_open_dir(base);
+    if (!h) return it;
+
+    it.depth = 0;
+    it.priv_.dirs[0] = *base;
+    it.priv_.seg_idxs[0] = 0;
+    it.priv_.handles[0] = h;
+
+    /* When pattern is just ** (single segment), yield base directory first */
+    if (it.priv_.seg_types[0] == SP_GLOB_SEG_DOUBLESTAR && it.priv_.seg_count == 1) {
+        it.priv_.yield_base_pending = true;
+    }
+
+    return it;
+}
+
+bool sp_glob_next(SpGlobIter *it, SpPath *out) {
+    if (!it || it->depth < 0) return false;
+
+    /* When pattern starts with **, yield base directory first */
+    if (it->priv_.yield_base_pending) {
+        it->priv_.yield_base_pending = false;
+        /* Only yield base if it matches dir_only constraint */
+        if (!it->priv_.dir_only || sp_is_dir(&it->priv_.dirs[0])) {
+            *out = it->priv_.dirs[0];
+            return true;
+        }
+    }
+
+    while (it->depth >= 0) {
+        int d = it->depth;
+        void *h = it->priv_.handles[d];
+        SpPath *dir = &it->priv_.dirs[d];
+        size_t seg_idx = it->priv_.seg_idxs[d];
+
+        if (seg_idx >= it->priv_.seg_count) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
+
+        const char *pat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx];
+        int stype = it->priv_.seg_types[seg_idx];
+        bool is_last = (seg_idx == it->priv_.seg_count - 1);
+        bool ci = it->priv_.case_insensitive;
+
+        /* Special handling for literal . and .. segments - don't use readdir, just synthesize */
+        /* This avoids opendir() issues on paths with .. (fails on some systems) */
+        if (stype == SP_GLOB_SEG_LITERAL &&
+            ((pat[0] == '.' && pat[1] == '\0') || (pat[0] == '.' && pat[1] == '.' && pat[2] == '\0'))) {
+            SpPath full = sp_join_one(dir, pat);
+            bool isdir = sp_is_dir(&full);
+            if (isdir) {
+                if (is_last) {
+                    if (!it->priv_.dir_only || isdir) {
+                        it->priv_.seg_idxs[d] = seg_idx + 1;  /* Advance so we don't yield again */
+                        *out = full;
+                        return true;
+                    }
+                } else {
+                    /* Check if next segment is also a literal . or .. */
+                    const char *npat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
+                    int ntype = it->priv_.seg_types[seg_idx + 1];
+                    bool next_is_dot = (ntype == SP_GLOB_SEG_LITERAL) &&
+                        ((npat[0] == '.' && npat[1] == '\0') || (npat[0] == '.' && npat[1] == '.' && npat[2] == '\0'));
+
+                    if (next_is_dot) {
+                        /* Both current and next are dots - just advance without opening */
+                        it->priv_.seg_idxs[d] = seg_idx + 1;
+                        it->priv_.dirs[d] = full;
+                        continue;
+                    }
+
+                    /* Next segment needs directory iteration - reopen at new path */
+                    sp_priv_glob_close_handle(h);
+                    it->priv_.handles[d] = NULL;
+                    void *nh = sp_priv_glob_open_dir(&full);
+                    if (nh) {
+                        it->priv_.handles[d] = nh;
+                        it->priv_.seg_idxs[d] = seg_idx + 1;
+                        it->priv_.dirs[d] = full;
+                        continue;
+                    }
+                    /* Reopen failed - pop to previous depth */
+                    it->depth--;
+                    continue;
+                }
+            }
+            /* Path doesn't exist or isn't a directory - pop */
+            sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--;
+            continue;
+        }
+
+        const char *name = NULL;
+#ifdef SP_WINDOWS
+        WIN32_FIND_DATAA fd;
+        if (!FindNextFileA(SP_PRIV_CAST(HANDLE, h), &fd)) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
+        name = fd.cFileName;
+#else
+        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, h));
+        if (!de) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
+        name = de->d_name;
+#endif
+
+        /* Skip . and .. (unless pattern is literally ..) */
+        if (name[0] == '.' && name[1] == '\0') continue;
+        if (name[0] == '.' && name[1] == '.' && name[2] == '\0') {
+            if (!(pat[0] == '.' && pat[1] == '.' && pat[2] == '\0')) continue;
+        }
+        /* Skip hidden unless pattern starts with . or is ** */
+        if (name[0] == '.' && pat[0] != '.' && stype != SP_GLOB_SEG_DOUBLESTAR) continue;
+
+        SpPath full = sp_join_one(dir, name);
+        bool isdir = sp_is_dir(&full);
+
+        if (stype == SP_GLOB_SEG_DOUBLESTAR) {
+            /* ** - try to match next segment if exists */
+            if (!is_last) {
+                const char *npat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
+                int ntype = it->priv_.seg_types[seg_idx + 1];
+                bool nlast = (seg_idx + 1 == it->priv_.seg_count - 1);
+                bool nmatch = (ntype == SP_GLOB_SEG_LITERAL)
+                    ? (ci ? sp_priv_str_eq_ci(name, strlen(name), npat, strlen(npat)) : strcmp(name, npat) == 0)
+                    : (ntype == SP_GLOB_SEG_PATTERN) ? sp_priv_glob_match_seg(npat, name, ci) : false;
+
+                if (nmatch) {
+                    /* When matching segment after **, also recurse into matched dir to find more */
+                    if (nlast && isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
+                        void *nh = sp_priv_glob_open_dir(&full);
+                        if (nh) { it->depth++; it->priv_.dirs[it->depth] = full; it->priv_.seg_idxs[it->depth] = seg_idx; it->priv_.handles[it->depth] = nh; }
+                    }
+                    if (nlast && (!it->priv_.dir_only || isdir)) { *out = full; return true; }
+                    if (!nlast && isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
+                        void *nh = sp_priv_glob_open_dir(&full);
+                        if (nh) {
+                            size_t next_seg = seg_idx + 2;
+                            bool next_is_last_doublestar = (it->priv_.seg_types[next_seg] == SP_GLOB_SEG_DOUBLESTAR) &&
+                                                          (next_seg == it->priv_.seg_count - 1);
+                            it->depth++;
+                            it->priv_.dirs[it->depth] = full;
+                            it->priv_.seg_idxs[it->depth] = next_seg;
+                            it->priv_.handles[it->depth] = nh;
+                            /* If pushing to a trailing **, yield this dir (** matches zero subdirs) */
+                            if (next_is_last_doublestar) { *out = full; return true; }
+                        }
+                    }
+                }
+            }
+            /* ** at end yields only directories (Python behavior: ** matches directory paths) */
+            /* Set up recursion BEFORE yielding so we continue exploring subdirs */
+            if (isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
+                void *nh = sp_priv_glob_open_dir(&full);
+                if (nh) { it->depth++; it->priv_.dirs[it->depth] = full; it->priv_.seg_idxs[it->depth] = seg_idx; it->priv_.handles[it->depth] = nh; }
+            }
+            if (is_last && isdir) { *out = full; return true; }
+        } else {
+            bool match = (stype == SP_GLOB_SEG_LITERAL)
+                ? (ci ? sp_priv_str_eq_ci(name, strlen(name), pat, strlen(pat)) : strcmp(name, pat) == 0)
+                : sp_priv_glob_match_seg(pat, name, ci);
+            if (match) {
+                if (is_last && (!it->priv_.dir_only || isdir)) { *out = full; return true; }
+                if (!is_last && isdir && it->depth + 1 < SP_GLOB_MAX_DEPTH) {
+                    void *nh = sp_priv_glob_open_dir(&full);
+                    if (nh) { it->depth++; it->priv_.dirs[it->depth] = full; it->priv_.seg_idxs[it->depth] = seg_idx + 1; it->priv_.handles[it->depth] = nh; }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void sp_glob_end(SpGlobIter *it) {
+    if (!it) return;
+    for (int i = 0; i <= it->depth && i < SP_GLOB_MAX_DEPTH; i++) {
+        sp_priv_glob_close_handle(it->priv_.handles[i]);
+        it->priv_.handles[i] = NULL;
+    }
+    it->depth = -1;
+}
+
+SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs) {
+    if (!base || !pattern) { SpGlobIter it; memset(&it, 0, sizeof(it)); it.depth = -1; return it; }
+
+    /* If pattern already starts with **, just use it */
+    if (pattern[0] == '*' && pattern[1] == '*' &&
+        (pattern[2] == '\0' || sp_priv_is_sep(pattern[2], base->flavor))) {
+        return sp_glob_begin(base, pattern, cs);
+    }
+
+    /* Prepend "**\/" to pattern */
+    char rglob[SP_GLOB_PATTERN_MAX];
+    size_t plen = strlen(pattern);
+    if (plen + 4 >= SP_GLOB_PATTERN_MAX) plen = SP_GLOB_PATTERN_MAX - 4;
+    rglob[0] = '*'; rglob[1] = '*'; rglob[2] = sp_priv_sep(base->flavor);
+    memcpy(rglob + 3, pattern, plen);
+    rglob[3 + plen] = '\0';
+    return sp_glob_begin(base, rglob, cs);
 }
 
 /* ============ Fluent API Implementation ============ */

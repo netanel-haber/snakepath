@@ -104,3 +104,20 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 |---------|----------|-------------|--------|
 | Create | `sp_path_new()` | `sp_path_from_sv()` | `sp_path_copy()` |
 | Join | `sp_join_one()` | `sp_join_sv()` | `sp_joinpath()` |
+
+### Glob Implementation
+- `sp_glob_begin()` / `sp_glob_next()` / `sp_glob_end()` - iterator-based API with internal stack
+- `sp_rglob_begin()` just prepends `**/` and delegates to glob - good code reuse
+- Uses `SpCaseSensitivity` enum: `SP_CASE_PLATFORM_DEFAULT`, `SP_CASE_SENSITIVE`, `SP_CASE_INSENSITIVE`
+- `SpGlobIter` contains an internal stack (no malloc, no thread-local storage)
+- Configurable limits: `SP_GLOB_MAX_DEPTH` (32), `SP_GLOB_MAX_SEGMENTS` (32), `SP_GLOB_PATTERN_MAX` (256)
+- Foreach macros: `SP_GLOB_FOREACH(base, pattern, match)` and `SP_RGLOB_FOREACH(base, pattern, match)`
+- Iterator exposes `depth` field for current recursion level
+
+### Iterator Patterns
+The library has three iterators:
+- `SpPartsIter` - string cursor over path components
+- `SpParentsIter` - generates derived parent paths
+- `SpGlobIter` - directory traversal for glob matching
+
+All follow the same API pattern (`begin`/`next`/`end`).

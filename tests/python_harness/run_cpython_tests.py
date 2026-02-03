@@ -30,7 +30,6 @@ CPYTHON_RAW = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH
 # Test file to download (Python 3.12 has single test_pathlib.py)
 TEST_FILE = "test_pathlib.py"
 
-
 # Tests expected to fail with specific error messages
 # Format: {expected_error_substring: [(class_name, test_name), ...]}
 # These document known limitations and unimplemented features
@@ -142,17 +141,10 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_parts_interning"),
     ],
 
-    # =========================================================================
-    # test_unsupported_flavour - NotImplementedError for wrong platform
-    # =========================================================================
     "NotImplementedError": [
         ("PathTest", "test_unsupported_flavour"),
     ],
 
-
-    # =========================================================================
-    # expanduser() not implemented
-    # =========================================================================
     "has no attribute 'expanduser'": [
         ("PathSubclassTest", "test_expanduser_common"),
         ("PathTest", "test_expanduser_common"),
@@ -160,47 +152,11 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_expanduser_common"),
     ],
 
-    # =========================================================================
-    # expanduser tests that fail due to missing 'unset' attribute
-    # =========================================================================
     "has no attribute 'unset'": [
         ("PosixPathTest", "test_expanduser"),
         ("WindowsPathTest", "test_expanduser"),
     ],
 
-
-    # =========================================================================
-    # glob() not implemented
-    # =========================================================================
-    "has no attribute 'glob'": [
-        ("PathSubclassTest", "test_glob_above_recursion_limit"),
-        ("PathSubclassTest", "test_glob_case_sensitive"),
-        ("PathSubclassTest", "test_glob_common"),
-        ("PathSubclassTest", "test_glob_dotdot"),
-        ("PathSubclassTest", "test_glob_many_open_files"),
-        ("PathTest", "test_glob_above_recursion_limit"),
-        ("PathTest", "test_glob_case_sensitive"),
-        ("PathTest", "test_glob_common"),
-        ("PathTest", "test_glob_dotdot"),
-        ("PathTest", "test_glob_empty_pattern"),
-        ("PathTest", "test_glob_many_open_files"),
-        ("PosixPathTest", "test_glob"),
-        ("PosixPathTest", "test_glob_above_recursion_limit"),
-        ("PosixPathTest", "test_glob_case_sensitive"),
-        ("PosixPathTest", "test_glob_common"),
-        ("PosixPathTest", "test_glob_dotdot"),
-        ("PosixPathTest", "test_glob_many_open_files"),
-        ("WindowsPathTest", "test_glob"),
-        ("WindowsPathTest", "test_glob_above_recursion_limit"),
-        ("WindowsPathTest", "test_glob_case_sensitive"),
-        ("WindowsPathTest", "test_glob_common"),
-        ("WindowsPathTest", "test_glob_dotdot"),
-        ("WindowsPathTest", "test_glob_many_open_files"),
-    ],
-
-    # =========================================================================
-    # group() not implemented
-    # =========================================================================
     "has no attribute 'group'": [
         ("PathSubclassTest", "test_group"),
         ("PathTest", "test_group"),
@@ -209,9 +165,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_group"),
     ],
 
-    # =========================================================================
-    # hardlink_to() not implemented
-    # =========================================================================
     "has no attribute 'hardlink_to'": [
         ("PathSubclassTest", "test_hardlink_to"),
         ("PathSubclassTest", "test_link_to_not_implemented"),
@@ -232,9 +185,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_home"),
     ],
 
-    # =========================================================================
-    # is_block_device() not implemented
-    # =========================================================================
     "has no attribute 'is_block_device'": [
         ("PathSubclassTest", "test_is_block_device_false"),
         ("PathTest", "test_is_block_device_false"),
@@ -242,9 +192,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_block_device_false"),
     ],
 
-    # =========================================================================
-    # is_char_device() not implemented
-    # =========================================================================
     "has no attribute 'is_char_device'": [
         ("PathSubclassTest", "test_is_char_device_false"),
         ("PathSubclassTest", "test_is_char_device_true"),
@@ -256,9 +203,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_char_device_true"),
     ],
 
-    # =========================================================================
-    # is_fifo() not implemented
-    # =========================================================================
     "has no attribute 'is_fifo'": [
         ("PathSubclassTest", "test_is_fifo_false"),
         ("PathSubclassTest", "test_is_fifo_true"),
@@ -270,9 +214,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_fifo_true"),
     ],
 
-    # =========================================================================
-    # is_junction() not implemented
-    # =========================================================================
     "has no attribute 'is_junction'": [
         ("PathSubclassTest", "test_is_junction"),
         ("PathTest", "test_is_junction"),
@@ -280,9 +221,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_junction"),
     ],
 
-    # =========================================================================
-    # is_mount() not implemented
-    # =========================================================================
     "has no attribute 'is_mount'": [
         ("PathSubclassTest", "test_is_mount"),
         ("PathTest", "test_is_mount"),
@@ -290,9 +228,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_mount"),
     ],
 
-    # =========================================================================
-    # is_socket() not implemented
-    # =========================================================================
     "has no attribute 'is_socket'": [
         ("PathSubclassTest", "test_is_socket_false"),
         ("PathSubclassTest", "test_is_socket_true"),
@@ -304,9 +239,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_socket_true"),
     ],
 
-    # =========================================================================
-    # is_symlink() not implemented
-    # =========================================================================
     "has no attribute 'is_symlink'": [
         ("PathSubclassTest", "test_is_symlink"),
         ("PathTest", "test_is_symlink"),
@@ -314,9 +246,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_symlink"),
     ],
 
-    # =========================================================================
-    # iterdir() not implemented
-    # =========================================================================
     "has no attribute 'iterdir'": [
         ("PathSubclassTest", "test_iterdir"),
         ("PathSubclassTest", "test_iterdir_nodir"),
@@ -336,9 +265,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_with"),
     ],
 
-    # =========================================================================
-    # lstat() not implemented
-    # =========================================================================
     "has no attribute 'lstat'": [
         ("PathSubclassTest", "test_lstat_nosymlink"),
         ("PathTest", "test_lstat_nosymlink"),
@@ -346,9 +272,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_lstat_nosymlink"),
     ],
 
-    # =========================================================================
-    # resolve() not implemented
-    # =========================================================================
     "has no attribute 'resolve'": [
         ("PathSubclassTest", "test_mkdir_exist_ok_root"),
         ("PathSubclassTest", "test_resolve_nonexist_relative_issue38671"),
@@ -361,9 +284,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"),
     ],
 
-    # =========================================================================
-    # open() not implemented
-    # =========================================================================
     "has no attribute 'open'": [
         ("PathSubclassTest", "test_open_common"),
         ("PathTest", "test_open_common"),
@@ -372,9 +292,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_open_common"),
     ],
 
-    # =========================================================================
-    # owner() not implemented
-    # =========================================================================
     "has no attribute 'owner'": [
         ("PathSubclassTest", "test_owner"),
         ("PathTest", "test_owner"),
@@ -383,9 +300,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_owner"),
     ],
 
-    # =========================================================================
-    # write_bytes() not implemented
-    # =========================================================================
     "has no attribute 'write_bytes'": [
         ("PathSubclassTest", "test_read_write_bytes"),
         ("PathTest", "test_read_write_bytes"),
@@ -393,9 +307,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_read_write_bytes"),
     ],
 
-    # =========================================================================
-    # write_text() not implemented
-    # =========================================================================
     "has no attribute 'write_text'": [
         ("PathSubclassTest", "test_read_write_text"),
         ("PathSubclassTest", "test_write_text_with_newlines"),
@@ -407,9 +318,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_write_text_with_newlines"),
     ],
 
-    # =========================================================================
-    # rename() not implemented
-    # =========================================================================
     "has no attribute 'rename'": [
         ("PathSubclassTest", "test_rename"),
         ("PathTest", "test_rename"),
@@ -417,9 +325,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_rename"),
     ],
 
-    # =========================================================================
-    # replace() not implemented
-    # =========================================================================
     "has no attribute 'replace'": [
         ("PathSubclassTest", "test_replace"),
         ("PathTest", "test_replace"),
@@ -427,21 +332,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_replace"),
     ],
 
-    # =========================================================================
-    # rglob() not implemented
-    # =========================================================================
-    "has no attribute 'rglob'": [
-        ("PathSubclassTest", "test_rglob_common"),
-        ("PathTest", "test_rglob_common"),
-        ("PosixPathTest", "test_rglob"),
-        ("PosixPathTest", "test_rglob_common"),
-        ("WindowsPathTest", "test_rglob"),
-        ("WindowsPathTest", "test_rglob_common"),
-    ],
-
-    # =========================================================================
-    # samefile() not implemented
-    # =========================================================================
     "has no attribute 'samefile'": [
         ("PathSubclassTest", "test_samefile"),
         ("PathTest", "test_samefile"),
@@ -449,9 +339,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_samefile"),
     ],
 
-    # =========================================================================
-    # lstat (follow_symlinks=False) not yet implemented
-    # =========================================================================
     "lstat (follow_symlinks=False) not yet implemented": [
         ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"),
         ("PathTest", "test_stat_no_follow_symlinks_nosymlink"),
@@ -459,9 +346,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"),
     ],
 
-    # =========================================================================
-    # touch() not implemented
-    # =========================================================================
     "has no attribute 'touch'": [
         ("PathSubclassTest", "test_touch_common"),
         ("PathSubclassTest", "test_touch_nochange"),
@@ -474,9 +358,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_touch_nochange"),
     ],
 
-    # =========================================================================
-    # unlink() not implemented
-    # =========================================================================
     "has no attribute 'unlink'": [
         ("PathSubclassTest", "test_unlink"),
         ("PathSubclassTest", "test_unlink_missing_ok"),
@@ -488,9 +369,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_unlink_missing_ok"),
     ],
 
-    # =========================================================================
-    # walk() not implemented
-    # =========================================================================
     "has no attribute 'walk'": [
         ("WalkTests", "test_file_like_path"),
         ("WalkTests", "test_walk_above_recursion_limit"),
@@ -597,6 +475,7 @@ def setup_pathlib_patch():
         def __fspath__(self): return self.path
     os_helper.FakePath = FakePath
     os_helper.can_symlink = lambda: False
+    os_helper.fs_is_case_insensitive = lambda path: False
     os_helper.rmtree = shutil.rmtree
     # Skip decorators
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")

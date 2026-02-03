@@ -1,4 +1,7 @@
 /* test.c - Rigorous pathlib tests for snakepath.h */
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
+#endif
 #define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for CI compatibility */
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
@@ -6,16 +9,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Platform-specific rmdir */
+/* Platform-specific rmdir and getpid */
 #ifdef _WIN32
 #include <direct.h>
+#include <process.h>
 #define sp_rmdir _rmdir
+#define sp_getpid _getpid
 #else
 #include <unistd.h>
 #define sp_rmdir rmdir
+#define sp_getpid getpid
 #endif
 
 static int tests_run = 0;
+static char test_dir_mkdir_temp[64];
+static char test_dir_mkdir_nested[64];
+static char test_dir_glob[64];
 
 /* Inline string view comparison (like nob_sv_eq) */
 static int sv_eq(SpStr a, const char *b) {
@@ -66,6 +75,16 @@ static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), Join
 }
 
 int main(void) {
+    /* Initialize unique test directory names based on PID to avoid race conditions */
+#ifdef __cplusplus
+    long pid = static_cast<long>(sp_getpid());
+#else
+    long pid = (long)sp_getpid();
+#endif
+    snprintf(test_dir_mkdir_temp, sizeof(test_dir_mkdir_temp), "./test_mkdir_temp_%ld", pid);
+    snprintf(test_dir_mkdir_nested, sizeof(test_dir_mkdir_nested), "./test_mkdir_nested_%ld", pid);
+    snprintf(test_dir_glob, sizeof(test_dir_glob), "./test_glob_dir_%ld", pid);
+
     printf("POSIX Tests:\n");
     
     SVTest posix_anchor[] = {{"", ""}, {"a/b", ""}, {"/", "/"}, {"/a/b", "/"}};
@@ -336,7 +355,7 @@ int main(void) {
     printf("\nmkdir Tests:\n");
 
     /* Test mkdir - create and cleanup a temporary directory */
-    SpPath mkdir_test = sp_path_f("./test_mkdir_temp", SP_FLAVOR_NATIVE);
+    SpPath mkdir_test = sp_path_f(test_dir_mkdir_temp, SP_FLAVOR_NATIVE);
 
     /* First ensure it doesn't exist (cleanup from previous failed runs) */
     sp_rmdir(sp_str(&mkdir_test));
@@ -358,15 +377,18 @@ int main(void) {
     sp_rmdir(sp_str(&mkdir_test));
 
     /* Test mkdir with parents=true */
-    SpPath mkdir_nested = sp_path_f("./test_mkdir_nested/subdir/deep", SP_FLAVOR_NATIVE);
+    char nested_path[128], nested_sub[128];
+    snprintf(nested_path, sizeof(nested_path), "%s/subdir/deep", test_dir_mkdir_nested);
+    snprintf(nested_sub, sizeof(nested_sub), "%s/subdir", test_dir_mkdir_nested);
+    SpPath mkdir_nested = sp_path_f(nested_path, SP_FLAVOR_NATIVE);
     mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false);
     ASSERT(mkdir_result == SP_MKDIR_OK);
     ASSERT(sp_is_dir(&mkdir_nested) == true);
 
     /* Cleanup nested dirs */
-    sp_rmdir("./test_mkdir_nested/subdir/deep");
-    sp_rmdir("./test_mkdir_nested/subdir");
-    sp_rmdir("./test_mkdir_nested");
+    sp_rmdir(nested_path);
+    sp_rmdir(nested_sub);
+    sp_rmdir(test_dir_mkdir_nested);
 
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
@@ -374,6 +396,63 @@ int main(void) {
     ASSERT(mkdir_result == SP_MKDIR_ERR_NOT_FOUND);
 
     printf("  mkdir tests OK\n");
+
+    /* Glob tests */
+    printf("\nGlob Tests:\n");
+
+    /* Create test directory structure with unique names to avoid parallel test races */
+    char glob_sub_path[128], glob_f1[128], glob_f2[128], glob_f3[128];
+    snprintf(glob_sub_path, sizeof(glob_sub_path), "%s/subdir", test_dir_glob);
+    snprintf(glob_f1, sizeof(glob_f1), "%s/file1.txt", test_dir_glob);
+    snprintf(glob_f2, sizeof(glob_f2), "%s/file2.py", test_dir_glob);
+    snprintf(glob_f3, sizeof(glob_f3), "%s/subdir/file3.txt", test_dir_glob);
+
+    SpPath glob_base = sp_path_f(test_dir_glob, SP_FLAVOR_NATIVE);
+    sp_mkdir(&glob_base, 0755, true, true);
+
+    SpPath glob_sub = sp_path_f(glob_sub_path, SP_FLAVOR_NATIVE);
+    sp_mkdir(&glob_sub, 0755, true, true);
+
+    /* Create test files by touching them (just need the glob to find them) */
+    FILE *f1 = fopen(glob_f1, "w");
+    if (f1) fclose(f1);
+    FILE *f2 = fopen(glob_f2, "w");
+    if (f2) fclose(f2);
+    FILE *f3 = fopen(glob_f3, "w");
+    if (f3) fclose(f3);
+
+    /* Test basic glob *.txt using iterator */
+    int txt_count = 0;
+    SpGlobIter git = sp_glob_begin(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT);
+    SpPath gmatch;
+    while (sp_glob_next(&git, &gmatch)) {
+        if (strstr(sp_str(&gmatch), ".txt")) txt_count++;
+    }
+    sp_glob_end(&git);
+    ASSERT(txt_count == 1);  /* Should find file1.txt */
+
+    /* Test recursive glob using foreach macro */
+    txt_count = 0;
+    SP_GLOB_FOREACH(&glob_base, "**/*.txt", m) {
+        if (strstr(sp_str(&m), ".txt")) txt_count++;
+    }
+    ASSERT(txt_count >= 1);  /* Should find file1.txt and file3.txt */
+
+    /* Test rglob */
+    txt_count = 0;
+    SP_RGLOB_FOREACH(&glob_base, "*.txt", m2) {
+        if (strstr(sp_str(&m2), ".txt")) txt_count++;
+    }
+    ASSERT(txt_count >= 1);
+
+    /* Cleanup */
+    remove(glob_f1);
+    remove(glob_f2);
+    remove(glob_f3);
+    sp_rmdir(glob_sub_path);
+    sp_rmdir(test_dir_glob);
+
+    printf("  glob tests OK\n");
 
     printf("\n%d assertions passed\n", tests_run);
     return 0;
