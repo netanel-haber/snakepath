@@ -54,6 +54,7 @@ cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 
 ### Python Tests: EXPECTED_FAILURES
 `EXPECTED_FAILURES` is a dict mapping expected error substrings to lists of `(class_name, test_name)` tuples. The test runner:
+- Runs test classes in parallel (each class in its own process with unique temp dir)
 - Verifies each failure contains the expected error message (reason verification)
 - Reports "unexpected success" if an expected failure passes
 - Reports "wrong reason" if a test fails but with a different error message
@@ -88,8 +89,29 @@ cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 
 ### Known Issues
 - Windows CI has race condition with parallel MSVC builds (pre-existing)
-- Clang `-Wnrvo` warning in `sp_path_convert` (pre-existing)
+- Clang `-Wnrvo` warning in `sp_path_convert` (pre-existing, disabled via SNAKEPATH_NO_NRVO)
 - Windows console encoding: Turkish İ (U+0130) can't print on cp1252, fixed with UTF-8 wrapper in run_cpython_tests.py
+
+### Running nob on Termux
+On Termux, `gcc` and `g++` are actually clang symlinks, so GCC-specific warnings fail. Use these env vars:
+
+```bash
+# Full local build on Termux
+SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
+```
+
+**Environment variables for nob:**
+| Variable | Effect | When to use |
+|----------|--------|-------------|
+| `SNAKEPATH_SANITIZE=1` | Enable sanitizers (ASan, UBSan, leak, etc.) | CI only (set in ci.yml) |
+| `SNAKEPATH_SKIP_GCC=1` | Skip GCC/G++ builds, use clang only | Termux (gcc is clang) |
+| `SNAKEPATH_NO_NRVO=1` | Disable `-Wnrvo` clang warning | Termux clang has strict NRVO |
+
+**Why Termux is different:**
+- `gcc --version` returns "clang version X.X.X" - it's a symlink
+- GCC-specific warnings (`-Wformat-overflow=2`, `-Wlogical-op`, etc.) don't exist in clang
+- Some sanitizers (leak, pointer-compare) may not be available on Android
+- `/tmp` is a symlink to `/data/data/com.termux/files/usr/tmp`, causing some resolve() tests to fail
 
 ## Technical Details
 
