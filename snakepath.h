@@ -218,6 +218,18 @@ SpStatResult sp_stat(const SpPath *p);  /* follows symlinks; sp_lstat() coming l
 bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b);
 size_t sp_parents_count(const SpPath *p);
 
+/* mkdir result codes */
+#define SP_MKDIR_OK 0
+#define SP_MKDIR_ERR_EXISTS 1          /* Directory already exists (and exist_ok=false) */
+#define SP_MKDIR_ERR_NOT_FOUND 2       /* Parent directory doesn't exist */
+#define SP_MKDIR_ERR_NOT_DIR 3         /* A parent component of the path is not a directory */
+#define SP_MKDIR_ERR_PERMISSION 4      /* Permission denied */
+#define SP_MKDIR_ERR_OTHER 5           /* Other error */
+#define SP_MKDIR_ERR_EXISTS_NOT_DIR 6  /* Path exists but is not a directory (e.g., a file) */
+#define SP_MKDIR_DEF_MODE 0777         /* Default mode (0 = use this); umask applied by OS */
+
+int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);
+
 /* Error checking for path results */
 static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
 static inline int sp_path_error_code(const SpPath *p) {
@@ -301,6 +313,7 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #else
 #include <unistd.h>
 #include <sys/stat.h>
+#include <errno.h>
 #define sp_priv_getcwd getcwd
 #endif
 
@@ -1636,6 +1649,122 @@ size_t sp_parents_count(const SpPath *p) {
     size_t count = 0;
     while (sp_parents_next(&it, &parent)) count++;
     return count;
+}
+
+int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
+    SP_ASSERT_PATH_INVARIANT(p);
+
+    /* mode=0 means use default; umask applied by OS */
+    if (mode == 0) mode = SP_MKDIR_DEF_MODE;
+
+    /* Check for embedded null bytes - such paths can't be created */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return SP_MKDIR_ERR_OTHER;
+    }
+
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    (void)mode; /* Windows ignores POSIX permissions; pass 0 for default */
+
+    if (parents) {
+        /* Create parent directories first */
+        SpPath parent_path = sp_parent(p);
+        if (!sp_path_eq(&parent_path, p) && parent_path.len > 0) {
+            /* Check if parent exists */
+            DWORD parent_attrs = GetFileAttributesA(sp_str(&parent_path));
+            if (parent_attrs == INVALID_FILE_ATTRIBUTES) {
+                /* Parent doesn't exist, try to create it recursively.
+                   Mode doesn't matter on Windows, but use default for consistency. */
+                int parent_result = sp_mkdir(&parent_path, SP_MKDIR_DEF_MODE, true, true);
+                if (parent_result != SP_MKDIR_OK) {
+                    return parent_result;
+                }
+            } else if (!(parent_attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+                /* Parent exists but is not a directory */
+                return SP_MKDIR_ERR_NOT_DIR;
+            }
+        }
+    }
+
+    /* Check if the directory already exists */
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+            return exist_ok ? SP_MKDIR_OK : SP_MKDIR_ERR_EXISTS;
+        } else {
+            /* Path exists but is not a directory (e.g., a file) */
+            return SP_MKDIR_ERR_EXISTS_NOT_DIR;
+        }
+    }
+
+    /* Try to create the directory */
+    if (CreateDirectoryA(path_str, NULL)) {
+        return SP_MKDIR_OK;
+    }
+
+    /* Handle errors */
+    DWORD err = GetLastError();
+    if (err == ERROR_ALREADY_EXISTS) {
+        return exist_ok ? SP_MKDIR_OK : SP_MKDIR_ERR_EXISTS;
+    } else if (err == ERROR_PATH_NOT_FOUND) {
+        return SP_MKDIR_ERR_NOT_FOUND;
+    } else if (err == ERROR_ACCESS_DENIED) {
+        return SP_MKDIR_ERR_PERMISSION;
+    }
+    return SP_MKDIR_ERR_OTHER;
+#else
+    if (parents) {
+        /* Create parent directories first */
+        SpPath parent_path = sp_parent(p);
+        if (!sp_path_eq(&parent_path, p) && parent_path.len > 0) {
+            struct stat st;
+            if (stat(sp_str(&parent_path), &st) != 0) {
+                /* Parent doesn't exist, try to create it recursively.
+                   Use default mode for parents so we can create children. */
+                int parent_result = sp_mkdir(&parent_path, SP_MKDIR_DEF_MODE, true, true);
+                if (parent_result != SP_MKDIR_OK) {
+                    return parent_result;
+                }
+            } else if (!S_ISDIR(st.st_mode)) {
+                /* Parent exists but is not a directory */
+                return SP_MKDIR_ERR_NOT_DIR;
+            }
+        }
+    }
+
+    /* Check if the directory already exists */
+    struct stat st;
+    if (stat(path_str, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            return exist_ok ? SP_MKDIR_OK : SP_MKDIR_ERR_EXISTS;
+        } else {
+            /* Path exists but is not a directory (e.g., a file) */
+            return SP_MKDIR_ERR_EXISTS_NOT_DIR;
+        }
+    }
+
+    /* Try to create the directory */
+    if (mkdir(path_str, SP_PRIV_CAST(mode_t, mode)) == 0) {
+        return SP_MKDIR_OK;
+    }
+
+    /* Handle errors */
+    if (errno == EEXIST) {
+        /* Check if it's a directory that was just created (race condition) */
+        if (stat(path_str, &st) == 0 && S_ISDIR(st.st_mode)) {
+            return exist_ok ? SP_MKDIR_OK : SP_MKDIR_ERR_EXISTS;
+        }
+        return SP_MKDIR_ERR_NOT_DIR;
+    } else if (errno == ENOENT) {
+        return SP_MKDIR_ERR_NOT_FOUND;
+    } else if (errno == EACCES || errno == EPERM) {
+        return SP_MKDIR_ERR_PERMISSION;
+    } else if (errno == ENOTDIR) {
+        return SP_MKDIR_ERR_NOT_DIR;
+    }
+    return SP_MKDIR_ERR_OTHER;
+#endif
 }
 
 /* ============ Fluent API Implementation ============ */

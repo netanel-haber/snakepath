@@ -47,6 +47,15 @@ SP_MATCH_NO = _lib.sp_match_no()
 SP_MATCH_ERR_EMPTY = _lib.sp_match_err_empty()
 SP_MATCH_ERR_INVALID = _lib.sp_match_err_invalid()
 
+# mkdir result codes
+SP_MKDIR_OK = _lib.sp_mkdir_ok()
+SP_MKDIR_ERR_EXISTS = _lib.sp_mkdir_err_exists()
+SP_MKDIR_ERR_NOT_FOUND = _lib.sp_mkdir_err_not_found()
+SP_MKDIR_ERR_NOT_DIR = _lib.sp_mkdir_err_not_dir()
+SP_MKDIR_ERR_PERMISSION = _lib.sp_mkdir_err_permission()
+SP_MKDIR_ERR_OTHER = _lib.sp_mkdir_err_other()
+SP_MKDIR_ERR_EXISTS_NOT_DIR = _lib.sp_mkdir_err_exists_not_dir()
+
 
 class _SpPath(Structure):
     """C SpPath structure"""
@@ -151,6 +160,7 @@ _sig('sp_match_wrap', [_PP, c_char_p], c_int)
 _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
+_sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int], c_int)
 
 
 # ============ Property descriptors ============
@@ -578,6 +588,22 @@ class Path(PurePath):
         if not result.valid:
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return result
+
+    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
+        result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0)
+        if result == SP_MKDIR_OK:
+            return
+        path_str = str(self)
+        if result == SP_MKDIR_ERR_EXISTS or result == SP_MKDIR_ERR_EXISTS_NOT_DIR:
+            raise FileExistsError(17, "File exists", path_str)
+        elif result == SP_MKDIR_ERR_NOT_FOUND:
+            raise FileNotFoundError(2, "No such file or directory", path_str)
+        elif result == SP_MKDIR_ERR_NOT_DIR:
+            raise NotADirectoryError(20, "Not a directory", path_str)
+        elif result == SP_MKDIR_ERR_PERMISSION:
+            raise PermissionError(13, "Permission denied", path_str)
+        else:
+            raise OSError(0, "Unknown error", path_str)
 
 
 class PosixPath(Path, PurePosixPath):

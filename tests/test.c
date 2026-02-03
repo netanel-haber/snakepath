@@ -324,6 +324,48 @@ int main(void) {
 
     printf("  parents_count tests OK\n");
 
+    printf("\nmkdir Tests:\n");
+
+    /* Test mkdir - create and cleanup a temporary directory */
+    SpPath mkdir_test = sp_path_f("./test_mkdir_temp", SP_FLAVOR_NATIVE);
+
+    /* First ensure it doesn't exist (cleanup from previous failed runs) */
+    rmdir(sp_str(&mkdir_test));
+
+    /* Test basic mkdir */
+    int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
+    ASSERT(mkdir_result == SP_MKDIR_OK);
+    ASSERT(sp_is_dir(&mkdir_test) == true);
+
+    /* Test mkdir with exist_ok=false should fail when dir exists */
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
+    ASSERT(mkdir_result == SP_MKDIR_ERR_EXISTS);
+
+    /* Test mkdir with exist_ok=true should succeed when dir exists */
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, true);
+    ASSERT(mkdir_result == SP_MKDIR_OK);
+
+    /* Cleanup */
+    rmdir(sp_str(&mkdir_test));
+
+    /* Test mkdir with parents=true */
+    SpPath mkdir_nested = sp_path_f("./test_mkdir_nested/subdir/deep", SP_FLAVOR_NATIVE);
+    mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false);
+    ASSERT(mkdir_result == SP_MKDIR_OK);
+    ASSERT(sp_is_dir(&mkdir_nested) == true);
+
+    /* Cleanup nested dirs */
+    rmdir("./test_mkdir_nested/subdir/deep");
+    rmdir("./test_mkdir_nested/subdir");
+    rmdir("./test_mkdir_nested");
+
+    /* Test mkdir without parents should fail if parent doesn't exist */
+    SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
+    mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, false, false);
+    ASSERT(mkdir_result == SP_MKDIR_ERR_NOT_FOUND);
+
+    printf("  mkdir tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }
