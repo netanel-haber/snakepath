@@ -2005,11 +2005,9 @@ SpGlobIter *sp_glob_begin_ex(const SpPath *p, const char *pattern, SpCaseSensiti
 
     /* Determine case sensitivity from enum */
     switch (cs) {
-        case SP_CASE_SENSITIVE:   it->case_insensitive = false; break;
-        case SP_CASE_INSENSITIVE: it->case_insensitive = true; break;
-        default: /* SP_CASE_PLATFORM_DEFAULT - use platform default */
-            it->case_insensitive = sp_priv_is_windows_flavor(p->flavor);
-            break;
+        case SP_CASE_SENSITIVE:       it->case_insensitive = false; break;
+        case SP_CASE_INSENSITIVE:     it->case_insensitive = true; break;
+        case SP_CASE_PLATFORM_DEFAULT: it->case_insensitive = sp_priv_is_windows_flavor(p->flavor); break;
     }
 
     /* Parse pattern into segments */
