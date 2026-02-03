@@ -419,6 +419,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
               <td>
                 <code class="language-plaintext highlighter-rouge">-&gt;is_file()</code>
                 <code class="language-plaintext highlighter-rouge">-&gt;is_dir()</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;exists()</code>
               </td>
               <td>
                 <code class="language-plaintext highlighter-rouge">bool</code>
@@ -535,6 +536,16 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         </div>
         <p>Use <code class="language-plaintext highlighter-rouge">sp_suffix()</code> if you only want the final
           extension (<code class="language-plaintext highlighter-rouge">.gz</code>).</p>
+        <h3 id="parent-iteration-terminates-at-anchors">Parent iteration terminates at anchors</h3>
+        <p><code class="language-plaintext highlighter-rouge">sp_parents_count()</code> and parent iteration stop at the path's anchor—<code class="language-plaintext highlighter-rouge">/</code> for absolute paths, <code class="language-plaintext highlighter-rouge">.</code> for relative paths:</p>
+        <div class="language-c highlighter-rouge">
+          <div class="highlight">
+            <pre class="highlight"><code><span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"/a/b/c/d"</span><span class="p">))</span> <span class="o">==</span> <span class="mi">4</span>  <span class="c1">// /a/b/c, /a/b, /a, /</span>
+<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">))</span>    <span class="o">==</span> <span class="mi">3</span>  <span class="c1">// a/b, a, .</span>
+<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"/"</span><span class="p">))</span>        <span class="o">==</span> <span class="mi">0</span>  <span class="c1">// root has no parents</span>
+<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"."</span><span class="p">))</span>        <span class="o">==</span> <span class="mi">0</span>  <span class="c1">// current dir has no parents</span></code></pre>
+          </div>
+        </div>
         <h2 id="pathlib-mapping">Pathlib Mapping</h2>
         <table>
           <thead>
@@ -828,12 +839,39 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">.is_dir()</code>
               </td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.exists()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_exists()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.exists()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.stat()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_stat()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">len(p.parents)</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_parents_count()</code>
+              </td>
+              <td>-</td>
+            </tr>
           </tbody>
         </table>
         <p>
           <strong>Not implemented:</strong> Most I/O methods (<code
-            class="language-plaintext highlighter-rouge">stat</code>, <code
-            class="language-plaintext highlighter-rouge">exists</code>, <code
             class="language-plaintext highlighter-rouge">mkdir</code>, <code
             class="language-plaintext highlighter-rouge">read_*</code>, <code
             class="language-plaintext highlighter-rouge">write_*</code>, <code

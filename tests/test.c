@@ -281,6 +281,49 @@ int main(void) {
 
     printf("  exists tests OK\n");
 
+    printf("\nstat Tests:\n");
+
+    /* Test stat - existing file */
+    SpPath stat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpStatResult stat_result = sp_stat(&stat_file);
+    ASSERT(stat_result.valid == true);
+    ASSERT(stat_result.sp_size > 0);
+    ASSERT((stat_result.sp_mode & 0170000) == 0100000);  /* S_IFREG - regular file */
+
+    /* Test stat - existing directory */
+    SpPath stat_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
+    SpStatResult dir_result = sp_stat(&stat_dir);
+    ASSERT(dir_result.valid == true);
+    ASSERT((dir_result.sp_mode & 0170000) == 0040000);  /* S_IFDIR - directory */
+
+    /* Test stat - nonexistent path */
+    SpPath stat_nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
+    SpStatResult nonexistent_result = sp_stat(&stat_nonexistent);
+    ASSERT(nonexistent_result.valid == false);
+
+    /* Test sp_stat_eq */
+    ASSERT(sp_stat_eq(&stat_result, &stat_result) == true);
+    ASSERT(sp_stat_eq(&stat_result, &dir_result) == false);
+    ASSERT(sp_stat_eq(&stat_result, &nonexistent_result) == false);  /* invalid stat */
+
+    printf("  stat tests OK\n");
+
+    printf("\nparents_count Tests:\n");
+
+    SpPath pc1 = sp_path_f("/a/b/c/d", P);
+    ASSERT(sp_parents_count(&pc1) == 4);  /* /a/b/c, /a/b, /a, / */
+
+    SpPath pc2 = sp_path_f("a/b/c", P);
+    ASSERT(sp_parents_count(&pc2) == 3);  /* a/b, a, . */
+
+    SpPath pc3 = sp_path_f("/", P);
+    ASSERT(sp_parents_count(&pc3) == 0);  /* root has no parents */
+
+    SpPath pc4 = sp_path_f(".", P);
+    ASSERT(sp_parents_count(&pc4) == 0);  /* current dir has no parents */
+
+    printf("  parents_count tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }
