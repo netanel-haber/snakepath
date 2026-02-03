@@ -20,18 +20,37 @@ snakepath is a C99 STB-style header-only library implementing Python's pathlib A
 - Use wrapper macros (`WRAP_STR`, `WRAP_BOOL_UNARY`, etc.) for consistent FFI bindings
 - Keep implementations DRY - extract common code into `sp_priv_*` functions
 
+### Refactoring Guidelines
+**Semantic compression** means simplifying logic, NOT:
+- Shortening variable names (`segment` → `s`, `depth` → `d`) - BAD
+- Defining convenience macros (`#define G_ it->priv_`) - BAD
+- Removing whitespace or braces - BAD
+
+Good semantic compression:
+- Extract repeated patterns into helper functions (`sp_priv_glob_push`, `sp_priv_glob_pop`)
+- Use early `continue`/`return` to flatten nesting
+- Consolidate duplicated logic branches
+- Remove dead code paths
+
 ### Testing Commands
+
+**ALWAYS run all three test suites before any git commit:**
+
 ```bash
-# C tests
-gcc -std=c99 -I. -Wall -Wextra -o test_snakepath tests/test.c && ./test_snakepath
+# 1. C tests (gcc)
+gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath tests/test.c && ./test_snakepath
 
-# Fluent API tests
-gcc -std=c99 -I. -Wall -Wextra -o test_fluent tests/test_fluent_api.c && ./test_fluent
+# 2. C++ tests (g++) - CI runs both gcc and g++, catches different issues
+g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp tests/test.c && ./test_cpp
 
-# Python tests (rebuild library first)
-cd tests/python_harness && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c -I../..
-python run_cpython_tests.py
+# 3. Python/CPython tests
+cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakepath_lib.c -I../.. && python run_cpython_tests.py
 ```
+
+**Why g++ matters:** CI runs C++ builds with strict warnings. Issues that compile fine in C99 will fail in C++:
+- `{0}` struct initializer → use `memset(&it, 0, sizeof(it))` instead
+- `void*` implicit conversion → use `SP_PRIV_CAST(DIR *, ptr)`
+- C-style casts like `(size_t)x` → use `SP_PRIV_CAST(size_t, x)`
 
 ### Python Tests: EXPECTED_FAILURES
 `EXPECTED_FAILURES` is a dict mapping expected error substrings to lists of `(class_name, test_name)` tuples. The test runner:
@@ -113,6 +132,15 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 - Configurable limits: `SP_GLOB_MAX_DEPTH` (32), `SP_GLOB_MAX_SEGMENTS` (32), `SP_GLOB_PATTERN_MAX` (256)
 - Foreach macros: `SP_GLOB_FOREACH(base, pattern, match)` and `SP_RGLOB_FOREACH(base, pattern, match)`
 - Iterator exposes `depth` field for current recursion level
+
+**DOUBLESTAR (`**`) handling order is critical:**
+1. First try matching the NEXT segment (if exists)
+2. If match: maybe yield, maybe push with seg_idx+2
+3. Special case: if pushing to a trailing `**`, yield immediately (`next_ds` check)
+4. THEN push for recursion with current seg_idx
+5. Finally, if `**` is last segment and entry is dir, yield
+
+The order matters for patterns like `**/dir*/**` - must yield `dirC/dirD`, not just `dirC`.
 
 ### Iterator Patterns
 The library has three iterators:
