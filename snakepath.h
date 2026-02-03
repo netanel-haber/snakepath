@@ -139,7 +139,7 @@ typedef struct {
     int depth;  /* Current depth (0 = base dir), -1 = done/error */
     struct {
         char pattern_buf[SP_GLOB_PATTERN_MAX];
-        char *segments[SP_GLOB_MAX_SEGMENTS];
+        size_t seg_offsets[SP_GLOB_MAX_SEGMENTS];  /* Offsets into pattern_buf */
         int seg_types[SP_GLOB_MAX_SEGMENTS];
         size_t seg_count;
         bool dir_only;
@@ -1846,7 +1846,7 @@ static bool sp_priv_glob_is_doublestar(const char *s) {
 
 static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor,
                                           char *buf, size_t buf_size,
-                                          char **segments, int *seg_types, size_t max_segs,
+                                          size_t *seg_offsets, int *seg_types, size_t max_segs,
                                           bool *dir_only) {
     size_t count = 0;
     size_t len = strlen(pattern);
@@ -1860,7 +1860,7 @@ static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor,
         if (sp_priv_is_sep(*p, flavor)) {
             *p = '\0';
             if (p > start) {
-                segments[count] = start;
+                seg_offsets[count] = SP_PRIV_CAST(size_t, start - buf);
                 seg_types[count] = sp_priv_glob_is_doublestar(start) ? SP_GLOB_SEG_DOUBLESTAR
                                  : sp_priv_glob_has_wildcard(start) ? SP_GLOB_SEG_PATTERN
                                  : SP_GLOB_SEG_LITERAL;
@@ -1871,7 +1871,7 @@ static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor,
         p++;
     }
     if (*start && count < max_segs) {
-        segments[count] = start;
+        seg_offsets[count] = SP_PRIV_CAST(size_t, start - buf);
         seg_types[count] = sp_priv_glob_is_doublestar(start) ? SP_GLOB_SEG_DOUBLESTAR
                          : sp_priv_glob_has_wildcard(start) ? SP_GLOB_SEG_PATTERN
                          : SP_GLOB_SEG_LITERAL;
@@ -1929,7 +1929,7 @@ SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitiv
 
     it.priv_.seg_count = sp_priv_glob_parse_pattern(pattern, base->flavor,
         it.priv_.pattern_buf, SP_GLOB_PATTERN_MAX,
-        it.priv_.segments, it.priv_.seg_types, SP_GLOB_MAX_SEGMENTS, &it.priv_.dir_only);
+        it.priv_.seg_offsets, it.priv_.seg_types, SP_GLOB_MAX_SEGMENTS, &it.priv_.dir_only);
     if (it.priv_.seg_count == 0) return it;
 
     void *h = sp_priv_glob_open_dir(base);
@@ -1953,7 +1953,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
 
         if (seg_idx >= it->priv_.seg_count) { sp_priv_glob_close_handle(h); it->priv_.handles[d] = NULL; it->depth--; continue; }
 
-        const char *pat = it->priv_.segments[seg_idx];
+        const char *pat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx];
         int stype = it->priv_.seg_types[seg_idx];
         bool is_last = (seg_idx == it->priv_.seg_count - 1);
         bool ci = it->priv_.case_insensitive;
@@ -1983,7 +1983,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         if (stype == SP_GLOB_SEG_DOUBLESTAR) {
             /* ** - try to match next segment if exists */
             if (!is_last) {
-                const char *npat = it->priv_.segments[seg_idx + 1];
+                const char *npat = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
                 int ntype = it->priv_.seg_types[seg_idx + 1];
                 bool nlast = (seg_idx + 1 == it->priv_.seg_count - 1);
                 bool nmatch = (ntype == SP_GLOB_SEG_LITERAL)
