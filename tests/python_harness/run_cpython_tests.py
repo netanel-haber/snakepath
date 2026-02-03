@@ -50,6 +50,7 @@ EXPECTED_FAILURES = {
     ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"),
     ("PathTest", "test_stat_no_follow_symlinks_nosymlink"),
     ("PosixPathTest", "test_stat_no_follow_symlinks_nosymlink"),
+    ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"),
 
     # Cross-flavor comparison - C doesn't raise TypeError
     ("PurePathTest", "test_different_flavours_unordered"),
