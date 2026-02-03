@@ -32,354 +32,537 @@ TEST_FILE = "test_pathlib.py"
 
 
 # Tests expected to fail with specific error messages
-# Format: {(class_name, test_name): expected_error_substring}
+# Format: {expected_error_substring: [(class_name, test_name), ...]}
 # These document known limitations and unimplemented features
 EXPECTED_FAILURES = {
     # =========================================================================
     # Python's warnings.warn() system does not exist in C
     # These tests check that DeprecationWarning is emitted for multi-arg calls
     # =========================================================================
-    ("PurePosixPathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("PurePosixPathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
-    ("PureWindowsPathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("PureWindowsPathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
-    ("PurePathTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("PurePathTest", "test_relative_to_common"): "DeprecationWarning not triggered",
-    ("PurePathSubclassTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("PurePathSubclassTest", "test_relative_to_common"): "DeprecationWarning not triggered",
-    ("PosixPathAsPureTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("PosixPathAsPureTest", "test_relative_to_common"): "DeprecationWarning not triggered",
-    ("WindowsPathAsPureTest", "test_is_relative_to_common"): "DeprecationWarning not triggered",
-    ("WindowsPathAsPureTest", "test_relative_to_common"): "DeprecationWarning not triggered",
+    "DeprecationWarning not triggered": [
+        ("PurePosixPathTest", "test_is_relative_to_common"),
+        ("PurePosixPathTest", "test_relative_to_common"),
+        ("PureWindowsPathTest", "test_is_relative_to_common"),
+        ("PureWindowsPathTest", "test_relative_to_common"),
+        ("PurePathTest", "test_is_relative_to_common"),
+        ("PurePathTest", "test_relative_to_common"),
+        ("PurePathSubclassTest", "test_is_relative_to_common"),
+        ("PurePathSubclassTest", "test_relative_to_common"),
+        ("PosixPathAsPureTest", "test_is_relative_to_common"),
+        ("PosixPathAsPureTest", "test_relative_to_common"),
+        ("WindowsPathAsPureTest", "test_is_relative_to_common"),
+        ("WindowsPathAsPureTest", "test_relative_to_common"),
+        ("PathSubclassTest", "test_passing_kwargs_deprecated"),
+        ("PathTest", "test_passing_kwargs_deprecated"),
+        ("PosixPathTest", "test_passing_kwargs_deprecated"),
+        ("WindowsPathTest", "test_passing_kwargs_deprecated"),
+    ],
 
     # =========================================================================
     # Cross-flavor ordering comparison requires Python-level type checking
     # C library doesn't implement TypeError for comparing PosixPath < WindowsPath
     # =========================================================================
-    ("PurePathTest", "test_different_flavours_unordered"): "TypeError",
+    "TypeError": [
+        ("PurePathTest", "test_different_flavours_unordered"),
+    ],
 
     # =========================================================================
     # Turkish I case folding requires Unicode NFKC normalization
     # C library uses simple ASCII case folding, not full Unicode
     # =========================================================================
-    ("PureWindowsPathTest", "test_eq"): "PureWindowsPath('İ')",
+    "PureWindowsPath('İ')": [
+        ("PureWindowsPathTest", "test_eq"),
+    ],
 
     # =========================================================================
     # with_segments() not implemented - requires Python subclass cooperation
     # Tests expect subclass attributes to be preserved across path operations
     # =========================================================================
-    ("PosixPathAsPureTest", "test_with_segments_common"): "has no attribute 'session_id'",
-    ("PurePathSubclassTest", "test_with_segments_common"): "has no attribute 'session_id'",
-    ("PurePathTest", "test_with_segments_common"): "has no attribute 'session_id'",
-    ("PurePosixPathTest", "test_with_segments_common"): "has no attribute 'session_id'",
-    ("PureWindowsPathTest", "test_with_segments_common"): "has no attribute 'session_id'",
+    "has no attribute 'session_id'": [
+        ("PosixPathAsPureTest", "test_with_segments_common"),
+        ("PurePathSubclassTest", "test_with_segments_common"),
+        ("PurePathTest", "test_with_segments_common"),
+        ("PurePosixPathTest", "test_with_segments_common"),
+        ("PureWindowsPathTest", "test_with_segments_common"),
+        ("WindowsPathAsPureTest", "test_with_segments_common"),
+        ("PathSubclassTest", "test_with_segments"),
+        ("PathTest", "test_with_segments"),
+        ("PosixPathTest", "test_with_segments"),
+        ("WindowsPathTest", "test_with_segments"),
+    ],
 
     # =========================================================================
     # with_suffix() tuple argument validation differs from Python
     # C library raises TypeError, Python raises ValueError for tuple suffix
     # =========================================================================
-    ("PosixPathAsPureTest", "test_with_suffix_common"): "expected str, not tuple",
-    ("PurePathSubclassTest", "test_with_suffix_common"): "expected str, not tuple",
-    ("PurePathTest", "test_with_suffix_common"): "expected str, not tuple",
-    ("PurePosixPathTest", "test_with_suffix_common"): "expected str, not tuple",
-    ("PureWindowsPathTest", "test_with_suffix_common"): "expected str, not tuple",
+    "expected str, not tuple": [
+        ("PosixPathAsPureTest", "test_with_suffix_common"),
+        ("PurePathSubclassTest", "test_with_suffix_common"),
+        ("PurePathTest", "test_with_suffix_common"),
+        ("PurePosixPathTest", "test_with_suffix_common"),
+        ("PureWindowsPathTest", "test_with_suffix_common"),
+        ("WindowsPathAsPureTest", "test_with_suffix_common"),
+    ],
 
     # =========================================================================
     # Pickling not implemented - would require __getstate__/__setstate__
     # C-backed objects with __slots__ cannot be pickled without explicit support
     # =========================================================================
-    ("PurePathSubclassTest", "test_pickling_common"): "cannot be pickled",
+    "cannot be pickled": [
+        ("PurePathSubclassTest", "test_pickling_common"),
+    ],
 
     # =========================================================================
     # CompatiblePathTest.test_truediv - joinpath doesn't accept arbitrary PathLike
     # os.fspath() rejects objects without __fspath__ returning str/bytes
     # =========================================================================
-    ("CompatiblePathTest", "test_truediv"): "expected str, bytes or os.PathLike object, not CompatPath",
+    "expected str, bytes or os.PathLike object, not CompatPath": [
+        ("CompatiblePathTest", "test_truediv"),
+    ],
 
     # =========================================================================
     # test_absolute_common - uses mock.patch("os.getcwd") which doesn't affect C
     # Our C library calls getcwd() directly, bypassing Python's mock
     # =========================================================================
-    ("PathSubclassTest", "test_absolute_common"): "!=",
-    ("PathTest", "test_absolute_common"): "!=",
-    ("PosixPathTest", "test_absolute_common"): "!=",
+    "!=": [
+        ("PathSubclassTest", "test_absolute_common"),
+        ("PathTest", "test_absolute_common"),
+        ("PosixPathTest", "test_absolute_common"),
+        ("WindowsPathTest", "test_absolute"),
+        ("WindowsPathTest", "test_absolute_common"),
+    ],
 
     # =========================================================================
     # test_parts_interning - Python interns string parts, C doesn't
     # =========================================================================
-    ("PathSubclassTest", "test_parts_interning"): "is not",
-    ("PathTest", "test_parts_interning"): "is not",
-    ("PosixPathTest", "test_parts_interning"): "is not",
-
-    # =========================================================================
-    # test_passing_kwargs_deprecated - DeprecationWarning for kwargs not in C
-    # =========================================================================
-    ("PathSubclassTest", "test_passing_kwargs_deprecated"): "DeprecationWarning not triggered",
-    ("PathTest", "test_passing_kwargs_deprecated"): "DeprecationWarning not triggered",
-    ("PosixPathTest", "test_passing_kwargs_deprecated"): "DeprecationWarning not triggered",
+    "is not": [
+        ("PathSubclassTest", "test_parts_interning"),
+        ("PathTest", "test_parts_interning"),
+        ("PosixPathTest", "test_parts_interning"),
+        ("WindowsPathTest", "test_parts_interning"),
+    ],
 
     # =========================================================================
     # test_unsupported_flavour - NotImplementedError for wrong platform
     # =========================================================================
-    ("PathTest", "test_unsupported_flavour"): "NotImplementedError",
+    "NotImplementedError": [
+        ("PathTest", "test_unsupported_flavour"),
+    ],
 
     # =========================================================================
-    # PathSubclassTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
+    # stat() attribute missing - tests that require stat() functionality
     # =========================================================================
-    ("PathSubclassTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PathSubclassTest", "test_expanduser_common"): "has no attribute 'expanduser'",
-    ("PathSubclassTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
-    ("PathSubclassTest", "test_glob_common"): "has no attribute 'glob'",
-    ("PathSubclassTest", "test_glob_dotdot"): "has no attribute 'glob'",
-    ("PathSubclassTest", "test_glob_many_open_files"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_group"): "has no attribute 'group'",
-    ("PathSubclassTest", "test_hardlink_to"): "has no attribute 'hardlink_to'",
-    ("PathSubclassTest", "test_home"): "has no attribute 'home'",
-    ("PathSubclassTest", "test_is_block_device_false"): "has no attribute 'is_block_device'",
-    ("PathSubclassTest", "test_is_char_device_false"): "has no attribute 'is_char_device'",
-    ("PathSubclassTest", "test_is_char_device_true"): "has no attribute 'is_char_device'",
-    ("PathSubclassTest", "test_is_fifo_false"): "has no attribute 'is_fifo'",
-    ("PathSubclassTest", "test_is_fifo_true"): "has no attribute 'is_fifo'",
-    ("PathSubclassTest", "test_is_junction"): "has no attribute 'is_junction'",
-    ("PathSubclassTest", "test_link_to_not_implemented"): "has no attribute 'hardlink_to'",
-    ("PathSubclassTest", "test_is_mount"): "has no attribute 'is_mount'",
-    ("PathSubclassTest", "test_is_socket_false"): "has no attribute 'is_socket'",
-    ("PathSubclassTest", "test_is_socket_true"): "has no attribute 'is_socket'",
-    ("PathSubclassTest", "test_is_symlink"): "has no attribute 'is_symlink'",
-    ("PathSubclassTest", "test_iterdir"): "has no attribute 'iterdir'",
-    ("PathSubclassTest", "test_iterdir_nodir"): "has no attribute 'iterdir'",
-    ("PathSubclassTest", "test_lstat_nosymlink"): "has no attribute 'lstat'",
-    ("PathSubclassTest", "test_mkdir"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_concurrent_parent_creation"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_exist_ok"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_exist_ok_root"): "has no attribute 'resolve'",
-    ("PathSubclassTest", "test_mkdir_exist_ok_with_parent"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_no_parents_file"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_parents"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_with_child_file"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_mkdir_with_unknown_drive"): "has no attribute 'mkdir'",
-    ("PathSubclassTest", "test_open_common"): "has no attribute 'open'",
-    ("PathSubclassTest", "test_owner"): "has no attribute 'owner'",
-    ("PathSubclassTest", "test_pickling_common"): "has no attribute 'stat'",
-    ("PathSubclassTest", "test_read_write_bytes"): "has no attribute 'write_bytes'",
-    ("PathSubclassTest", "test_read_write_text"): "has no attribute 'write_text'",
-    ("PathSubclassTest", "test_rename"): "has no attribute 'rename'",
-    ("PathSubclassTest", "test_replace"): "has no attribute 'replace'",
-    ("PathSubclassTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute 'resolve'",
-    ("PathSubclassTest", "test_rglob_common"): "has no attribute 'rglob'",
-    ("PathSubclassTest", "test_rmdir"): "has no attribute 'iterdir'",
-    ("PathSubclassTest", "test_samefile"): "has no attribute 'samefile'",
-    ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"): "lstat (follow_symlinks=False) not yet implemented",
-    ("PathSubclassTest", "test_touch_common"): "has no attribute 'touch'",
-    ("PathSubclassTest", "test_touch_nochange"): "has no attribute 'touch'",
-    ("PathSubclassTest", "test_unlink"): "has no attribute 'unlink'",
-    ("PathSubclassTest", "test_unlink_missing_ok"): "has no attribute 'unlink'",
-    ("PathSubclassTest", "test_with"): "has no attribute 'iterdir'",
-    ("PathSubclassTest", "test_with_segments"): "has no attribute 'session_id'",
-    ("PathSubclassTest", "test_write_text_with_newlines"): "has no attribute 'write_text'",
+    "has no attribute 'stat'": [
+        ("PathSubclassTest", "test_empty_path"),
+        ("PathSubclassTest", "test_pickling_common"),
+        ("PathTest", "test_empty_path"),
+        ("PathTest", "test_pickling_common"),
+        ("PosixPathTest", "test_empty_path"),
+        ("PosixPathTest", "test_pickling_common"),
+        ("WindowsPathTest", "test_empty_path"),
+        ("WindowsPathTest", "test_pickling_common"),
+    ],
 
     # =========================================================================
-    # PathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
+    # expanduser() not implemented
     # =========================================================================
-    ("PathTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
-    ("PathTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
-    ("PathTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
-    ("PathTest", "test_glob_common"): "has no attribute 'glob'",
-    ("PathTest", "test_glob_dotdot"): "has no attribute 'glob'",
-    ("PathTest", "test_glob_empty_pattern"): "has no attribute 'glob'",
-    ("PathTest", "test_glob_many_open_files"): "has no attribute 'mkdir'",
-    ("PathTest", "test_group"): "has no attribute 'group'",
-    ("PathTest", "test_hardlink_to"): "has no attribute 'hardlink_to'",
-    ("PathTest", "test_home"): "has no attribute 'home'",
-    ("PathTest", "test_is_block_device_false"): "has no attribute 'is_block_device'",
-    ("PathTest", "test_is_char_device_false"): "has no attribute 'is_char_device'",
-    ("PathTest", "test_is_char_device_true"): "has no attribute 'is_char_device'",
-    ("PathTest", "test_is_fifo_false"): "has no attribute 'is_fifo'",
-    ("PathTest", "test_is_fifo_true"): "has no attribute 'is_fifo'",
-    ("PathTest", "test_is_junction"): "has no attribute 'is_junction'",
-    ("PathTest", "test_link_to_not_implemented"): "has no attribute 'hardlink_to'",
-    ("PathTest", "test_is_mount"): "has no attribute 'is_mount'",
-    ("PathTest", "test_is_socket_false"): "has no attribute 'is_socket'",
-    ("PathTest", "test_is_socket_true"): "has no attribute 'is_socket'",
-    ("PathTest", "test_is_symlink"): "has no attribute 'is_symlink'",
-    ("PathTest", "test_iterdir"): "has no attribute 'iterdir'",
-    ("PathTest", "test_iterdir_nodir"): "has no attribute 'iterdir'",
-    ("PathTest", "test_lstat_nosymlink"): "has no attribute 'lstat'",
-    ("PathTest", "test_mkdir"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_concurrent_parent_creation"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_exist_ok"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_exist_ok_root"): "has no attribute 'resolve'",
-    ("PathTest", "test_mkdir_exist_ok_with_parent"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_no_parents_file"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_parents"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_with_child_file"): "has no attribute 'mkdir'",
-    ("PathTest", "test_mkdir_with_unknown_drive"): "has no attribute 'mkdir'",
-    ("PathTest", "test_open_common"): "has no attribute 'open'",
-    ("PathTest", "test_owner"): "has no attribute 'owner'",
-    ("PathTest", "test_pickling_common"): "has no attribute 'stat'",
-    ("PathTest", "test_read_write_bytes"): "has no attribute 'write_bytes'",
-    ("PathTest", "test_read_write_text"): "has no attribute 'write_text'",
-    ("PathTest", "test_rename"): "has no attribute 'rename'",
-    ("PathTest", "test_replace"): "has no attribute 'replace'",
-    ("PathTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute 'resolve'",
-    ("PathTest", "test_rglob_common"): "has no attribute 'rglob'",
-    ("PathTest", "test_rmdir"): "has no attribute 'iterdir'",
-    ("PathTest", "test_samefile"): "has no attribute 'samefile'",
-    ("PathTest", "test_stat_no_follow_symlinks_nosymlink"): "lstat (follow_symlinks=False) not yet implemented",
-    ("PathTest", "test_touch_common"): "has no attribute 'touch'",
-    ("PathTest", "test_touch_nochange"): "has no attribute 'touch'",
-    ("PathTest", "test_unlink"): "has no attribute 'unlink'",
-    ("PathTest", "test_unlink_missing_ok"): "has no attribute 'unlink'",
-    ("PathTest", "test_with"): "has no attribute 'iterdir'",
-    ("PathTest", "test_with_segments"): "has no attribute 'session_id'",
-    ("PathTest", "test_write_text_with_newlines"): "has no attribute 'write_text'",
+    "has no attribute 'expanduser'": [
+        ("PathSubclassTest", "test_expanduser_common"),
+        ("PathTest", "test_expanduser_common"),
+        ("PosixPathTest", "test_expanduser_common"),
+        ("WindowsPathTest", "test_expanduser_common"),
+    ],
 
     # =========================================================================
-    # PosixPathTest - concrete Path tests require filesystem I/O (NOT_PLANNED)
+    # expanduser tests that fail due to missing 'unset' attribute
     # =========================================================================
-    ("PosixPathTest", "test_empty_path"): "has no attribute 'stat'",
-    ("PosixPathTest", "test_expanduser"): "has no attribute 'unset'",
-    ("PosixPathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
-    ("PosixPathTest", "test_glob"): "has no attribute 'glob'",
-    ("PosixPathTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
-    ("PosixPathTest", "test_glob_common"): "has no attribute 'glob'",
-    ("PosixPathTest", "test_glob_dotdot"): "has no attribute 'glob'",
-    ("PosixPathTest", "test_glob_many_open_files"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_group"): "has no attribute 'group'",
-    ("PosixPathTest", "test_hardlink_to"): "has no attribute 'hardlink_to'",
-    ("PosixPathTest", "test_home"): "has no attribute 'home'",
-    ("PosixPathTest", "test_is_block_device_false"): "has no attribute 'is_block_device'",
-    ("PosixPathTest", "test_is_char_device_false"): "has no attribute 'is_char_device'",
-    ("PosixPathTest", "test_is_char_device_true"): "has no attribute 'is_char_device'",
-    ("PosixPathTest", "test_is_fifo_false"): "has no attribute 'is_fifo'",
-    ("PosixPathTest", "test_is_fifo_true"): "has no attribute 'is_fifo'",
-    ("PosixPathTest", "test_is_junction"): "has no attribute 'is_junction'",
-    ("PosixPathTest", "test_link_to_not_implemented"): "has no attribute 'hardlink_to'",
-    ("PosixPathTest", "test_is_mount"): "has no attribute 'is_mount'",
-    ("PosixPathTest", "test_is_socket_false"): "has no attribute 'is_socket'",
-    ("PosixPathTest", "test_is_socket_true"): "has no attribute 'is_socket'",
-    ("PosixPathTest", "test_is_symlink"): "has no attribute 'is_symlink'",
-    ("PosixPathTest", "test_iterdir"): "has no attribute 'iterdir'",
-    ("PosixPathTest", "test_iterdir_nodir"): "has no attribute 'iterdir'",
-    ("PosixPathTest", "test_lstat_nosymlink"): "has no attribute 'lstat'",
-    ("PosixPathTest", "test_mkdir"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_concurrent_parent_creation"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_exist_ok"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_exist_ok_root"): "has no attribute 'resolve'",
-    ("PosixPathTest", "test_mkdir_exist_ok_with_parent"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_no_parents_file"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_parents"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_mkdir_with_child_file"): "has no attribute 'mkdir'",
-    ("PosixPathTest", "test_open_common"): "has no attribute 'open'",
-    ("PosixPathTest", "test_open_mode"): "has no attribute 'open'",
-    ("PosixPathTest", "test_owner"): "has no attribute 'owner'",
-    ("PosixPathTest", "test_pickling_common"): "has no attribute 'stat'",
-    ("PosixPathTest", "test_read_write_bytes"): "has no attribute 'write_bytes'",
-    ("PosixPathTest", "test_read_write_text"): "has no attribute 'write_text'",
-    ("PosixPathTest", "test_rename"): "has no attribute 'rename'",
-    ("PosixPathTest", "test_replace"): "has no attribute 'replace'",
-    ("PosixPathTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute 'resolve'",
-    ("PosixPathTest", "test_resolve_root"): "has no attribute 'resolve'",
-    ("PosixPathTest", "test_rglob"): "has no attribute 'rglob'",
-    ("PosixPathTest", "test_rglob_common"): "has no attribute 'rglob'",
-    ("PosixPathTest", "test_rmdir"): "has no attribute 'iterdir'",
-    ("PosixPathTest", "test_samefile"): "has no attribute 'samefile'",
-    ("PosixPathTest", "test_stat_no_follow_symlinks_nosymlink"): "lstat (follow_symlinks=False) not yet implemented",
-    ("PosixPathTest", "test_touch_common"): "has no attribute 'touch'",
-    ("PosixPathTest", "test_touch_mode"): "has no attribute 'touch'",
-    ("PosixPathTest", "test_touch_nochange"): "has no attribute 'touch'",
-    ("PosixPathTest", "test_unlink"): "has no attribute 'unlink'",
-    ("PosixPathTest", "test_unlink_missing_ok"): "has no attribute 'unlink'",
-    ("PosixPathTest", "test_with"): "has no attribute 'iterdir'",
-    ("PosixPathTest", "test_with_segments"): "has no attribute 'session_id'",
-    ("PosixPathTest", "test_write_text_with_newlines"): "has no attribute 'write_text'",
+    "has no attribute 'unset'": [
+        ("PosixPathTest", "test_expanduser"),
+        ("WindowsPathTest", "test_expanduser"),
+    ],
 
     # =========================================================================
-    # WalkTests - walk() not implemented, requires filesystem I/O (NOT_PLANNED)
+    # mkdir() not implemented
     # =========================================================================
-    ("WalkTests", "test_file_like_path"): "has no attribute 'walk'",
-    ("WalkTests", "test_walk_above_recursion_limit"): "has no attribute 'mkdir'",
-    ("WalkTests", "test_walk_bad_dir"): "has no attribute 'walk'",
-    ("WalkTests", "test_walk_bottom_up"): "has no attribute 'walk'",
-    ("WalkTests", "test_walk_many_open_files"): "has no attribute 'mkdir'",
-    ("WalkTests", "test_walk_prune"): "has no attribute 'walk'",
-    ("WalkTests", "test_walk_topdown"): "has no attribute 'walk'",
+    "has no attribute 'mkdir'": [
+        ("PathSubclassTest", "test_glob_above_recursion_limit"),
+        ("PathSubclassTest", "test_glob_many_open_files"),
+        ("PathSubclassTest", "test_mkdir"),
+        ("PathSubclassTest", "test_mkdir_concurrent_parent_creation"),
+        ("PathSubclassTest", "test_mkdir_exist_ok"),
+        ("PathSubclassTest", "test_mkdir_exist_ok_with_parent"),
+        ("PathSubclassTest", "test_mkdir_no_parents_file"),
+        ("PathSubclassTest", "test_mkdir_parents"),
+        ("PathSubclassTest", "test_mkdir_with_child_file"),
+        ("PathSubclassTest", "test_mkdir_with_unknown_drive"),
+        ("PathTest", "test_glob_above_recursion_limit"),
+        ("PathTest", "test_glob_many_open_files"),
+        ("PathTest", "test_mkdir"),
+        ("PathTest", "test_mkdir_concurrent_parent_creation"),
+        ("PathTest", "test_mkdir_exist_ok"),
+        ("PathTest", "test_mkdir_exist_ok_with_parent"),
+        ("PathTest", "test_mkdir_no_parents_file"),
+        ("PathTest", "test_mkdir_parents"),
+        ("PathTest", "test_mkdir_with_child_file"),
+        ("PathTest", "test_mkdir_with_unknown_drive"),
+        ("PosixPathTest", "test_glob_above_recursion_limit"),
+        ("PosixPathTest", "test_glob_many_open_files"),
+        ("PosixPathTest", "test_mkdir"),
+        ("PosixPathTest", "test_mkdir_concurrent_parent_creation"),
+        ("PosixPathTest", "test_mkdir_exist_ok"),
+        ("PosixPathTest", "test_mkdir_exist_ok_with_parent"),
+        ("PosixPathTest", "test_mkdir_no_parents_file"),
+        ("PosixPathTest", "test_mkdir_parents"),
+        ("PosixPathTest", "test_mkdir_with_child_file"),
+        ("WalkTests", "test_walk_above_recursion_limit"),
+        ("WalkTests", "test_walk_many_open_files"),
+        ("WindowsPathTest", "test_glob_above_recursion_limit"),
+        ("WindowsPathTest", "test_glob_many_open_files"),
+        ("WindowsPathTest", "test_mkdir"),
+        ("WindowsPathTest", "test_mkdir_concurrent_parent_creation"),
+        ("WindowsPathTest", "test_mkdir_exist_ok"),
+        ("WindowsPathTest", "test_mkdir_exist_ok_with_parent"),
+        ("WindowsPathTest", "test_mkdir_no_parents_file"),
+        ("WindowsPathTest", "test_mkdir_parents"),
+        ("WindowsPathTest", "test_mkdir_with_child_file"),
+        ("WindowsPathTest", "test_mkdir_with_unknown_drive"),
+    ],
+
+    # =========================================================================
+    # glob() not implemented
+    # =========================================================================
+    "has no attribute 'glob'": [
+        ("PathSubclassTest", "test_glob_case_sensitive"),
+        ("PathSubclassTest", "test_glob_common"),
+        ("PathSubclassTest", "test_glob_dotdot"),
+        ("PathTest", "test_glob_case_sensitive"),
+        ("PathTest", "test_glob_common"),
+        ("PathTest", "test_glob_dotdot"),
+        ("PathTest", "test_glob_empty_pattern"),
+        ("PosixPathTest", "test_glob"),
+        ("PosixPathTest", "test_glob_case_sensitive"),
+        ("PosixPathTest", "test_glob_common"),
+        ("PosixPathTest", "test_glob_dotdot"),
+        ("WindowsPathTest", "test_glob"),
+        ("WindowsPathTest", "test_glob_case_sensitive"),
+        ("WindowsPathTest", "test_glob_common"),
+        ("WindowsPathTest", "test_glob_dotdot"),
+    ],
+
+    # =========================================================================
+    # group() not implemented
+    # =========================================================================
+    "has no attribute 'group'": [
+        ("PathSubclassTest", "test_group"),
+        ("PathTest", "test_group"),
+        ("PosixPathTest", "test_group"),
+        ("WindowsPathAsPureTest", "test_group"),
+        ("WindowsPathTest", "test_group"),
+    ],
+
+    # =========================================================================
+    # hardlink_to() not implemented
+    # =========================================================================
+    "has no attribute 'hardlink_to'": [
+        ("PathSubclassTest", "test_hardlink_to"),
+        ("PathSubclassTest", "test_link_to_not_implemented"),
+        ("PathTest", "test_hardlink_to"),
+        ("PathTest", "test_link_to_not_implemented"),
+        ("PosixPathTest", "test_hardlink_to"),
+        ("PosixPathTest", "test_link_to_not_implemented"),
+        ("WindowsPathTest", "test_hardlink_to"),
+    ],
+
+    # =========================================================================
+    # home() not implemented
+    # =========================================================================
+    "has no attribute 'home'": [
+        ("PathSubclassTest", "test_home"),
+        ("PathTest", "test_home"),
+        ("PosixPathTest", "test_home"),
+        ("WindowsPathTest", "test_home"),
+    ],
+
+    # =========================================================================
+    # is_block_device() not implemented
+    # =========================================================================
+    "has no attribute 'is_block_device'": [
+        ("PathSubclassTest", "test_is_block_device_false"),
+        ("PathTest", "test_is_block_device_false"),
+        ("PosixPathTest", "test_is_block_device_false"),
+        ("WindowsPathTest", "test_is_block_device_false"),
+    ],
+
+    # =========================================================================
+    # is_char_device() not implemented
+    # =========================================================================
+    "has no attribute 'is_char_device'": [
+        ("PathSubclassTest", "test_is_char_device_false"),
+        ("PathSubclassTest", "test_is_char_device_true"),
+        ("PathTest", "test_is_char_device_false"),
+        ("PathTest", "test_is_char_device_true"),
+        ("PosixPathTest", "test_is_char_device_false"),
+        ("PosixPathTest", "test_is_char_device_true"),
+        ("WindowsPathTest", "test_is_char_device_false"),
+        ("WindowsPathTest", "test_is_char_device_true"),
+    ],
+
+    # =========================================================================
+    # is_fifo() not implemented
+    # =========================================================================
+    "has no attribute 'is_fifo'": [
+        ("PathSubclassTest", "test_is_fifo_false"),
+        ("PathSubclassTest", "test_is_fifo_true"),
+        ("PathTest", "test_is_fifo_false"),
+        ("PathTest", "test_is_fifo_true"),
+        ("PosixPathTest", "test_is_fifo_false"),
+        ("PosixPathTest", "test_is_fifo_true"),
+        ("WindowsPathTest", "test_is_fifo_false"),
+        ("WindowsPathTest", "test_is_fifo_true"),
+    ],
+
+    # =========================================================================
+    # is_junction() not implemented
+    # =========================================================================
+    "has no attribute 'is_junction'": [
+        ("PathSubclassTest", "test_is_junction"),
+        ("PathTest", "test_is_junction"),
+        ("PosixPathTest", "test_is_junction"),
+        ("WindowsPathTest", "test_is_junction"),
+    ],
+
+    # =========================================================================
+    # is_mount() not implemented
+    # =========================================================================
+    "has no attribute 'is_mount'": [
+        ("PathSubclassTest", "test_is_mount"),
+        ("PathTest", "test_is_mount"),
+        ("PosixPathTest", "test_is_mount"),
+        ("WindowsPathTest", "test_is_mount"),
+    ],
+
+    # =========================================================================
+    # is_socket() not implemented
+    # =========================================================================
+    "has no attribute 'is_socket'": [
+        ("PathSubclassTest", "test_is_socket_false"),
+        ("PathSubclassTest", "test_is_socket_true"),
+        ("PathTest", "test_is_socket_false"),
+        ("PathTest", "test_is_socket_true"),
+        ("PosixPathTest", "test_is_socket_false"),
+        ("PosixPathTest", "test_is_socket_true"),
+        ("WindowsPathTest", "test_is_socket_false"),
+        ("WindowsPathTest", "test_is_socket_true"),
+    ],
+
+    # =========================================================================
+    # is_symlink() not implemented
+    # =========================================================================
+    "has no attribute 'is_symlink'": [
+        ("PathSubclassTest", "test_is_symlink"),
+        ("PathTest", "test_is_symlink"),
+        ("PosixPathTest", "test_is_symlink"),
+        ("WindowsPathTest", "test_is_symlink"),
+    ],
+
+    # =========================================================================
+    # iterdir() not implemented
+    # =========================================================================
+    "has no attribute 'iterdir'": [
+        ("PathSubclassTest", "test_iterdir"),
+        ("PathSubclassTest", "test_iterdir_nodir"),
+        ("PathSubclassTest", "test_rmdir"),
+        ("PathSubclassTest", "test_with"),
+        ("PathTest", "test_iterdir"),
+        ("PathTest", "test_iterdir_nodir"),
+        ("PathTest", "test_rmdir"),
+        ("PathTest", "test_with"),
+        ("PosixPathTest", "test_iterdir"),
+        ("PosixPathTest", "test_iterdir_nodir"),
+        ("PosixPathTest", "test_rmdir"),
+        ("PosixPathTest", "test_with"),
+        ("WindowsPathTest", "test_iterdir"),
+        ("WindowsPathTest", "test_iterdir_nodir"),
+        ("WindowsPathTest", "test_rmdir"),
+        ("WindowsPathTest", "test_with"),
+    ],
+
+    # =========================================================================
+    # lstat() not implemented
+    # =========================================================================
+    "has no attribute 'lstat'": [
+        ("PathSubclassTest", "test_lstat_nosymlink"),
+        ("PathTest", "test_lstat_nosymlink"),
+        ("PosixPathTest", "test_lstat_nosymlink"),
+        ("WindowsPathTest", "test_lstat_nosymlink"),
+    ],
+
+    # =========================================================================
+    # resolve() not implemented
+    # =========================================================================
+    "has no attribute 'resolve'": [
+        ("PathSubclassTest", "test_mkdir_exist_ok_root"),
+        ("PathSubclassTest", "test_resolve_nonexist_relative_issue38671"),
+        ("PathTest", "test_mkdir_exist_ok_root"),
+        ("PathTest", "test_resolve_nonexist_relative_issue38671"),
+        ("PosixPathTest", "test_mkdir_exist_ok_root"),
+        ("PosixPathTest", "test_resolve_nonexist_relative_issue38671"),
+        ("PosixPathTest", "test_resolve_root"),
+        ("WindowsPathTest", "test_mkdir_exist_ok_root"),
+        ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"),
+    ],
+
+    # =========================================================================
+    # open() not implemented
+    # =========================================================================
+    "has no attribute 'open'": [
+        ("PathSubclassTest", "test_open_common"),
+        ("PathTest", "test_open_common"),
+        ("PosixPathTest", "test_open_common"),
+        ("PosixPathTest", "test_open_mode"),
+        ("WindowsPathTest", "test_open_common"),
+    ],
+
+    # =========================================================================
+    # owner() not implemented
+    # =========================================================================
+    "has no attribute 'owner'": [
+        ("PathSubclassTest", "test_owner"),
+        ("PathTest", "test_owner"),
+        ("PosixPathTest", "test_owner"),
+        ("WindowsPathAsPureTest", "test_owner"),
+        ("WindowsPathTest", "test_owner"),
+    ],
+
+    # =========================================================================
+    # write_bytes() not implemented
+    # =========================================================================
+    "has no attribute 'write_bytes'": [
+        ("PathSubclassTest", "test_read_write_bytes"),
+        ("PathTest", "test_read_write_bytes"),
+        ("PosixPathTest", "test_read_write_bytes"),
+        ("WindowsPathTest", "test_read_write_bytes"),
+    ],
+
+    # =========================================================================
+    # write_text() not implemented
+    # =========================================================================
+    "has no attribute 'write_text'": [
+        ("PathSubclassTest", "test_read_write_text"),
+        ("PathSubclassTest", "test_write_text_with_newlines"),
+        ("PathTest", "test_read_write_text"),
+        ("PathTest", "test_write_text_with_newlines"),
+        ("PosixPathTest", "test_read_write_text"),
+        ("PosixPathTest", "test_write_text_with_newlines"),
+        ("WindowsPathTest", "test_read_write_text"),
+        ("WindowsPathTest", "test_write_text_with_newlines"),
+    ],
+
+    # =========================================================================
+    # rename() not implemented
+    # =========================================================================
+    "has no attribute 'rename'": [
+        ("PathSubclassTest", "test_rename"),
+        ("PathTest", "test_rename"),
+        ("PosixPathTest", "test_rename"),
+        ("WindowsPathTest", "test_rename"),
+    ],
+
+    # =========================================================================
+    # replace() not implemented
+    # =========================================================================
+    "has no attribute 'replace'": [
+        ("PathSubclassTest", "test_replace"),
+        ("PathTest", "test_replace"),
+        ("PosixPathTest", "test_replace"),
+        ("WindowsPathTest", "test_replace"),
+    ],
+
+    # =========================================================================
+    # rglob() not implemented
+    # =========================================================================
+    "has no attribute 'rglob'": [
+        ("PathSubclassTest", "test_rglob_common"),
+        ("PathTest", "test_rglob_common"),
+        ("PosixPathTest", "test_rglob"),
+        ("PosixPathTest", "test_rglob_common"),
+        ("WindowsPathTest", "test_rglob"),
+        ("WindowsPathTest", "test_rglob_common"),
+    ],
+
+    # =========================================================================
+    # samefile() not implemented
+    # =========================================================================
+    "has no attribute 'samefile'": [
+        ("PathSubclassTest", "test_samefile"),
+        ("PathTest", "test_samefile"),
+        ("PosixPathTest", "test_samefile"),
+        ("WindowsPathTest", "test_samefile"),
+    ],
+
+    # =========================================================================
+    # lstat (follow_symlinks=False) not yet implemented
+    # =========================================================================
+    "lstat (follow_symlinks=False) not yet implemented": [
+        ("PathSubclassTest", "test_stat_no_follow_symlinks_nosymlink"),
+        ("PathTest", "test_stat_no_follow_symlinks_nosymlink"),
+        ("PosixPathTest", "test_stat_no_follow_symlinks_nosymlink"),
+        ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"),
+    ],
+
+    # =========================================================================
+    # touch() not implemented
+    # =========================================================================
+    "has no attribute 'touch'": [
+        ("PathSubclassTest", "test_touch_common"),
+        ("PathSubclassTest", "test_touch_nochange"),
+        ("PathTest", "test_touch_common"),
+        ("PathTest", "test_touch_nochange"),
+        ("PosixPathTest", "test_touch_common"),
+        ("PosixPathTest", "test_touch_mode"),
+        ("PosixPathTest", "test_touch_nochange"),
+        ("WindowsPathTest", "test_touch_common"),
+        ("WindowsPathTest", "test_touch_nochange"),
+    ],
+
+    # =========================================================================
+    # unlink() not implemented
+    # =========================================================================
+    "has no attribute 'unlink'": [
+        ("PathSubclassTest", "test_unlink"),
+        ("PathSubclassTest", "test_unlink_missing_ok"),
+        ("PathTest", "test_unlink"),
+        ("PathTest", "test_unlink_missing_ok"),
+        ("PosixPathTest", "test_unlink"),
+        ("PosixPathTest", "test_unlink_missing_ok"),
+        ("WindowsPathTest", "test_unlink"),
+        ("WindowsPathTest", "test_unlink_missing_ok"),
+    ],
+
+    # =========================================================================
+    # walk() not implemented
+    # =========================================================================
+    "has no attribute 'walk'": [
+        ("WalkTests", "test_file_like_path"),
+        ("WalkTests", "test_walk_bad_dir"),
+        ("WalkTests", "test_walk_bottom_up"),
+        ("WalkTests", "test_walk_prune"),
+        ("WalkTests", "test_walk_topdown"),
+    ],
 
     # =========================================================================
     # WindowsPathAsPureTest - runs only on Windows, tests pure path operations
     # =========================================================================
-    ("WindowsPathAsPureTest", "test_eq"): "WindowsPath",
-    ("WindowsPathAsPureTest", "test_group"): "has no attribute 'group'",
-    ("WindowsPathAsPureTest", "test_owner"): "has no attribute 'owner'",
-    ("WindowsPathAsPureTest", "test_with_segments_common"): "has no attribute 'session_id'",
-    ("WindowsPathAsPureTest", "test_with_suffix_common"): "expected str, not tuple",
-
-    # =========================================================================
-    # WindowsPathTest - concrete Path tests on Windows, require filesystem I/O
-    # These run only on Windows systems
-    # =========================================================================
-    ("WindowsPathTest", "test_absolute"): "!=",
-    ("WindowsPathTest", "test_absolute_common"): "!=",
-    ("WindowsPathTest", "test_empty_path"): "has no attribute 'stat'",
-    ("WindowsPathTest", "test_expanduser"): "has no attribute 'unset'",
-    ("WindowsPathTest", "test_expanduser_common"): "has no attribute 'expanduser'",
-    ("WindowsPathTest", "test_glob"): "has no attribute 'glob'",
-    ("WindowsPathTest", "test_glob_above_recursion_limit"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_glob_case_sensitive"): "has no attribute 'glob'",
-    ("WindowsPathTest", "test_glob_common"): "has no attribute 'glob'",
-    ("WindowsPathTest", "test_glob_dotdot"): "has no attribute 'glob'",
-    ("WindowsPathTest", "test_glob_many_open_files"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_group"): "has no attribute 'group'",
-    ("WindowsPathTest", "test_hardlink_to"): "has no attribute 'hardlink_to'",
-    ("WindowsPathTest", "test_home"): "has no attribute 'home'",
-    ("WindowsPathTest", "test_is_block_device_false"): "has no attribute 'is_block_device'",
-    ("WindowsPathTest", "test_is_char_device_false"): "has no attribute 'is_char_device'",
-    ("WindowsPathTest", "test_is_char_device_true"): "has no attribute 'is_char_device'",
-    ("WindowsPathTest", "test_is_fifo_false"): "has no attribute 'is_fifo'",
-    ("WindowsPathTest", "test_is_fifo_true"): "has no attribute 'is_fifo'",
-    ("WindowsPathTest", "test_is_junction"): "has no attribute 'is_junction'",
-    ("WindowsPathTest", "test_is_mount"): "has no attribute 'is_mount'",
-    ("WindowsPathTest", "test_is_socket_false"): "has no attribute 'is_socket'",
-    ("WindowsPathTest", "test_is_socket_true"): "has no attribute 'is_socket'",
-    ("WindowsPathTest", "test_is_symlink"): "has no attribute 'is_symlink'",
-    ("WindowsPathTest", "test_iterdir"): "has no attribute 'iterdir'",
-    ("WindowsPathTest", "test_iterdir_nodir"): "has no attribute 'iterdir'",
-    ("WindowsPathTest", "test_lstat_nosymlink"): "has no attribute 'lstat'",
-    ("WindowsPathTest", "test_mkdir"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_concurrent_parent_creation"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_exist_ok"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_exist_ok_root"): "has no attribute 'resolve'",
-    ("WindowsPathTest", "test_mkdir_exist_ok_with_parent"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_no_parents_file"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_parents"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_with_child_file"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_mkdir_with_unknown_drive"): "has no attribute 'mkdir'",
-    ("WindowsPathTest", "test_open_common"): "has no attribute 'open'",
-    ("WindowsPathTest", "test_owner"): "has no attribute 'owner'",
-    ("WindowsPathTest", "test_parts_interning"): "is not",
-    ("WindowsPathTest", "test_passing_kwargs_deprecated"): "DeprecationWarning not triggered",
-    ("WindowsPathTest", "test_pickling_common"): "has no attribute 'stat'",
-    ("WindowsPathTest", "test_read_write_bytes"): "has no attribute 'write_bytes'",
-    ("WindowsPathTest", "test_read_write_text"): "has no attribute 'write_text'",
-    ("WindowsPathTest", "test_rename"): "has no attribute 'rename'",
-    ("WindowsPathTest", "test_replace"): "has no attribute 'replace'",
-    ("WindowsPathTest", "test_resolve_nonexist_relative_issue38671"): "has no attribute 'resolve'",
-    ("WindowsPathTest", "test_rglob"): "has no attribute 'rglob'",
-    ("WindowsPathTest", "test_rglob_common"): "has no attribute 'rglob'",
-    ("WindowsPathTest", "test_rmdir"): "has no attribute 'iterdir'",
-    ("WindowsPathTest", "test_samefile"): "has no attribute 'samefile'",
-    ("WindowsPathTest", "test_stat_no_follow_symlinks_nosymlink"): "lstat (follow_symlinks=False) not yet implemented",
-    ("WindowsPathTest", "test_touch_common"): "has no attribute 'touch'",
-    ("WindowsPathTest", "test_touch_nochange"): "has no attribute 'touch'",
-    ("WindowsPathTest", "test_unlink"): "has no attribute 'unlink'",
-    ("WindowsPathTest", "test_unlink_missing_ok"): "has no attribute 'unlink'",
-    ("WindowsPathTest", "test_with"): "has no attribute 'iterdir'",
-    ("WindowsPathTest", "test_with_segments"): "has no attribute 'session_id'",
-    ("WindowsPathTest", "test_write_text_with_newlines"): "has no attribute 'write_text'",
+    "WindowsPath": [
+        ("WindowsPathAsPureTest", "test_eq"),
+    ],
 }
+
+# Build reverse lookup: (class_name, test_name) -> expected_error_substring
+_EXPECTED_FAILURES_BY_TEST = {}
+for _reason, _tests in EXPECTED_FAILURES.items():
+    for _test in _tests:
+        _EXPECTED_FAILURES_BY_TEST[_test] = _reason
 
 
 def download_file(url, dest):
@@ -484,8 +667,8 @@ class QuietExpectedFailuresResult(unittest.TextTestResult):
         test_class = test.__class__.__name__
         test_method = test._testMethodName
         key = (test_class, test_method)
-        if key in EXPECTED_FAILURES:
-            expected_msg = EXPECTED_FAILURES[key]
+        if key in _EXPECTED_FAILURES_BY_TEST:
+            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
             # Format the error to check against expected message
             err_str = self._exc_info_to_string(err, test)
             return expected_msg in err_str
@@ -526,7 +709,7 @@ class QuietExpectedFailuresResult(unittest.TextTestResult):
             test_class = test.__class__.__name__
             test_method = test._testMethodName
             key = (test_class, test_method)
-            if key in EXPECTED_FAILURES and EXPECTED_FAILURES[key] in err:
+            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
                 continue
             unexpected_errors.append((test, err))
 
@@ -534,7 +717,7 @@ class QuietExpectedFailuresResult(unittest.TextTestResult):
             test_class = test.__class__.__name__
             test_method = test._testMethodName
             key = (test_class, test_method)
-            if key in EXPECTED_FAILURES and EXPECTED_FAILURES[key] in err:
+            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
                 continue
             unexpected_failures.append((test, err))
 
@@ -603,8 +786,8 @@ def run_tests():
         test_class = test.__class__.__name__
         test_method = test._testMethodName
         key = (test_class, test_method)
-        if key in EXPECTED_FAILURES:
-            expected_msg = EXPECTED_FAILURES[key]
+        if key in _EXPECTED_FAILURES_BY_TEST:
+            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
             if expected_msg in traceback:
                 expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
                 continue
@@ -614,8 +797,8 @@ def run_tests():
         test_class = test.__class__.__name__
         test_method = test._testMethodName
         key = (test_class, test_method)
-        if key in EXPECTED_FAILURES:
-            expected_msg = EXPECTED_FAILURES[key]
+        if key in _EXPECTED_FAILURES_BY_TEST:
+            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
             if expected_msg in traceback:
                 expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
                 continue
