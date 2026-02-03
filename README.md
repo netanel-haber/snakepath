@@ -102,6 +102,23 @@ SpPath relative = sp_relative_to(&p, &base);
 bool eq = sp_path_eq(&a, &b);
 ```
 
+### Glob / Directory Traversal
+
+```c
+// Iterator-based API
+SpGlobIter it = sp_glob_begin(&base, "*.txt", SP_CASE_PLATFORM_DEFAULT);
+SpPath match;
+while (sp_glob_next(&it, &match)) { /* use match */ }
+sp_glob_end(&it);
+
+// Recursive glob (prepends **/)
+SpGlobIter it = sp_rglob_begin(&base, "*.c", SP_CASE_PLATFORM_DEFAULT);
+
+// Convenient foreach macros
+SP_GLOB_FOREACH(&base, "*.txt", match) { /* use match */ }
+SP_RGLOB_FOREACH(&base, "*.c", match) { /* use match */ }
+```
+
 ## Fluent API
 
 Enable with `#define SNAKEPATH_FLUENT` before including.
@@ -267,8 +284,8 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.exists()` | `sp_exists()` | `.exists()` |
 | `.stat()` | `sp_stat()` | - |
 | `.mkdir()` | `sp_mkdir()` | - |
-| `.glob()` | `sp_glob()` | - |
-| `.rglob()` | `sp_rglob()` | - |
+| `.glob()` | `sp_glob_begin/next/end()` | - |
+| `.rglob()` | `sp_rglob_begin/next/end()` | - |
 | `len(p.parents)` | `sp_parents_count()` | - |
 
 **Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `symlink_to`, `hardlink_to`, `resolve`, `readlink`, `owner`, `group`, `chmod`, `lstat`, `samefile`, `is_symlink`, `is_mount`, `is_junction`, `is_block_device`, `is_char_device`, `is_fifo`, `is_socket`, `expanduser`, `home`

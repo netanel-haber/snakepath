@@ -279,6 +279,24 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 <span class="n">bool</span> <span class="n">eq</span> <span class="o">=</span> <span class="n">sp_path_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span></code></pre>
           </div>
         </div>
+        <h3 id="glob">Glob / Directory Traversal</h3>
+        <div class="language-c highlighter-rouge">
+          <div class="highlight">
+            <pre
+              class="highlight"><code><span class="c1">// Iterator-based API</span>
+<span class="n">SpGlobIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sp_glob_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">SP_CASE_PLATFORM_DEFAULT</span><span class="p">);</span>
+<span class="n">SpPath</span> <span class="n">match</span><span class="p">;</span>
+<span class="k">while</span> <span class="p">(</span><span class="n">sp_glob_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">match</span><span class="p">))</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
+<span class="n">sp_glob_end</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="p">);</span>
+
+<span class="c1">// Recursive glob (prepends **/)</span>
+<span class="n">SpGlobIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sp_rglob_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">SP_CASE_PLATFORM_DEFAULT</span><span class="p">);</span>
+
+<span class="c1">// Convenient foreach macros</span>
+<span class="n">SP_GLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
+<span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span></code></pre>
+          </div>
+        </div>
         <h2 id="fluent-api">Fluent API</h2>
         <p>Enable with <code class="language-plaintext highlighter-rouge">#define SNAKEPATH_FLUENT</code> before
           including.</p>
@@ -873,7 +891,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">.glob()</code>
               </td>
               <td>
-                <code class="language-plaintext highlighter-rouge">sp_glob_begin_ex/next/end()</code>
+                <code class="language-plaintext highlighter-rouge">sp_glob_begin/next/end()</code>
               </td>
               <td>-</td>
             </tr>
@@ -882,7 +900,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">.rglob()</code>
               </td>
               <td>
-                <code class="language-plaintext highlighter-rouge">sp_rglob_begin_ex/next/end()</code>
+                <code class="language-plaintext highlighter-rouge">sp_rglob_begin/next/end()</code>
               </td>
               <td>-</td>
             </tr>
