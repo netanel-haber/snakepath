@@ -347,6 +347,7 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #define SPF(s) sp_fluent_init_(sp_path(s))
 #define SPF_P(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_POSIX))
 #define SPF_W(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_WINDOWS))
+#define SPF_PATH(p) sp_fluent_init_(p)
 
 #ifdef __cplusplus
 }
