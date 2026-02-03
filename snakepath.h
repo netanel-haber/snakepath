@@ -58,6 +58,7 @@ extern "C" {
 #define SP_ERR_NOT_RELATIVE '\x01' /* Not relative to other path */
 #define SP_ERR_NO_NAME '\x02'      /* Path has no usable name */
 #define SP_ERR_INVALID_ARG '\x03'  /* Invalid argument (name/stem/suffix) */
+#define SP_ERR_OTHER '\x04'        /* Other error (I/O, permission, etc.) */
 
 /* Match result codes */
 #define SP_MATCH_YES 1          /* Pattern matched */
@@ -253,9 +254,17 @@ typedef struct {
     bool valid;                /* True if stat succeeded */
 } SpStatResult;
 
-SpStatResult sp_stat(const SpPath *p);  /* follows symlinks; sp_lstat() coming later */
+SpStatResult sp_stat(const SpPath *p);   /* follows symlinks */
+SpStatResult sp_lstat(const SpPath *p);  /* does not follow symlinks */
 bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b);
 size_t sp_parents_count(const SpPath *p);
+
+/* Symlink & link operations */
+SpPath sp_readlink(const SpPath *p);  /* read symlink target; returns error path if not a symlink */
+SpPath sp_resolve(const SpPath *p, bool strict);  /* resolve to canonical absolute path */
+bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory);  /* create symlink */
+bool sp_hardlink_to(const SpPath *p, const SpPath *target);  /* create hard link */
+bool sp_samefile(const SpPath *a, const SpPath *b);  /* check if paths refer to same file */
 
 /* mkdir result codes */
 #define SP_MKDIR_OK 0
@@ -384,9 +393,20 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>  /* For realpath */
 #define sp_priv_getcwd getcwd
-/* C99 workaround - lstat exists but isn't declared without feature test macros */
+/* C99 workaround - these functions exist but aren't declared without feature test macros.
+   C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
+#ifndef __cplusplus
 extern int lstat(const char *path, struct stat *buf);
+extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
+extern char *realpath(const char *path, char *resolved_path);
+extern int symlink(const char *target, const char *linkpath);
+extern int link(const char *oldpath, const char *newpath);
+#endif
+#endif
+
+/* stat mode constants - define if not provided by system headers */
 #ifndef S_IFMT
 #define S_IFMT 0170000
 #endif
@@ -401,7 +421,6 @@ extern int lstat(const char *path, struct stat *buf);
 #endif
 #ifndef S_ISSOCK
 #define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
-#endif
 #endif
 
 #ifdef __cplusplus
@@ -1895,6 +1914,391 @@ size_t sp_parents_count(const SpPath *p) {
     size_t count = 0;
     while (sp_parents_next(&it, &parent)) count++;
     return count;
+}
+
+SpStatResult sp_lstat(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpStatResult result = SP_PRIV_ZERO;
+    result.valid = false;
+
+    /* Check for embedded null bytes - such paths can't exist */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return result;
+    }
+
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* On Windows, lstat behavior is the same as stat for non-reparse points.
+       For reparse points (symlinks/junctions), we use FindFirstFileA to get
+       the attributes without following the link. */
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(path_str, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+    FindClose(h);
+
+    /* Mode: derive from attributes */
+    result.sp_mode = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+        result.sp_mode &= ~0222;
+    }
+    /* Mark as symlink if it's a reparse point */
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFLNK;
+    }
+
+    /* Size */
+    result.sp_size = (SP_PRIV_CAST(long long, fd.nFileSizeHigh) << 32) |
+                     SP_PRIV_CAST(long long, fd.nFileSizeLow);
+
+    /* Times: convert FILETIME to Unix timestamp */
+    #define SP_FILETIME_TO_UNIX(ft) \
+        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+    result.sp_atime = SP_FILETIME_TO_UNIX(fd.ftLastAccessTime);
+    result.sp_mtime = SP_FILETIME_TO_UNIX(fd.ftLastWriteTime);
+    result.sp_ctime = SP_FILETIME_TO_UNIX(fd.ftCreationTime);
+    #undef SP_FILETIME_TO_UNIX
+
+    /* Get inode/dev/nlink via file handle.
+       FILE_FLAG_OPEN_REPARSE_POINT prevents following symlinks.
+       FILE_FLAG_BACKUP_SEMANTICS is required to open directories. */
+    HANDLE fh = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                            NULL, OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (fh == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(fh, &info)) {
+        CloseHandle(fh);
+        return result;
+    }
+    result.sp_nlink = info.nNumberOfLinks;
+
+    /* Use FileIdInfo for 64-bit inode/dev matching Python's os.stat */
+    typedef struct { unsigned long long VolumeSerialNumber; unsigned char FileId[16]; } SpFileIdInfo;
+    SpFileIdInfo id_info;
+    if (!GetFileInformationByHandleEx(fh, (FILE_INFO_BY_HANDLE_CLASS)18, &id_info, sizeof(id_info))) {
+        CloseHandle(fh);
+        return result;
+    }
+    result.sp_dev = id_info.VolumeSerialNumber;
+    memcpy(&result.sp_ino, id_info.FileId, sizeof(result.sp_ino));
+    CloseHandle(fh);
+
+    result.sp_uid = 0;
+    result.sp_gid = 0;
+#else
+    struct stat st;
+    if (lstat(path_str, &st) != 0) {
+        return result;
+    }
+
+    result.sp_mode = SP_PRIV_CAST(unsigned int, st.st_mode);
+    result.sp_ino = SP_PRIV_CAST(unsigned long long, st.st_ino);
+    result.sp_dev = SP_PRIV_CAST(unsigned long long, st.st_dev);
+    result.sp_nlink = SP_PRIV_CAST(unsigned long long, st.st_nlink);
+    result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
+    result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
+    result.sp_size = SP_PRIV_CAST(long long, st.st_size);
+
+    result.sp_atime = SP_PRIV_CAST(double, st.st_atime);
+    result.sp_mtime = SP_PRIV_CAST(double, st.st_mtime);
+    result.sp_ctime = SP_PRIV_CAST(double, st.st_ctime);
+#endif
+
+    result.valid = true;
+    return result;
+}
+
+SpPath sp_readlink(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpPath result = SP_PRIV_ZERO;
+    result.flavor = p->flavor;
+
+    /* Check for embedded null bytes */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') {
+            result.buf[0] = SP_ERR_OTHER;
+            return result;
+        }
+    }
+
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* On Windows, use CreateFile with FILE_FLAG_OPEN_REPARSE_POINT to open
+       the symlink itself, then use DeviceIoControl to read the target. */
+    HANDLE h = CreateFileA(path_str, GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+
+    /* Buffer for reparse data (REPARSE_DATA_BUFFER) */
+    char reparse_buf[16384];
+    DWORD bytes_returned;
+    if (!DeviceIoControl(h, 0x000900A8 /* FSCTL_GET_REPARSE_POINT */,
+                         NULL, 0, reparse_buf, sizeof(reparse_buf),
+                         &bytes_returned, NULL)) {
+        CloseHandle(h);
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+    CloseHandle(h);
+
+    /* Parse REPARSE_DATA_BUFFER structure */
+    DWORD tag = *(DWORD *)reparse_buf;
+    if (tag == 0xA000000C /* IO_REPARSE_TAG_SYMLINK */) {
+        /* SymbolicLinkReparseBuffer starts at offset 8 */
+        WORD subst_offset = *(WORD *)(reparse_buf + 8);
+        WORD subst_len = *(WORD *)(reparse_buf + 10);
+        WORD print_offset = *(WORD *)(reparse_buf + 12);
+        WORD print_len = *(WORD *)(reparse_buf + 14);
+        DWORD flags = *(DWORD *)(reparse_buf + 16);
+        (void)subst_offset; (void)subst_len; (void)flags;
+
+        /* Use PrintName (more readable than SubstituteName) */
+        WCHAR *print_name = (WCHAR *)(reparse_buf + 20 + print_offset);
+        int print_chars = print_len / 2;
+
+        /* Convert UTF-16 to UTF-8 */
+        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_chars,
+                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
+        if (utf8_len > 0) {
+            result.len = SP_PRIV_CAST(size_t, utf8_len);
+            result.buf[result.len] = '\0';
+            sp_priv_normalize(result.buf, &result.len, result.flavor);
+        } else {
+            result.buf[0] = SP_ERR_OTHER;
+        }
+    } else if (tag == 0xA0000003 /* IO_REPARSE_TAG_MOUNT_POINT (junction) */) {
+        /* MountPointReparseBuffer - similar structure */
+        WORD subst_offset = *(WORD *)(reparse_buf + 8);
+        WORD subst_len = *(WORD *)(reparse_buf + 10);
+        WORD print_offset = *(WORD *)(reparse_buf + 12);
+        WORD print_len = *(WORD *)(reparse_buf + 14);
+        (void)subst_offset; (void)subst_len;
+
+        WCHAR *print_name = (WCHAR *)(reparse_buf + 16 + print_offset);
+        int print_chars = print_len / 2;
+
+        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_chars,
+                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
+        if (utf8_len > 0) {
+            result.len = SP_PRIV_CAST(size_t, utf8_len);
+            result.buf[result.len] = '\0';
+            sp_priv_normalize(result.buf, &result.len, result.flavor);
+        } else {
+            result.buf[0] = SP_ERR_OTHER;
+        }
+    } else {
+        /* Not a symlink or junction */
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#else
+    char buf[SP_PATH_MAX];
+    ssize_t len = readlink(path_str, buf, SP_PATH_MAX - 1);
+    if (len < 0) {
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+    buf[len] = '\0';
+    memcpy(result.buf, buf, SP_PRIV_CAST(size_t, len) + 1);
+    result.len = SP_PRIV_CAST(size_t, len);
+#endif
+
+    return result;
+}
+
+SpPath sp_resolve(const SpPath *p, bool strict) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpPath result = SP_PRIV_ZERO;
+    result.flavor = p->flavor;
+
+    /* Check for embedded null bytes */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') {
+            /* If strict, this is an error; otherwise return absolute path */
+            if (strict) {
+                result.buf[0] = SP_ERR_OTHER;
+                return result;
+            }
+            return sp_absolute(p);
+        }
+    }
+
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* On Windows, use GetFullPathNameA for resolution */
+    char full_path[SP_PATH_MAX];
+    DWORD len = GetFullPathNameA(path_str, SP_PATH_MAX, full_path, NULL);
+    if (len == 0 || len >= SP_PATH_MAX) {
+        if (strict) {
+            result.buf[0] = SP_ERR_OTHER;
+            return result;
+        }
+        return sp_absolute(p);
+    }
+
+    /* Check if path exists when strict=true */
+    if (strict) {
+        DWORD attrs = GetFileAttributesA(full_path);
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            result.buf[0] = SP_ERR_OTHER;
+            return result;
+        }
+    }
+
+    memcpy(result.buf, full_path, len);
+    result.len = len;
+    result.buf[result.len] = '\0';
+    sp_priv_normalize(result.buf, &result.len, result.flavor);
+#else
+    char resolved[SP_PATH_MAX];
+    if (realpath(path_str, resolved) != NULL) {
+        size_t len = strlen(resolved);
+        memcpy(result.buf, resolved, len);
+        result.len = len;
+        result.buf[result.len] = '\0';
+    } else {
+        if (strict) {
+            result.buf[0] = SP_ERR_OTHER;
+            return result;
+        }
+        /* Non-strict: resolve the longest existing prefix, then append the rest.
+           This matches Python's Path.resolve(strict=False) behavior. */
+        SpPath abs_path = sp_absolute(p);
+
+        /* Collect path parts */
+        SpStr parts[SP_PATH_MAX / 2];
+        size_t part_count = sp_priv_collect_parts(&abs_path, parts, SP_PATH_MAX / 2);
+
+        /* Find longest existing prefix by trying realpath on progressively shorter paths */
+        size_t existing_parts = part_count;
+        char test_path[SP_PATH_MAX];
+
+        while (existing_parts > 0) {
+            /* Build path from parts[0..existing_parts-1] */
+            size_t pos = 0;
+            for (size_t i = 0; i < existing_parts && pos < SP_PATH_MAX - 1; i++) {
+                if (i > 0 || (parts[0].len > 0 && parts[0].data[0] != '/')) {
+                    if (pos > 0 && test_path[pos-1] != '/') test_path[pos++] = '/';
+                }
+                size_t copy_len = parts[i].len;
+                if (pos + copy_len >= SP_PATH_MAX - 1) copy_len = SP_PATH_MAX - 1 - pos;
+                memcpy(test_path + pos, parts[i].data, copy_len);
+                pos += copy_len;
+            }
+            test_path[pos] = '\0';
+
+            if (realpath(test_path, resolved) != NULL) {
+                /* Found existing prefix - build result from resolved + remaining parts */
+                size_t res_len = strlen(resolved);
+                memcpy(result.buf, resolved, res_len);
+                result.len = res_len;
+
+                /* Append remaining parts */
+                for (size_t i = existing_parts; i < part_count; i++) {
+                    if (result.len > 0 && result.buf[result.len - 1] != '/') {
+                        result.buf[result.len++] = '/';
+                    }
+                    size_t copy_len = parts[i].len;
+                    if (result.len + copy_len >= SP_PATH_MAX - 1) {
+                        copy_len = SP_PATH_MAX - 1 - result.len;
+                    }
+                    memcpy(result.buf + result.len, parts[i].data, copy_len);
+                    result.len += copy_len;
+                }
+                result.buf[result.len] = '\0';
+                return result;
+            }
+            existing_parts--;
+        }
+
+        /* No existing prefix found - just return the absolute path */
+        return abs_path;
+    }
+#endif
+
+    return result;
+}
+
+bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+
+    /* Check for embedded null bytes */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    for (size_t i = 0; i < target->len; i++) {
+        if (target->buf[i] == '\0') return false;
+    }
+
+    const char *link_path = sp_str(p);
+    const char *target_path = sp_str(target);
+
+#ifdef SP_WINDOWS
+    /* On Windows, use CreateSymbolicLinkA */
+    DWORD flags = target_is_directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
+    /* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 0x2 (Windows 10+) */
+    flags |= 0x2;
+    return CreateSymbolicLinkA(link_path, target_path, flags) != 0;
+#else
+    (void)target_is_directory; /* POSIX symlink doesn't need this flag */
+    return symlink(target_path, link_path) == 0;
+#endif
+}
+
+bool sp_hardlink_to(const SpPath *p, const SpPath *target) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+
+    /* Check for embedded null bytes */
+    for (size_t i = 0; i < p->len; i++) {
+        if (p->buf[i] == '\0') return false;
+    }
+    for (size_t i = 0; i < target->len; i++) {
+        if (target->buf[i] == '\0') return false;
+    }
+
+    const char *link_path = sp_str(p);
+    const char *target_path = sp_str(target);
+
+#ifdef SP_WINDOWS
+    return CreateHardLinkA(link_path, target_path, NULL) != 0;
+#else
+    return link(target_path, link_path) == 0;
+#endif
+}
+
+bool sp_samefile(const SpPath *a, const SpPath *b) {
+    SP_ASSERT_PATH_INVARIANT(a);
+    SP_ASSERT_PATH_INVARIANT(b);
+
+    /* Check for embedded null bytes */
+    for (size_t i = 0; i < a->len; i++) {
+        if (a->buf[i] == '\0') return false;
+    }
+    for (size_t i = 0; i < b->len; i++) {
+        if (b->buf[i] == '\0') return false;
+    }
+
+    SpStatResult stat_a = sp_stat(a);
+    SpStatResult stat_b = sp_stat(b);
+
+    if (!stat_a.valid || !stat_b.valid) return false;
+
+    /* Same file if device and inode match */
+    return stat_a.sp_dev == stat_b.sp_dev && stat_a.sp_ino == stat_b.sp_ino;
 }
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
