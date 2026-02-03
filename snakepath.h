@@ -9,7 +9,6 @@
 #ifndef SNAKEPATH_H
 #define SNAKEPATH_H
 
-#define _POSIX_C_SOURCE 200112L /* For realpath() - TODO: replace this later */
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
@@ -370,7 +369,6 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdlib.h>  /* for realpath */
 #define sp_priv_getcwd getcwd
 #endif
 
@@ -1911,12 +1909,6 @@ static void *sp_priv_glob_open_dir(const SpPath *dir) {
     return (h == INVALID_HANDLE_VALUE) ? NULL : h;
 #else
     const char *path = (dir->len == 0) ? "." : dir->buf;
-    /* Use realpath to resolve .. components before opening (some systems reject opendir on paths with ..) */
-    char resolved[SP_PATH_MAX];
-    if (realpath(path, resolved) != NULL) {
-        return opendir(resolved);
-    }
-    /* Fallback to direct open if realpath fails */
     return opendir(path);
 #endif
 }
