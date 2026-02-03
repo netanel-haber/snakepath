@@ -146,6 +146,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `SPF("path")` | `Path('path')` |
 | `SPF_P("path")` | `PurePosixPath('path')` |
 | `SPF_W("path")` | `PureWindowsPath('path')` |
+| `SPF_PATH(p)` | Start fluent chain from existing `SpPath` |
 
 ### Chainable
 
