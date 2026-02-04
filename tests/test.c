@@ -542,6 +542,9 @@ int main(void) {
     /* Test chmod */
     ASSERT(sp_chmod(&touch_file, 0444) == true);
 
+    /* Restore write permission before unlink (required on Windows) */
+    ASSERT(sp_chmod(&touch_file, 0644) == true);
+
     /* Test unlink */
     ASSERT(sp_unlink(&touch_file, false) == true);
     ASSERT(sp_exists(&touch_file) == false);
