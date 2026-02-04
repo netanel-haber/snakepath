@@ -214,14 +214,6 @@ EXPECTED_FAILURES = {
     ],
 
     # =========================================================================
-    # walk topdown test expects sorted directory order
-    # Our implementation doesn't guarantee sorted order within a level
-    # =========================================================================
-    "Tuples differ": [
-        ("WalkTests", "test_walk_topdown"),
-    ],
-
-    # =========================================================================
     # WindowsPathAsPureTest - runs only on Windows, tests pure path operations
     # =========================================================================
     "WindowsPath": [

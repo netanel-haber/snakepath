@@ -2958,6 +2958,11 @@ static void sp_priv_walk_close_handle(SpWalkIter *it, int depth) {
     }
 }
 
+/* Comparison function for qsort - sort SpPath by string value */
+static int sp_priv_walk_path_cmp(const void *a, const void *b) {
+    return strcmp(sp_str((const SpPath *)a), sp_str((const SpPath *)b));
+}
+
 /* Helper to scan directory and populate dirnames/filenames arrays */
 static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
     it->priv_.dirname_count = 0;
@@ -2990,24 +2995,20 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
         bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (it->follow_symlinks || !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
             if (is_dir) {
-                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES) {
+                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
                     it->priv_.dirnames[it->priv_.dirname_count++] = child;
-                }
             } else {
-                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES) {
+                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
                     it->priv_.filenames[it->priv_.filename_count++] = child;
-                }
             }
         } else {
             /* Don't follow symlinks - check if it's a directory symlink */
             if (is_dir) {
-                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES) {
+                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
                     it->priv_.dirnames[it->priv_.dirname_count++] = child;
-                }
             } else {
-                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES) {
+                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
                     it->priv_.filenames[it->priv_.filename_count++] = child;
-                }
             }
         }
     } while (FindNextFileA(h, &fd));
@@ -3051,17 +3052,22 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
         }
 
         if (is_dir) {
-            if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES) {
+            if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
                 it->priv_.dirnames[it->priv_.dirname_count++] = child;
-            }
         } else {
-            if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES) {
+            if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
                 it->priv_.filenames[it->priv_.filename_count++] = child;
-            }
         }
     }
     closedir(d);
 #endif
+
+    /* Sort for consistent ordering (like Python's Path.walk) */
+    if (it->priv_.dirname_count > 1)
+        qsort(it->priv_.dirnames, it->priv_.dirname_count, sizeof(SpPath), sp_priv_walk_path_cmp);
+    if (it->priv_.filename_count > 1)
+        qsort(it->priv_.filenames, it->priv_.filename_count, sizeof(SpPath), sp_priv_walk_path_cmp);
+
     return true;
 }
 
