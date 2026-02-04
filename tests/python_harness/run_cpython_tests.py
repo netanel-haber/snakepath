@@ -139,7 +139,6 @@ EXPECTED_FAILURES = {
     # =========================================================================
     "has no attribute 'unset'": [
         ("PosixPathTest", "test_expanduser"),
-        ("WindowsPathTest", "test_expanduser_common"),
         ("WindowsPathTest", "test_expanduser"),
     ],
 
