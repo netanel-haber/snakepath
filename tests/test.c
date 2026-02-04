@@ -651,7 +651,7 @@ int main(void) {
     printf("\niterdir Tests:\n");
 
     /* Create test directory structure */
-    char iterdir_path[128], iterdir_f1[128], iterdir_f2[128], iterdir_sub[128];
+    char iterdir_path[128], iterdir_f1[256], iterdir_f2[256], iterdir_sub[256];
     snprintf(iterdir_path, sizeof(iterdir_path), "./test_iterdir_%ld", pid);
     snprintf(iterdir_f1, sizeof(iterdir_f1), "%s/file1.txt", iterdir_path);
     snprintf(iterdir_f2, sizeof(iterdir_f2), "%s/file2.txt", iterdir_path);
@@ -696,7 +696,7 @@ int main(void) {
     printf("\nwalk Tests:\n");
 
     /* Create test directory structure */
-    char walk_path[128], walk_f1[128], walk_f2[128], walk_sub[128], walk_f3[128];
+    char walk_path[128], walk_f1[256], walk_f2[256], walk_sub[256], walk_f3[256];
     snprintf(walk_path, sizeof(walk_path), "./test_walk_%ld", pid);
     snprintf(walk_f1, sizeof(walk_f1), "%s/file1.txt", walk_path);
     snprintf(walk_f2, sizeof(walk_f2), "%s/file2.txt", walk_path);
@@ -715,12 +715,43 @@ int main(void) {
     FILE *wf3 = fopen(walk_f3, "w"); if (wf3) fclose(wf3);
 
     /* Test walk top-down */
+#ifdef WALK_DEBUG
+    printf("DEBUG: walk_begin on '%s'\n", walk_path);
+    fflush(stdout);
+#endif
+
     int walk_dir_count = 0;
     SpWalkIter wit = sp_walk_begin(&walk_base, true, false);
+
+#ifdef WALK_DEBUG
+    printf("DEBUG: walk_begin returned, depth=%d\n", wit.depth);
+    fflush(stdout);
+#endif
+
+    int walk_iteration = 0;
     SpWalkEntry went;
     while (sp_walk_next(&wit, &went)) {
+#ifdef WALK_DEBUG
+        printf("DEBUG: walk_next iteration %d, dirpath='%s', depth=%d, dirname_count=%zu\n",
+               walk_iteration, sp_str(&went.dirpath), wit.depth, *went.dirname_count);
+        fflush(stdout);
+#endif
         walk_dir_count++;
+        walk_iteration++;
+        if (walk_iteration > 100) {
+#ifdef WALK_DEBUG
+            printf("DEBUG: ABORT - too many iterations\n");
+            fflush(stdout);
+#endif
+            break;
+        }
     }
+
+#ifdef WALK_DEBUG
+    printf("DEBUG: walk loop exited, count=%d\n", walk_dir_count);
+    fflush(stdout);
+#endif
+
     sp_walk_end(&wit);
     ASSERT(walk_dir_count == 2);  /* walk_base and walk_sub */
 

@@ -216,10 +216,22 @@ _walk_max_entries = _lib.sp_walk_max_entries()
 class _SpWalkIter(Structure):
     _fields_ = [('_opaque', ctypes.c_char * _sizeof_walk_iter)]
 _PWalkIter = POINTER(_SpWalkIter)
+
+# Walk error structure (opaque - we use accessor functions)
+class _SpWalkError(Structure):
+    _fields_ = [('_opaque', ctypes.c_char * (SP_PATH_MAX + 16 + 4))]  # SpPath + padding + int
+_PWalkError = POINTER(_SpWalkError)
+
+# Walk error callback type: void (*)(const SpWalkError*, void*)
+_WalkErrorFn = ctypes.CFUNCTYPE(None, _PWalkError, ctypes.c_void_p)
+
 _sig('sp_walk_begin_wrap', [_PP, c_int, c_int, _PWalkIter])
+_sig('sp_walk_begin_with_errors_wrap', [_PP, c_int, c_int, _WalkErrorFn, ctypes.c_void_p, _PWalkIter])
 _sig('sp_walk_next_wrap', [_PWalkIter, _PP, POINTER(_SpPath), POINTER(c_size_t), POINTER(_SpPath), POINTER(c_size_t)], c_int)
 _sig('sp_walk_end_wrap', [_PWalkIter])
 _sig('sp_walk_depth_wrap', [_PWalkIter], c_int)
+_sig('sp_walk_error_path', [_PWalkError], c_char_p)
+_sig('sp_walk_error_code', [_PWalkError], c_int)
 
 
 # ============ Property descriptors ============
@@ -918,7 +930,24 @@ class Path(PurePath):
             return
 
         it = _SpWalkIter()
-        _lib.sp_walk_begin_wrap(byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0, byref(it))
+
+        # Set up error callback if provided
+        c_callback = None  # Must keep reference to prevent GC
+        if on_error is not None:
+            def error_wrapper(err_ptr, user_data):
+                path_bytes = _lib.sp_walk_error_path(err_ptr)
+                err_code = _lib.sp_walk_error_code(err_ptr)
+                path_str = path_bytes.decode('utf-8') if path_bytes else ''
+                # Create OSError with errno
+                os_err = OSError(err_code, os.strerror(err_code), path_str)
+                on_error(os_err)
+            c_callback = _WalkErrorFn(error_wrapper)
+            _lib.sp_walk_begin_with_errors_wrap(
+                byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0,
+                c_callback, None, byref(it))
+        else:
+            _lib.sp_walk_begin_wrap(byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0, byref(it))
+
         if _lib.sp_walk_depth_wrap(byref(it)) < 0:
             return
 

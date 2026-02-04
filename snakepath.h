@@ -329,34 +329,57 @@ void sp_iterdir_end(SpIterdirIter *it);
 #ifndef SP_WALK_MAX_ENTRIES
 #define SP_WALK_MAX_ENTRIES 256
 #endif
+/* Max pending directories per depth level for walk (keep small to limit memory ~533KB) */
+#ifndef SP_WALK_PENDING_PER_LEVEL
+#define SP_WALK_PENDING_PER_LEVEL 16
+#endif
+
+/* Walk error info - passed to on_error callback */
+typedef struct {
+    SpPath path;     /* Path that caused the error */
+    int error_code;  /* errno value */
+} SpWalkError;
+
+/* Walk error callback type */
+typedef void (*SpWalkErrorFn)(const SpWalkError *error, void *user_data);
 
 /* Walk iterator */
 typedef struct {
     int depth;  /* Current depth, -1 = done/error */
     bool top_down;
     bool follow_symlinks;
+    SpWalkErrorFn on_error;  /* Optional error callback */
+    void *user_data;         /* User data passed to on_error */
     struct {
         SpPath dirs[SP_WALK_MAX_DEPTH];
         void *handles[SP_WALK_MAX_DEPTH];
+        /* Stack of pending directories to descend into (per-level storage) */
+        SpPath pending_stack[SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL];
+        size_t pending_offsets[SP_WALK_MAX_DEPTH];  /* Start offset for each depth */
+        size_t pending_counts[SP_WALK_MAX_DEPTH];   /* Count of pending dirs at each depth */
+        size_t pending_top;  /* Current top of pending stack */
+        bool yielded[SP_WALK_MAX_DEPTH];    /* Has each level been scanned? */
+        bool committed[SP_WALK_MAX_DEPTH];  /* Has pending list been committed? (for pruning) */
         SpPath current_dir;
         SpPath dirnames[SP_WALK_MAX_ENTRIES];
         SpPath filenames[SP_WALK_MAX_ENTRIES];
         size_t dirname_count;
         size_t filename_count;
-        bool yielded;  /* Has current level been yielded? */
     } priv_;
 } SpWalkIter;
 
 /* Walk entry - result for each iteration */
 typedef struct {
     SpPath dirpath;
-    SpPath *dirnames;      /* Array of directory paths */
-    size_t dirname_count;
-    SpPath *filenames;     /* Array of file paths */
-    size_t filename_count;
+    SpPath *dirnames;       /* Array of directory paths - user may modify to prune */
+    size_t *dirname_count;  /* Pointer to count - modify to prune (set to 0 to skip all) */
+    SpPath *filenames;      /* Array of file paths */
+    size_t *filename_count; /* Pointer to count */
 } SpWalkEntry;
 
 SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks);
+SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow_symlinks,
+                                     SpWalkErrorFn on_error, void *user_data);
 bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out);
 void sp_walk_end(SpWalkIter *it);
 
@@ -480,8 +503,8 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <errno.h>
 #include <stdlib.h>  /* For realpath */
 #include <stdio.h>   /* For rename */
-#include <fcntl.h>   /* For AT_FDCWD, O_CREAT, etc. */
-#include <time.h>    /* For struct timespec */
+#include <fcntl.h>   /* For O_CREAT, etc. */
+#include <utime.h>   /* For utime() */
 #include <pwd.h>     /* For getpwuid, getpwnam */
 #include <grp.h>     /* For getgrgid */
 #define sp_priv_getcwd getcwd
@@ -493,12 +516,7 @@ extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 extern char *realpath(const char *path, char *resolved_path);
 extern int symlink(const char *target, const char *linkpath);
 extern int link(const char *oldpath, const char *newpath);
-extern int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags);
 extern int chmod(const char *path, mode_t mode);
-#endif
-/* UTIME_NOW may not be defined on all systems */
-#ifndef UTIME_NOW
-#define UTIME_NOW ((1l << 30) - 1l)
 #endif
 #endif
 
@@ -1811,19 +1829,16 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_atime = SP_PRIV_CAST(double, st->st_atime);
     r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
     r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
-    /* Nanosecond timestamps - use st_atim etc. if available, else multiply seconds */
+    /* Nanosecond timestamps - use st_atimespec on BSD, seconds elsewhere.
+     * Note: Linux glibc has st_atim but requires _POSIX_C_SOURCE >= 200809L,
+     * which we can't guarantee. Using seconds-only for portability. */
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
     /* BSD-style: st_atimespec, st_mtimespec, st_ctimespec */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
-#elif defined(__GLIBC__) && defined(__linux__)
-    /* glibc on Linux: POSIX.1-2008 st_atim, st_mtim, st_ctim */
-    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atim.tv_sec) * 1000000000LL + st->st_atim.tv_nsec;
-    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtim.tv_sec) * 1000000000LL + st->st_mtim.tv_nsec;
-    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctim.tv_sec) * 1000000000LL + st->st_ctim.tv_nsec;
 #else
-    /* Fallback: seconds-only precision (Android Bionic, etc.) */
+    /* Fallback: seconds-only precision */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
@@ -2312,13 +2327,8 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
 
     if (file_exists) {
         if (!exist_ok) return false;  /* File exists and exist_ok=false */
-        /* Update timestamps */
-        struct timespec times[2];
-        times[0].tv_nsec = UTIME_NOW;
-        times[0].tv_sec = 0;
-        times[1].tv_nsec = UTIME_NOW;
-        times[1].tv_sec = 0;
-        return utimensat(AT_FDCWD, path_str, times, 0) == 0;
+        /* Update timestamps to current time (NULL = now) */
+        return utime(path_str, SP_PRIV_NULL) == 0;
     }
     /* File doesn't exist - create it */
     int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
@@ -2750,8 +2760,8 @@ SpPath sp_expanduser(const SpPath *p) {
         if (p->len == 1) {
             return home;
         }
-        /* Append the rest of the path after ~ */
-        return sp_join_sv(&home, SP_PRIV_STR(p->buf + 1, p->len - 1));
+        /* Append the rest of the path after ~/ (skip both ~ and separator) */
+        return sp_join_sv(&home, SP_PRIV_STR(p->buf + 2, p->len - 2));
     }
 
 #ifndef SP_WINDOWS
@@ -3055,7 +3065,8 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
     return true;
 }
 
-SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks) {
+static SpWalkIter sp_priv_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks,
+                                     SpWalkErrorFn on_error, void *user_data) {
     SpWalkIter it;
     memset(&it, 0, sizeof(it));
     it.depth = -1;  /* Default to done/error */
@@ -3068,69 +3079,172 @@ SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks) {
 
     it.top_down = top_down;
     it.follow_symlinks = follow_symlinks;
+    it.on_error = on_error;
+    it.user_data = user_data;
     it.depth = 0;
     it.priv_.dirs[0] = sp_path_copy(p);
-    it.priv_.yielded = false;
+    /* yielded[0] and committed[0] are already false from memset */
 
     return it;
+}
+
+SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks) {
+    return sp_priv_walk_begin(p, top_down, follow_symlinks, NULL, NULL);
+}
+
+SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow_symlinks,
+                                     SpWalkErrorFn on_error, void *user_data) {
+    return sp_priv_walk_begin(p, top_down, follow_symlinks, on_error, user_data);
 }
 
 bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
     if (!it || it->depth < 0) return false;
 
+#ifdef SP_WALK_DEBUG
+    int sp_walk_debug_loop = 0;
+#endif
+
     while (it->depth >= 0) {
-        /* If we haven't yielded the current directory yet */
-        if (!it->priv_.yielded) {
+#ifdef SP_WALK_DEBUG
+        sp_walk_debug_loop++;
+        fprintf(stderr, "SP_WALK_DEBUG: loop iter %d, depth=%d, yielded=%d, committed=%d, pending_count=%zu\n",
+                sp_walk_debug_loop, it->depth, it->priv_.yielded[it->depth],
+                it->priv_.committed[it->depth], it->priv_.pending_counts[it->depth]);
+        fflush(stderr);
+        if (sp_walk_debug_loop > 1000) {
+            fprintf(stderr, "SP_WALK_DEBUG: ABORT - infinite loop detected\n");
+            fflush(stderr);
+            return false;
+        }
+#endif
+
+        /* If we haven't scanned the current directory yet */
+        if (!it->priv_.yielded[it->depth]) {
+#ifdef SP_WALK_DEBUG
+            fprintf(stderr, "SP_WALK_DEBUG: scanning dir '%s'\n", sp_str(&it->priv_.dirs[it->depth]));
+            fflush(stderr);
+#endif
             /* Scan the current directory */
             if (!sp_priv_walk_scan_dir(it)) {
+#ifdef SP_WALK_DEBUG
+                fprintf(stderr, "SP_WALK_DEBUG: scan failed, popping\n");
+                fflush(stderr);
+#endif
+                /* Report error via callback if provided */
+                if (it->on_error) {
+                    SpWalkError err;
+                    err.path = it->priv_.dirs[it->depth];
+                    err.error_code = errno;
+                    it->on_error(&err, it->user_data);
+                }
                 /* Can't scan this directory, pop and continue */
                 it->depth--;
-                if (it->depth >= 0) it->priv_.yielded = false;
                 continue;
             }
 
-            it->priv_.yielded = true;
+#ifdef SP_WALK_DEBUG
+            fprintf(stderr, "SP_WALK_DEBUG: scan OK, dirname_count=%zu, filename_count=%zu\n",
+                    it->priv_.dirname_count, it->priv_.filename_count);
+            fflush(stderr);
+#endif
+
+            it->priv_.yielded[it->depth] = true;
 
             if (it->top_down) {
-                /* Top-down: yield before descending */
+                /* Top-down: yield before descending
+                 * Don't commit to pending yet - user may modify dirnames to prune */
                 out->dirpath = it->priv_.current_dir;
                 out->dirnames = it->priv_.dirnames;
-                out->dirname_count = it->priv_.dirname_count;
+                out->dirname_count = &it->priv_.dirname_count;
                 out->filenames = it->priv_.filenames;
-                out->filename_count = it->priv_.filename_count;
+                out->filename_count = &it->priv_.filename_count;
+#ifdef SP_WALK_DEBUG
+                fprintf(stderr, "SP_WALK_DEBUG: yielding (top-down) '%s'\n", sp_str(&out->dirpath));
+                fflush(stderr);
+#endif
                 return true;
             }
+            /* Bottom-up: commit immediately (no pruning support in bottom-up) */
+            it->priv_.pending_offsets[it->depth] = it->priv_.pending_top;
+            size_t to_copy = it->priv_.dirname_count;
+            size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
+            if (to_copy > stack_space) to_copy = stack_space;
+            if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
+            for (size_t i = 0; i < to_copy; i++) {
+                it->priv_.pending_stack[it->priv_.pending_top + i] = it->priv_.dirnames[i];
+            }
+            it->priv_.pending_counts[it->depth] = to_copy;
+            it->priv_.pending_top += to_copy;
+            it->priv_.committed[it->depth] = true;
         }
 
-        /* Try to descend into subdirectories */
-        if (it->priv_.dirname_count > 0 && it->depth + 1 < SP_WALK_MAX_DEPTH) {
-            /* Pop a directory from the list and descend */
-            it->priv_.dirname_count--;
-            SpPath subdir = it->priv_.dirnames[it->priv_.dirname_count];
+        /* Top-down: commit pending list after user had chance to modify dirnames */
+        if (it->top_down && !it->priv_.committed[it->depth]) {
+            /* Copy user's (possibly modified) dirnames to pending stack */
+            it->priv_.pending_offsets[it->depth] = it->priv_.pending_top;
+            size_t to_copy = it->priv_.dirname_count;
+            size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
+            if (to_copy > stack_space) to_copy = stack_space;
+            if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
+            for (size_t i = 0; i < to_copy; i++) {
+                it->priv_.pending_stack[it->priv_.pending_top + i] = it->priv_.dirnames[i];
+            }
+            it->priv_.pending_counts[it->depth] = to_copy;
+            it->priv_.pending_top += to_copy;
+            it->priv_.committed[it->depth] = true;
+#ifdef SP_WALK_DEBUG
+            fprintf(stderr, "SP_WALK_DEBUG: committed pending, count=%zu\n", to_copy);
+            fflush(stderr);
+#endif
+        }
+
+        /* Try to descend into subdirectories (use pending stack) */
+        if (it->priv_.pending_counts[it->depth] > 0 && it->depth + 1 < SP_WALK_MAX_DEPTH) {
+            /* Pop a directory from the pending stack and descend */
+            it->priv_.pending_counts[it->depth]--;
+            it->priv_.pending_top--;
+            SpPath subdir = it->priv_.pending_stack[it->priv_.pending_offsets[it->depth] + it->priv_.pending_counts[it->depth]];
+#ifdef SP_WALK_DEBUG
+            fprintf(stderr, "SP_WALK_DEBUG: descending into '%s'\n", sp_str(&subdir));
+            fflush(stderr);
+#endif
             it->depth++;
             it->priv_.dirs[it->depth] = subdir;
-            it->priv_.yielded = false;
+            it->priv_.yielded[it->depth] = false;
+            it->priv_.committed[it->depth] = false;
             continue;
         }
 
         /* No more subdirectories to descend into */
         if (!it->top_down) {
             /* Bottom-up: yield after all subdirectories processed */
+            /* Rescan to get current dirname_count and filename_count */
+            sp_priv_walk_scan_dir(it);
             out->dirpath = it->priv_.current_dir;
             out->dirnames = it->priv_.dirnames;
-            out->dirname_count = it->priv_.dirname_count;
+            out->dirname_count = &it->priv_.dirname_count;
             out->filenames = it->priv_.filenames;
-            out->filename_count = it->priv_.filename_count;
+            out->filename_count = &it->priv_.filename_count;
+#ifdef SP_WALK_DEBUG
+            fprintf(stderr, "SP_WALK_DEBUG: yielding (bottom-up) '%s', popping\n", sp_str(&out->dirpath));
+            fflush(stderr);
+#endif
             it->depth--;
-            if (it->depth >= 0) it->priv_.yielded = false;
             return true;
         }
 
         /* Top-down: we've already yielded, just pop */
+#ifdef SP_WALK_DEBUG
+        fprintf(stderr, "SP_WALK_DEBUG: popping (top-down already yielded)\n");
+        fflush(stderr);
+#endif
         it->depth--;
-        if (it->depth >= 0) it->priv_.yielded = false;
     }
 
+#ifdef SP_WALK_DEBUG
+    fprintf(stderr, "SP_WALK_DEBUG: walk complete, returning false\n");
+    fflush(stderr);
+#endif
     return false;
 }
 

@@ -274,6 +274,20 @@ SP_EXPORT void sp_walk_begin_wrap(const SpPath *p, int top_down, int follow_syml
     *out = sp_walk_begin(p, top_down != 0, follow_symlinks != 0);
 }
 
+SP_EXPORT void sp_walk_begin_with_errors_wrap(const SpPath *p, int top_down, int follow_symlinks,
+                                              SpWalkErrorFn on_error, void *user_data, SpWalkIter *out) {
+    *out = sp_walk_begin_with_errors(p, top_down != 0, follow_symlinks != 0, on_error, user_data);
+}
+
+/* For Python: get error path as string */
+SP_EXPORT const char* sp_walk_error_path(const SpWalkError *err) {
+    return sp_str(&err->path);
+}
+
+SP_EXPORT int sp_walk_error_code(const SpWalkError *err) {
+    return err->error_code;
+}
+
 SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it, SpPath *dirpath,
                                 SpPath *dirnames, size_t *dirname_count,
                                 SpPath *filenames, size_t *filename_count) {
@@ -281,13 +295,13 @@ SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it, SpPath *dirpath,
     if (!sp_walk_next(it, &entry)) return 0;
 
     *dirpath = entry.dirpath;
-    *dirname_count = entry.dirname_count;
-    *filename_count = entry.filename_count;
+    *dirname_count = *entry.dirname_count;
+    *filename_count = *entry.filename_count;
 
-    for (size_t i = 0; i < entry.dirname_count; i++) {
+    for (size_t i = 0; i < *entry.dirname_count; i++) {
         dirnames[i] = entry.dirnames[i];
     }
-    for (size_t i = 0; i < entry.filename_count; i++) {
+    for (size_t i = 0; i < *entry.filename_count; i++) {
         filenames[i] = entry.filenames[i];
     }
     return 1;

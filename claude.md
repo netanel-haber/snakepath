@@ -156,8 +156,41 @@ The library has three iterators:
 - `SpPartsIter` - string cursor over path components
 - `SpParentsIter` - generates derived parent paths
 - `SpGlobIter` - directory traversal for glob matching
+- `SpIterdirIter` - single-level directory listing
+- `SpWalkIter` - recursive directory traversal
 
 All follow the same API pattern (`begin`/`next`/`end`).
+
+### Walk Implementation
+The `sp_walk_begin/next/end` API provides Python-style recursive directory traversal with top-down or bottom-up iteration. Key implementation details:
+
+**Per-depth state tracking**: The iterator maintains separate state for each recursion level:
+- `yielded[depth]` - whether this depth has been yielded to the caller
+- `committed[depth]` - whether subdirectories have been committed for traversal (enables pruning)
+- `pending_stack` with per-depth offsets - preserves parent's pending directories when descending
+
+**Two initialization functions**:
+- `sp_walk_begin(path, top_down, follow_symlinks)` - simple API
+- `sp_walk_begin_with_errors(path, top_down, follow_symlinks, on_error, user_data)` - with error callback
+
+**Error callback**: `SpWalkErrorFn` receives `SpWalkError*` containing the path and errno. Called when directory open fails. If no callback is provided, errors are silently ignored (matching Python's default behavior).
+
+**Pruning support**: In top-down mode, `SpWalkEntry.dirname_count` is a pointer to internal state. Modify `*entry.dirname_count` to prune subdirectories:
+```c
+SpWalkEntry entry;
+while (sp_walk_next(&it, &entry)) {
+    // Skip hidden directories
+    for (size_t i = 0; i < *entry.dirname_count; ) {
+        if (sp_str(&entry.dirnames[i])[0] == '.') {
+            entry.dirnames[i] = entry.dirnames[--(*entry.dirname_count)];
+        } else {
+            i++;
+        }
+    }
+}
+```
+
+**Note**: Python pruning is read-only in the bindings - modifications don't affect traversal (by design, to keep C bindings simple).
 
 ## Implementation Gameplan
 

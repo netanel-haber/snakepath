@@ -1034,33 +1034,189 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">.is_junction()</code>
               </td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.lstat()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_lstat()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.readlink()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_readlink()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.resolve()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_resolve()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.symlink_to()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_symlink_to()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.hardlink_to()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_hardlink_to()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.samefile()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_samefile()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.touch()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_touch()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.unlink()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_unlink()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.rmdir()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_rmdir()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.rename()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_rename()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.replace()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_replace()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.chmod()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_chmod()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.iterdir()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_iterdir_begin/next/end()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.walk()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_walk_begin/next/end()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.owner()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_owner()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.owner()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.group()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_group()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.group()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.expanduser()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_expanduser()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.expanduser()</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">Path.home()</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">sp_home()</code>
+              </td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">.open()</code>
+              </td>
+              <td>-</td>
+              <td>-</td>
+            </tr>
           </tbody>
         </table>
         <p>
           <strong>Not implemented:</strong>
-          <code class="language-plaintext highlighter-rouge">iterdir</code>,
-          <code class="language-plaintext highlighter-rouge">walk</code>,
           <code class="language-plaintext highlighter-rouge">read_bytes</code>,
           <code class="language-plaintext highlighter-rouge">read_text</code>,
           <code class="language-plaintext highlighter-rouge">write_bytes</code>,
-          <code class="language-plaintext highlighter-rouge">write_text</code>,
-          <code class="language-plaintext highlighter-rouge">open</code>,
-          <code class="language-plaintext highlighter-rouge">touch</code>,
-          <code class="language-plaintext highlighter-rouge">unlink</code>,
-          <code class="language-plaintext highlighter-rouge">rmdir</code>,
-          <code class="language-plaintext highlighter-rouge">rename</code>,
-          <code class="language-plaintext highlighter-rouge">replace</code>,
-          <code class="language-plaintext highlighter-rouge">symlink_to</code>,
-          <code class="language-plaintext highlighter-rouge">hardlink_to</code>,
-          <code class="language-plaintext highlighter-rouge">resolve</code>,
-          <code class="language-plaintext highlighter-rouge">readlink</code>,
-          <code class="language-plaintext highlighter-rouge">owner</code>,
-          <code class="language-plaintext highlighter-rouge">group</code>,
-          <code class="language-plaintext highlighter-rouge">chmod</code>,
-          <code class="language-plaintext highlighter-rouge">lstat</code>,
-          <code class="language-plaintext highlighter-rouge">samefile</code>,
-          <code class="language-plaintext highlighter-rouge">expanduser</code>,
-          <code class="language-plaintext highlighter-rouge">home</code>
+          <code class="language-plaintext highlighter-rouge">write_text</code>
         </p>
       </details>
       <details>
