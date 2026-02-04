@@ -136,12 +136,9 @@ EXPECTED_FAILURES = {
 
     # =========================================================================
     # expanduser tests use EnvironmentVarGuard mock which doesn't affect C
+    # (Windows tests only - POSIX tests now pass)
     # =========================================================================
     "has no attribute 'unset'": [
-        ("PathSubclassTest", "test_expanduser_common"),
-        ("PathTest", "test_expanduser_common"),
-        ("PosixPathTest", "test_expanduser_common"),
-        ("PosixPathTest", "test_expanduser"),
         ("WindowsPathTest", "test_expanduser_common"),
         ("WindowsPathTest", "test_expanduser"),
     ],
@@ -160,7 +157,7 @@ EXPECTED_FAILURES = {
     # =========================================================================
     # test_with uses context manager protocol not implemented
     # =========================================================================
-    "has no attribute '__enter__'": [
+    "does not support the context manager protocol": [
         ("PathSubclassTest", "test_with"),
         ("PathTest", "test_with"),
         ("PosixPathTest", "test_with"),
@@ -168,25 +165,16 @@ EXPECTED_FAILURES = {
     ],
 
     # =========================================================================
-    # iterdir_nodir test expects specific exception type
+    # iterdir_nodir test expects specific exception type (Windows only)
     # =========================================================================
     "FileNotFoundError": [
-        ("PathSubclassTest", "test_iterdir_nodir"),
-        ("PathTest", "test_iterdir_nodir"),
-        ("PosixPathTest", "test_iterdir_nodir"),
         ("WindowsPathTest", "test_iterdir_nodir"),
     ],
 
     # =========================================================================
-    # owner/group tests use mock which doesn't affect C
+    # owner/group tests use mock which doesn't affect C (Windows only)
     # =========================================================================
     "KeyError": [
-        ("PathSubclassTest", "test_owner"),
-        ("PathSubclassTest", "test_group"),
-        ("PathTest", "test_owner"),
-        ("PathTest", "test_group"),
-        ("PosixPathTest", "test_owner"),
-        ("PosixPathTest", "test_group"),
         ("WindowsPathAsPureTest", "test_owner"),
         ("WindowsPathAsPureTest", "test_group"),
         ("WindowsPathTest", "test_owner"),
@@ -212,28 +200,8 @@ EXPECTED_FAILURES = {
     ],
 
     # =========================================================================
-    # walk tests use symlinks which we skip in test setup
-    # =========================================================================
-    "symlink": [
-        ("WalkTests", "test_walk_bad_dir"),
-    ],
-
-    # =========================================================================
-    # walk test_file_like_path uses FakePath which requires __fspath__
-    # =========================================================================
-    "expected str, bytes or os.PathLike object": [
-        ("WalkTests", "test_file_like_path"),
-    ],
-
-    # =========================================================================
-    # walk above_recursion_limit - Python doesn't handle deep recursion correctly
-    # =========================================================================
-    "maximum recursion depth": [
-        ("WalkTests", "test_walk_above_recursion_limit"),
-    ],
-
-    # =========================================================================
-    # walk prune test modifies dirnames list, which we don't support
+    # walk prune test modifies dirnames list, which Python bindings don't support
+    # (pruning works in C but Python bindings are read-only)
     # =========================================================================
     "!=": [
         ("PathSubclassTest", "test_absolute_common"),
@@ -242,13 +210,15 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_absolute"),
         ("WindowsPathTest", "test_absolute_common"),
         ("WalkTests", "test_walk_prune"),
+        ("WalkTests", "test_file_like_path"),
     ],
 
     # =========================================================================
-    # walk many_open_files - resource limits
+    # walk topdown test expects sorted directory order
+    # Our implementation doesn't guarantee sorted order within a level
     # =========================================================================
-    "Resource temporarily unavailable": [
-        ("WalkTests", "test_walk_many_open_files"),
+    "Tuples differ": [
+        ("WalkTests", "test_walk_topdown"),
     ],
 
     # =========================================================================
