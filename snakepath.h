@@ -479,6 +479,11 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>  /* For realpath */
+#include <stdio.h>   /* For rename */
+#include <fcntl.h>   /* For AT_FDCWD, O_CREAT, etc. */
+#include <time.h>    /* For struct timespec */
+#include <pwd.h>     /* For getpwuid, getpwnam */
+#include <grp.h>     /* For getgrgid */
 #define sp_priv_getcwd getcwd
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
@@ -491,10 +496,6 @@ extern int link(const char *oldpath, const char *newpath);
 extern int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags);
 extern int chmod(const char *path, mode_t mode);
 #endif
-#include <fcntl.h>  /* For AT_FDCWD, O_CREAT, etc. */
-#include <time.h>   /* For struct timespec */
-#include <pwd.h>    /* For getpwuid, getpwnam */
-#include <grp.h>    /* For getgrgid */
 /* UTIME_NOW may not be defined on all systems */
 #ifndef UTIME_NOW
 #define UTIME_NOW ((1l << 30) - 1l)
@@ -1811,15 +1812,18 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
     r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
     /* Nanosecond timestamps - use st_atim etc. if available, else multiply seconds */
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    /* BSD-style: st_atimespec, st_mtimespec, st_ctimespec */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
-#elif defined(st_mtime) || defined(__linux__) || defined(__ANDROID__)
+#elif defined(__GLIBC__) && defined(__linux__)
+    /* glibc on Linux: POSIX.1-2008 st_atim, st_mtim, st_ctim */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atim.tv_sec) * 1000000000LL + st->st_atim.tv_nsec;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtim.tv_sec) * 1000000000LL + st->st_mtim.tv_nsec;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctim.tv_sec) * 1000000000LL + st->st_ctim.tv_nsec;
 #else
+    /* Fallback: seconds-only precision (Android Bionic, etc.) */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
