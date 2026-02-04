@@ -495,6 +495,8 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #ifdef SP_WINDOWS
 #include <direct.h>
 #include <windows.h>
+#include <aclapi.h>   /* For GetNamedSecurityInfoA, LookupAccountSidA */
+#pragma comment(lib, "advapi32.lib")
 #define sp_priv_getcwd _getcwd
 #else
 #include <sys/types.h>
@@ -2307,10 +2309,8 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) return false;
-        SYSTEMTIME st;
         FILETIME ft;
-        GetSystemTime(&st);
-        SystemTimeToFileTime(&st, &ft);
+        GetSystemTimeAsFileTime(&ft);  /* Full 100-nanosecond precision */
         SetFileTime(h, NULL, &ft, &ft);
         CloseHandle(h);
         return true;
@@ -2761,7 +2761,23 @@ SpPath sp_expanduser(const SpPath *p) {
             return home;
         }
         /* Append the rest of the path after ~/ (skip both ~ and separator) */
-        return sp_join_sv(&home, SP_PRIV_STR(p->buf + 2, p->len - 2));
+        const char *rest = p->buf + 2;
+        size_t rest_len = p->len - 2;
+
+        /* On Windows, if rest looks like a drive letter (e.g., "a:b" from "~/a:b"),
+           prefix with "./" to prevent it from being interpreted as an absolute path.
+           E.g., ~/a:b should become C:/Users/foo/a:b, not just a:b */
+        if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
+            char protected_path[SP_PATH_MAX];
+            protected_path[0] = '.';
+            protected_path[1] = '/';
+            size_t copy_len = rest_len < SP_PATH_MAX - 3 ? rest_len : SP_PATH_MAX - 3;
+            memcpy(protected_path + 2, rest, copy_len);
+            protected_path[2 + copy_len] = '\0';
+            return sp_join_one(&home, protected_path);
+        }
+
+        return sp_join_sv(&home, SP_PRIV_STR(rest, rest_len));
     }
 
 #ifndef SP_WINDOWS
@@ -2812,9 +2828,30 @@ SpPath sp_expanduser(const SpPath *p) {
 SpStr sp_owner(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
-    /* Windows: would need LookupAccountSidA, return empty for now */
-    (void)p;
-    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    const char *path_str = sp_str(p);
+
+    PSID owner_sid = SP_PRIV_NULL;
+    PSECURITY_DESCRIPTOR sd = SP_PRIV_NULL;
+    DWORD result = GetNamedSecurityInfoA(path_str, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                                         &owner_sid, SP_PRIV_NULL, SP_PRIV_NULL, SP_PRIV_NULL, &sd);
+    if (result != ERROR_SUCCESS || !owner_sid) {
+        if (sd) LocalFree(sd);
+        return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    }
+
+    static char name_buf[256];
+    DWORD name_len = sizeof(name_buf);
+    char domain[256];
+    DWORD domain_len = sizeof(domain);
+    SID_NAME_USE use;
+    if (!LookupAccountSidA(SP_PRIV_NULL, owner_sid, name_buf, &name_len, domain, &domain_len, &use)) {
+        LocalFree(sd);
+        return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    }
+
+    LocalFree(sd);
+    return SP_PRIV_STR(name_buf, strlen(name_buf));
 #else
     if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     SpStatResult st = sp_stat(p);
@@ -2831,9 +2868,30 @@ SpStr sp_owner(const SpPath *p) {
 SpStr sp_group(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
-    /* Windows: groups work differently, return empty */
-    (void)p;
-    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    const char *path_str = sp_str(p);
+
+    PSID group_sid = SP_PRIV_NULL;
+    PSECURITY_DESCRIPTOR sd = SP_PRIV_NULL;
+    DWORD result = GetNamedSecurityInfoA(path_str, SE_FILE_OBJECT, GROUP_SECURITY_INFORMATION,
+                                         SP_PRIV_NULL, &group_sid, SP_PRIV_NULL, SP_PRIV_NULL, &sd);
+    if (result != ERROR_SUCCESS || !group_sid) {
+        if (sd) LocalFree(sd);
+        return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    }
+
+    static char name_buf[256];
+    DWORD name_len = sizeof(name_buf);
+    char domain[256];
+    DWORD domain_len = sizeof(domain);
+    SID_NAME_USE use;
+    if (!LookupAccountSidA(SP_PRIV_NULL, group_sid, name_buf, &name_len, domain, &domain_len, &use)) {
+        LocalFree(sd);
+        return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    }
+
+    LocalFree(sd);
+    return SP_PRIV_STR(name_buf, strlen(name_buf));
 #else
     if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     SpStatResult st = sp_stat(p);

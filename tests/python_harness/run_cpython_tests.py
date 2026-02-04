@@ -165,20 +165,12 @@ EXPECTED_FAILURES = {
     ],
 
     # =========================================================================
-    # iterdir_nodir test expects specific exception type (Windows only)
+    # WindowsPathAsPureTest owner/group tests expect NotImplementedError
+    # but we implement them using Windows Security APIs
     # =========================================================================
-    "FileNotFoundError": [
-        ("WindowsPathTest", "test_iterdir_nodir"),
-    ],
-
-    # =========================================================================
-    # owner/group tests use mock which doesn't affect C (Windows only)
-    # =========================================================================
-    "KeyError": [
+    "NotImplementedError not raised": [
         ("WindowsPathAsPureTest", "test_owner"),
         ("WindowsPathAsPureTest", "test_group"),
-        ("WindowsPathTest", "test_owner"),
-        ("WindowsPathTest", "test_group"),
     ],
 
     "has no attribute 'write_bytes'": [
@@ -334,6 +326,51 @@ def setup_pathlib_patch(testfn=None):
         def __exit__(self, *args): pass
     os_helper.EnvironmentVarGuard = EnvironmentVarGuard
     sys.modules['test.support.os_helper'] = os_helper
+
+    # On Windows, create fake pwd/grp modules that use our C implementation
+    # The tests use pwd.getpwuid(uid).pw_name to get expected owner name
+    # Since our C code implements owner/group, we use it for the "expected" values too
+    if sys.platform == 'win32':
+        class FakePasswdEntry:
+            def __init__(self, name):
+                self.pw_name = name
+
+        class FakeGroupEntry:
+            def __init__(self, name):
+                self.gr_name = name
+
+        # Map owner/group names to fake uid/gid
+        _owner_to_uid = {}
+        _group_to_gid = {}
+        _uid_to_owner = {}
+        _gid_to_group = {}
+
+        _original_stat = snakepath.Path.stat
+
+        def _patched_stat(self):
+            """Stat that maps owner/group to fake uid/gid."""
+            result = _original_stat(self)
+            owner = self.owner()
+            group = self.group()
+
+            uid = _owner_to_uid.setdefault(owner, len(_owner_to_uid) + 1000)
+            _uid_to_owner[uid] = owner
+            result.st_uid = uid
+
+            gid = _group_to_gid.setdefault(group, len(_group_to_gid) + 1000)
+            _gid_to_group[gid] = group
+            result.st_gid = gid
+            return result
+
+        snakepath.Path.stat = _patched_stat
+
+        pwd_module = types.ModuleType('pwd')
+        pwd_module.getpwuid = lambda uid: FakePasswdEntry(_uid_to_owner[uid])
+        sys.modules['pwd'] = pwd_module
+
+        grp_module = types.ModuleType('grp')
+        grp_module.getgrgid = lambda gid: FakeGroupEntry(_gid_to_group[gid])
+        sys.modules['grp'] = grp_module
 
 
 class QuietExpectedFailuresResult(unittest.TextTestResult):
