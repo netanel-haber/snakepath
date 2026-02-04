@@ -3035,6 +3035,7 @@ static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
     *filename_count = 0;
 
 #ifdef SP_WINDOWS
+    (void)follow_symlinks;  /* Not used on Windows - FindFirstFile handles reparse points */
     char search[SP_PATH_MAX + 3];
     const char *dir_str = sp_str(dir);
     size_t len = dir->len;
