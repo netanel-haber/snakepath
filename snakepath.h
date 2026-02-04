@@ -322,16 +322,18 @@ void sp_iterdir_end(SpIterdirIter *it);
          !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
     for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
 
-/* Walk limits */
+/* Walk limits - sized to keep SpWalkIter under ~200KB for stack safety */
 #ifndef SP_WALK_MAX_DEPTH
 #define SP_WALK_MAX_DEPTH 32
 #endif
 #ifndef SP_WALK_MAX_ENTRIES
-#define SP_WALK_MAX_ENTRIES 256
+#define SP_WALK_MAX_ENTRIES 64
 #endif
-/* Max pending directories per depth level for walk (keep small to limit memory ~533KB) */
 #ifndef SP_WALK_PENDING_PER_LEVEL
-#define SP_WALK_PENDING_PER_LEVEL 16
+#define SP_WALK_PENDING_PER_LEVEL 8
+#endif
+#ifndef SP_WALK_NAME_MAX
+#define SP_WALK_NAME_MAX 256   /* Max filename length for pending names */
 #endif
 
 /* Walk error info - passed to on_error callback */
@@ -343,7 +345,10 @@ typedef struct {
 /* Walk error callback type */
 typedef void (*SpWalkErrorFn)(const SpWalkError *error, void *user_data);
 
-/* Walk iterator */
+/* Walk iterator - designed to be small enough for stack allocation (~100KB)
+ * Previously was ~1MB due to storing full SpPath for pending dirs.
+ * Now stores just names (256 bytes each) for pending dirs.
+ */
 typedef struct {
     int depth;  /* Current depth, -1 = done/error */
     bool top_down;
@@ -351,18 +356,18 @@ typedef struct {
     SpWalkErrorFn on_error;  /* Optional error callback */
     void *user_data;         /* User data passed to on_error */
     struct {
-        SpPath dirs[SP_WALK_MAX_DEPTH];
+        SpPath dirs[SP_WALK_MAX_DEPTH];           /* Full paths at each depth ~17KB */
         void *handles[SP_WALK_MAX_DEPTH];
-        /* Stack of pending directories to descend into (per-level storage) */
-        SpPath pending_stack[SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL];
-        size_t pending_offsets[SP_WALK_MAX_DEPTH];  /* Start offset for each depth */
-        size_t pending_counts[SP_WALK_MAX_DEPTH];   /* Count of pending dirs at each depth */
-        size_t pending_top;  /* Current top of pending stack */
-        bool yielded[SP_WALK_MAX_DEPTH];    /* Has each level been scanned? */
-        bool committed[SP_WALK_MAX_DEPTH];  /* Has pending list been committed? (for pruning) */
+        /* Pending dirs: store NAMES only (not full paths) - reconstruct via sp_join */
+        char pending_names[SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL][SP_WALK_NAME_MAX]; /* ~32KB */
+        size_t pending_offsets[SP_WALK_MAX_DEPTH];
+        size_t pending_counts[SP_WALK_MAX_DEPTH];
+        size_t pending_top;
+        bool yielded[SP_WALK_MAX_DEPTH];
+        bool committed[SP_WALK_MAX_DEPTH];
         SpPath current_dir;
-        SpPath dirnames[SP_WALK_MAX_ENTRIES];
-        SpPath filenames[SP_WALK_MAX_ENTRIES];
+        SpPath dirnames[SP_WALK_MAX_ENTRIES];     /* ~67KB */
+        SpPath filenames[SP_WALK_MAX_ENTRIES];    /* ~67KB */
         size_t dirname_count;
         size_t filename_count;
     } priv_;
@@ -3151,9 +3156,13 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
             if (to_copy > stack_space) to_copy = stack_space;
             if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            /* Push in reverse order so first dir is popped first (LIFO stack) */
+            /* Push names only (not full paths) in reverse order so first is popped first */
             for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
-                it->priv_.pending_stack[it->priv_.pending_top++] = it->priv_.dirnames[i];
+                SpStr name = sp_name(&it->priv_.dirnames[i]);
+                size_t len = name.len < SP_WALK_NAME_MAX - 1 ? name.len : SP_WALK_NAME_MAX - 1;
+                memcpy(it->priv_.pending_names[it->priv_.pending_top], name.data, len);
+                it->priv_.pending_names[it->priv_.pending_top][len] = '\0';
+                it->priv_.pending_top++;
             }
             it->priv_.pending_counts[it->depth] = to_copy;
             it->priv_.committed[it->depth] = true;
@@ -3161,27 +3170,31 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
 
         /* Top-down: commit pending list after user had chance to modify dirnames */
         if (it->top_down && !it->priv_.committed[it->depth]) {
-            /* Copy user's (possibly modified) dirnames to pending stack */
+            /* Copy user's (possibly modified) dirnames to pending stack (names only) */
             it->priv_.pending_offsets[it->depth] = it->priv_.pending_top;
             size_t to_copy = it->priv_.dirname_count;
             size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
             if (to_copy > stack_space) to_copy = stack_space;
             if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            /* Push in reverse order so first dir is popped first (LIFO stack) */
+            /* Push names only (not full paths) in reverse order so first is popped first */
             for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
-                it->priv_.pending_stack[it->priv_.pending_top++] = it->priv_.dirnames[i];
+                SpStr name = sp_name(&it->priv_.dirnames[i]);
+                size_t len = name.len < SP_WALK_NAME_MAX - 1 ? name.len : SP_WALK_NAME_MAX - 1;
+                memcpy(it->priv_.pending_names[it->priv_.pending_top], name.data, len);
+                it->priv_.pending_names[it->priv_.pending_top][len] = '\0';
+                it->priv_.pending_top++;
             }
             it->priv_.pending_counts[it->depth] = to_copy;
-            it->priv_.pending_top += to_copy;
             it->priv_.committed[it->depth] = true;
         }
 
         /* Try to descend into subdirectories (use pending stack) */
         if (it->priv_.pending_counts[it->depth] > 0 && it->depth + 1 < SP_WALK_MAX_DEPTH) {
-            /* Pop a directory from the pending stack and descend */
+            /* Pop a directory name from pending stack and reconstruct full path */
             it->priv_.pending_counts[it->depth]--;
             it->priv_.pending_top--;
-            SpPath subdir = it->priv_.pending_stack[it->priv_.pending_offsets[it->depth] + it->priv_.pending_counts[it->depth]];
+            const char *name = it->priv_.pending_names[it->priv_.pending_offsets[it->depth] + it->priv_.pending_counts[it->depth]];
+            SpPath subdir = sp_join_one(&it->priv_.dirs[it->depth], name);
             it->depth++;
             it->priv_.dirs[it->depth] = subdir;
             it->priv_.yielded[it->depth] = false;
