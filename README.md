@@ -150,7 +150,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 
 ### Chainable
 
-`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
+`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->expanduser()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
 
 ### Terminators
 
@@ -160,6 +160,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->str()` | `const char*` |
 | `->name()` `->stem()` `->suffix()` | `SpStr` |
 | `->drive()` `->root()` `->anchor()` | `SpStr` |
+| `->owner()` `->group()` | `SpStr` |
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
@@ -310,9 +311,15 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.rename()` | `sp_rename()` | - |
 | `.replace()` | `sp_replace()` | - |
 | `.chmod()` | `sp_chmod()` | - |
+| `.iterdir()` | `sp_iterdir_begin/next/end()` | - |
+| `.walk()` | `sp_walk_begin/next/end()` | - |
+| `.owner()` | `sp_owner()` | - |
+| `.group()` | `sp_group()` | - |
+| `.expanduser()` | `sp_expanduser()` | - |
+| `Path.home()` | `sp_home()` | - |
 | `.open()` | - | - |
 
-**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `owner`, `group`, `expanduser`, `home`
+**Not implemented:** `read_bytes`, `read_text`, `write_bytes`, `write_text`
 
 ## Adding New Methods to the Library
 

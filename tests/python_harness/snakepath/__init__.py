@@ -195,6 +195,31 @@ _sig('sp_rmdir_wrap', [_PP], c_int)
 _sig('sp_rename_wrap', [_PP, _PP, _PP])
 _sig('sp_replace_wrap', [_PP, _PP, _PP])
 _sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
+# Home directory and user expansion
+_sig('sp_home_wrap', [c_int, _PP])
+_sig('sp_expanduser_wrap', [_PP, _PP])
+# User/group info
+_sig('sp_owner_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
+_sig('sp_group_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
+# iterdir iterator
+_sizeof_iterdir_iter = _lib.sp_sizeof_iterdir_iter()
+class _SpIterdirIter(Structure):
+    _fields_ = [('_opaque', ctypes.c_char * _sizeof_iterdir_iter)]
+_PIterdirIter = POINTER(_SpIterdirIter)
+_sig('sp_iterdir_begin_wrap', [_PP, _PIterdirIter])
+_sig('sp_iterdir_next_wrap', [_PIterdirIter, _PP], c_int)
+_sig('sp_iterdir_end_wrap', [_PIterdirIter])
+_sig('sp_iterdir_done_wrap', [_PIterdirIter], c_int)
+# walk iterator
+_sizeof_walk_iter = _lib.sp_sizeof_walk_iter()
+_walk_max_entries = _lib.sp_walk_max_entries()
+class _SpWalkIter(Structure):
+    _fields_ = [('_opaque', ctypes.c_char * _sizeof_walk_iter)]
+_PWalkIter = POINTER(_SpWalkIter)
+_sig('sp_walk_begin_wrap', [_PP, c_int, c_int, _PWalkIter])
+_sig('sp_walk_next_wrap', [_PWalkIter, _PP, POINTER(_SpPath), POINTER(c_size_t), POINTER(_SpPath), POINTER(c_size_t)], c_int)
+_sig('sp_walk_end_wrap', [_PWalkIter])
+_sig('sp_walk_depth_wrap', [_PWalkIter], c_int)
 
 
 # ============ Property descriptors ============
@@ -833,6 +858,104 @@ class Path(PurePath):
         """Open the file pointed to by this path."""
         import io
         return io.open(str(self), mode, buffering, encoding, errors, newline)
+
+    @classmethod
+    def home(cls):
+        """Return user's home directory."""
+        result = cls.__new__(cls)
+        result._sp = _SpPath()
+        _lib.sp_home_wrap(result._flavor, byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise RuntimeError("Could not determine home directory")
+        return result
+
+    def expanduser(self):
+        """Expand ~ to user's home directory."""
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_expanduser_wrap(byref(self._sp), byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise RuntimeError("Could not expand user")
+        return result
+
+    def owner(self):
+        """Return the file owner name."""
+        data, length = c_char_p(), c_size_t()
+        _lib.sp_owner_wrap(byref(self._sp), byref(data), byref(length))
+        if not data.value or not length.value:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return data.value[:length.value].decode('utf-8')
+
+    def group(self):
+        """Return the file group name."""
+        data, length = c_char_p(), c_size_t()
+        _lib.sp_group_wrap(byref(self._sp), byref(data), byref(length))
+        if not data.value or not length.value:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return data.value[:length.value].decode('utf-8')
+
+    def iterdir(self):
+        """Yield path objects of directory contents."""
+        if not self.is_dir():
+            raise NotADirectoryError(20, "Not a directory", str(self))
+        it = _SpIterdirIter()
+        _lib.sp_iterdir_begin_wrap(byref(self._sp), byref(it))
+        if _lib.sp_iterdir_done_wrap(byref(it)) < 0:
+            raise OSError(1, "Operation not permitted", str(self))
+        try:
+            out = _SpPath()
+            while _lib.sp_iterdir_next_wrap(byref(it), byref(out)):
+                result = self.__class__.__new__(self.__class__)
+                result._sp = _SpPath()
+                _lib.sp_path_copy_wrap(byref(out), byref(result._sp))
+                yield result
+        finally:
+            _lib.sp_iterdir_end_wrap(byref(it))
+
+    def walk(self, top_down=True, on_error=None, follow_symlinks=False):
+        """Walk directory tree, yielding (dirpath, dirnames, filenames) tuples."""
+        if not self.is_dir():
+            return
+
+        it = _SpWalkIter()
+        _lib.sp_walk_begin_wrap(byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0, byref(it))
+        if _lib.sp_walk_depth_wrap(byref(it)) < 0:
+            return
+
+        try:
+            dirpath_out = _SpPath()
+            dirnames_arr = (_SpPath * _walk_max_entries)()
+            filenames_arr = (_SpPath * _walk_max_entries)()
+            dirname_count = c_size_t()
+            filename_count = c_size_t()
+
+            while _lib.sp_walk_next_wrap(byref(it), byref(dirpath_out),
+                                         dirnames_arr, byref(dirname_count),
+                                         filenames_arr, byref(filename_count)):
+                # Convert dirpath
+                dp = self.__class__.__new__(self.__class__)
+                dp._sp = _SpPath()
+                _lib.sp_path_copy_wrap(byref(dirpath_out), byref(dp._sp))
+
+                # Convert dirnames - extract just names, not full paths
+                dns = []
+                for i in range(dirname_count.value):
+                    p = self.__class__.__new__(self.__class__)
+                    p._sp = _SpPath()
+                    _lib.sp_path_copy_wrap(byref(dirnames_arr[i]), byref(p._sp))
+                    dns.append(p.name)
+
+                # Convert filenames - extract just names, not full paths
+                fns = []
+                for i in range(filename_count.value):
+                    p = self.__class__.__new__(self.__class__)
+                    p._sp = _SpPath()
+                    _lib.sp_path_copy_wrap(byref(filenames_arr[i]), byref(p._sp))
+                    fns.append(p.name)
+
+                yield dp, dns, fns
+        finally:
+            _lib.sp_walk_end_wrap(byref(it))
 
 
 class PosixPath(Path, PurePosixPath):

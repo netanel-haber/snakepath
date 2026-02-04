@@ -224,3 +224,79 @@ SP_EXPORT void sp_replace_wrap(const SpPath *p, const SpPath *target, SpPath *ou
 SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
     return sp_chmod(p, mode) ? 1 : 0;
 }
+
+/* Home directory and user expansion */
+SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) {
+    *out = sp_home((SpFlavor)flavor);
+}
+
+SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
+    *out = sp_expanduser(p);
+}
+
+/* User/group info */
+SP_EXPORT void sp_owner_wrap(const SpPath *p, const char **data, size_t *len) {
+    SpStr s = sp_owner(p);
+    *data = s.data;
+    *len = s.len;
+}
+
+SP_EXPORT void sp_group_wrap(const SpPath *p, const char **data, size_t *len) {
+    SpStr s = sp_group(p);
+    *data = s.data;
+    *len = s.len;
+}
+
+/* iterdir iterator */
+SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
+
+SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) {
+    *out = sp_iterdir_begin(p);
+}
+
+SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) {
+    return sp_iterdir_next(it, out) ? 1 : 0;
+}
+
+SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) {
+    sp_iterdir_end(it);
+}
+
+SP_EXPORT int sp_iterdir_done_wrap(SpIterdirIter *it) {
+    return it->done;
+}
+
+/* walk iterator */
+SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
+SP_EXPORT size_t sp_walk_max_entries(void) { return SP_WALK_MAX_ENTRIES; }
+
+SP_EXPORT void sp_walk_begin_wrap(const SpPath *p, int top_down, int follow_symlinks, SpWalkIter *out) {
+    *out = sp_walk_begin(p, top_down != 0, follow_symlinks != 0);
+}
+
+SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it, SpPath *dirpath,
+                                SpPath *dirnames, size_t *dirname_count,
+                                SpPath *filenames, size_t *filename_count) {
+    SpWalkEntry entry;
+    if (!sp_walk_next(it, &entry)) return 0;
+
+    *dirpath = entry.dirpath;
+    *dirname_count = entry.dirname_count;
+    *filename_count = entry.filename_count;
+
+    for (size_t i = 0; i < entry.dirname_count; i++) {
+        dirnames[i] = entry.dirnames[i];
+    }
+    for (size_t i = 0; i < entry.filename_count; i++) {
+        filenames[i] = entry.filenames[i];
+    }
+    return 1;
+}
+
+SP_EXPORT void sp_walk_end_wrap(SpWalkIter *it) {
+    sp_walk_end(it);
+}
+
+SP_EXPORT int sp_walk_depth_wrap(SpWalkIter *it) {
+    return it->depth;
+}

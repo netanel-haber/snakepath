@@ -218,6 +218,27 @@ int main(void) {
     { SpPath p = SPF("foo/bar")->absolute()->path();
       ASSERT(sp_is_absolute(&p) == true); }
 
+    /* ============ expanduser (fluent chainable) ============ */
+
+    /* Path('~/foo').expanduser() returns expanded path */
+    { SpPath p = SPF("~")->expanduser()->path();
+      ASSERT(sp_is_absolute(&p) == true); }
+
+    /* Path('~/subdir').expanduser() returns absolute path */
+    { SpPath p = SPF("~/subdir")->expanduser()->path();
+      ASSERT(sp_is_absolute(&p) == true);
+      ASSERT_SV(sp_name(&p), "subdir"); }
+
+    /* ============ owner/group (fluent terminators) ============ */
+
+    /* Path(__FILE__).owner() returns non-empty string */
+    { SpStr o = SPF(__FILE__)->owner();
+      ASSERT(o.len > 0); }
+
+    /* Path(__FILE__).group() returns non-empty string */
+    { SpStr g = SPF(__FILE__)->group();
+      ASSERT(g.len > 0); }
+
     /* ============ Chaining ============ */
 
     /* Path('/a/b/c.txt').parent.name -> 'b' */

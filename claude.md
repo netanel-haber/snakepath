@@ -189,7 +189,7 @@ All are stat-based file type checks:
 - `replace` - replace target with this file
 - `chmod` - change file permissions
 
-### Group 4: Directory traversal & user info (6 methods)
+### Group 4: Directory traversal & user info (6 methods) ✅ COMPLETE
 - `iterdir` - iterate directory contents
 - `walk` - recursive directory traversal
 - `owner` - get file owner name

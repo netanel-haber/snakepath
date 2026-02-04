@@ -596,6 +596,143 @@ int main(void) {
 
     printf("  rmdir tests OK\n");
 
+    /* expanduser/home tests */
+    printf("\nexpanduser/home Tests:\n");
+
+    /* Test home - should return a valid path */
+    SpPath home = sp_home(SP_FLAVOR_NATIVE);
+    ASSERT(!sp_path_is_error(&home));
+    ASSERT(home.len > 0);
+    ASSERT(sp_is_absolute(&home));
+    ASSERT(sp_is_dir(&home));
+
+    /* Test expanduser with ~ */
+    SpPath tilde = sp_path_f("~", SP_FLAVOR_NATIVE);
+    SpPath expanded = sp_expanduser(&tilde);
+    ASSERT(!sp_path_is_error(&expanded));
+    ASSERT(sp_path_eq(&expanded, &home));
+
+    /* Test expanduser with ~/subdir */
+    SpPath tilde_sub = sp_path_f("~/subdir", SP_FLAVOR_NATIVE);
+    SpPath expanded_sub = sp_expanduser(&tilde_sub);
+    ASSERT(!sp_path_is_error(&expanded_sub));
+    ASSERT(sp_is_absolute(&expanded_sub));
+    ASSERT(sp_is_relative_to(&expanded_sub, &home));
+
+    /* Test expanduser with non-tilde path (should return unchanged) */
+    SpPath no_tilde = sp_path_f("/usr/bin", P);
+    SpPath not_expanded = sp_expanduser(&no_tilde);
+    ASSERT(sp_path_eq(&no_tilde, &not_expanded));
+
+    printf("  expanduser/home tests OK\n");
+
+    /* owner/group tests */
+    printf("\nowner/group Tests:\n");
+
+    /* Test owner - should return non-empty string for existing file */
+    SpPath owner_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpStr owner_str = sp_owner(&owner_file);
+    ASSERT(owner_str.len > 0);
+    ASSERT(owner_str.data != NULL);
+
+    /* Test group - should return non-empty string for existing file */
+    SpStr group_str = sp_group(&owner_file);
+    ASSERT(group_str.len > 0);
+    ASSERT(group_str.data != NULL);
+
+    /* Test owner on nonexistent file - should return empty */
+    SpPath owner_nonexist = sp_path_f("/nonexistent/file", P);
+    SpStr owner_none = sp_owner(&owner_nonexist);
+    ASSERT(owner_none.len == 0);
+
+    printf("  owner/group tests OK\n");
+
+    /* iterdir tests */
+    printf("\niterdir Tests:\n");
+
+    /* Create test directory structure */
+    char iterdir_path[128], iterdir_f1[128], iterdir_f2[128], iterdir_sub[128];
+    snprintf(iterdir_path, sizeof(iterdir_path), "./test_iterdir_%ld", pid);
+    snprintf(iterdir_f1, sizeof(iterdir_f1), "%s/file1.txt", iterdir_path);
+    snprintf(iterdir_f2, sizeof(iterdir_f2), "%s/file2.txt", iterdir_path);
+    snprintf(iterdir_sub, sizeof(iterdir_sub), "%s/subdir", iterdir_path);
+
+    SpPath iterdir_base = sp_path_f(iterdir_path, SP_FLAVOR_NATIVE);
+    sp_mkdir(&iterdir_base, 0755, true, true);
+
+    SpPath iterdir_subdir = sp_path_f(iterdir_sub, SP_FLAVOR_NATIVE);
+    sp_mkdir(&iterdir_subdir, 0755, true, true);
+
+    /* Create test files */
+    FILE *if1 = fopen(iterdir_f1, "w"); if (if1) fclose(if1);
+    FILE *if2 = fopen(iterdir_f2, "w"); if (if2) fclose(if2);
+
+    /* Test iterdir */
+    int iterdir_count = 0;
+    SpIterdirIter idit = sp_iterdir_begin(&iterdir_base);
+    SpPath entry;
+    while (sp_iterdir_next(&idit, &entry)) {
+        iterdir_count++;
+    }
+    sp_iterdir_end(&idit);
+    ASSERT(iterdir_count == 3);  /* file1.txt, file2.txt, subdir */
+
+    /* Test SP_ITERDIR_FOREACH macro */
+    iterdir_count = 0;
+    SP_ITERDIR_FOREACH(&iterdir_base, e) {
+        iterdir_count++;
+    }
+    ASSERT(iterdir_count == 3);
+
+    /* Cleanup */
+    remove(iterdir_f1);
+    remove(iterdir_f2);
+    test_rmdir(iterdir_sub);
+    test_rmdir(iterdir_path);
+
+    printf("  iterdir tests OK\n");
+
+    /* walk tests */
+    printf("\nwalk Tests:\n");
+
+    /* Create test directory structure */
+    char walk_path[128], walk_f1[128], walk_f2[128], walk_sub[128], walk_f3[128];
+    snprintf(walk_path, sizeof(walk_path), "./test_walk_%ld", pid);
+    snprintf(walk_f1, sizeof(walk_f1), "%s/file1.txt", walk_path);
+    snprintf(walk_f2, sizeof(walk_f2), "%s/file2.txt", walk_path);
+    snprintf(walk_sub, sizeof(walk_sub), "%s/subdir", walk_path);
+    snprintf(walk_f3, sizeof(walk_f3), "%s/subdir/file3.txt", walk_path);
+
+    SpPath walk_base = sp_path_f(walk_path, SP_FLAVOR_NATIVE);
+    sp_mkdir(&walk_base, 0755, true, true);
+
+    SpPath walk_subdir = sp_path_f(walk_sub, SP_FLAVOR_NATIVE);
+    sp_mkdir(&walk_subdir, 0755, true, true);
+
+    /* Create test files */
+    FILE *wf1 = fopen(walk_f1, "w"); if (wf1) fclose(wf1);
+    FILE *wf2 = fopen(walk_f2, "w"); if (wf2) fclose(wf2);
+    FILE *wf3 = fopen(walk_f3, "w"); if (wf3) fclose(wf3);
+
+    /* Test walk top-down */
+    int walk_dir_count = 0;
+    SpWalkIter wit = sp_walk_begin(&walk_base, true, false);
+    SpWalkEntry went;
+    while (sp_walk_next(&wit, &went)) {
+        walk_dir_count++;
+    }
+    sp_walk_end(&wit);
+    ASSERT(walk_dir_count == 2);  /* walk_base and walk_sub */
+
+    /* Cleanup */
+    remove(walk_f1);
+    remove(walk_f2);
+    remove(walk_f3);
+    test_rmdir(walk_sub);
+    test_rmdir(walk_path);
+
+    printf("  walk tests OK\n");
+
     printf("\n%d assertions passed\n", tests_run);
     return 0;
 }
