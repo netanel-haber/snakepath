@@ -210,28 +210,37 @@ _sig('sp_iterdir_begin_wrap', [_PP, _PIterdirIter])
 _sig('sp_iterdir_next_wrap', [_PIterdirIter, _PP], c_int)
 _sig('sp_iterdir_end_wrap', [_PIterdirIter])
 _sig('sp_iterdir_done_wrap', [_PIterdirIter], c_int)
-# walk iterator
-_sizeof_walk_iter = _lib.sp_sizeof_walk_iter()
+# walk - BYOS iterator API
 _walk_max_entries = _lib.sp_walk_max_entries()
+_walk_name_max = _lib.sp_walk_name_max()
+_walk_iter_size = _lib.sp_walk_iter_size()
+_walk_path_max = _lib.sp_walk_path_max()
+_walk_error_ctx_size = _lib.sp_walk_error_context_size()
+
 class _SpWalkIter(Structure):
-    _fields_ = [('_opaque', ctypes.c_char * _sizeof_walk_iter)]
+    _fields_ = [('_opaque', ctypes.c_char * _walk_iter_size)]
 _PWalkIter = POINTER(_SpWalkIter)
 
-# Walk error structure (opaque - we use accessor functions)
-class _SpWalkError(Structure):
-    _fields_ = [('_opaque', ctypes.c_char * (SP_PATH_MAX + 16 + 4))]  # SpPath + padding + int
-_PWalkError = POINTER(_SpWalkError)
+# Walk error callback type: void (*)(const char *path, int error_code, void *user_data)
+_WalkErrorFn = ctypes.CFUNCTYPE(None, c_char_p, c_int, ctypes.c_void_p)
 
-# Walk error callback type: void (*)(const SpWalkError*, void*)
-_WalkErrorFn = ctypes.CFUNCTYPE(None, _PWalkError, ctypes.c_void_p)
+# Walk error context struct
+class _SpWalkErrorContext(Structure):
+    _fields_ = [
+        ('error_callback', _WalkErrorFn),
+        ('user_data', ctypes.c_void_p),
+    ]
+_PWalkErrorContext = POINTER(_SpWalkErrorContext)
 
-_sig('sp_walk_begin_wrap', [_PP, c_int, c_int, _PWalkIter])
-_sig('sp_walk_begin_with_errors_wrap', [_PP, c_int, c_int, _WalkErrorFn, ctypes.c_void_p, _PWalkIter])
-_sig('sp_walk_next_wrap', [_PWalkIter, _PP, POINTER(_SpPath), POINTER(c_size_t), POINTER(_SpPath), POINTER(c_size_t)], c_int)
+_sig('sp_walk_begin_wrap', [_PWalkIter, _PP, c_int, c_int, ctypes.c_void_p, c_size_t, _PWalkErrorContext], c_int)
+_sig('sp_walk_next_wrap', [_PWalkIter], c_int)
 _sig('sp_walk_end_wrap', [_PWalkIter])
-_sig('sp_walk_depth_wrap', [_PWalkIter], c_int)
-_sig('sp_walk_error_path', [_PWalkError], c_char_p)
-_sig('sp_walk_error_code', [_PWalkError], c_int)
+_sig('sp_walk_dirpath_wrap', [_PWalkIter, _PP])
+_sig('sp_walk_dirname_count_wrap', [_PWalkIter], c_size_t)
+_sig('sp_walk_filename_count_wrap', [_PWalkIter], c_size_t)
+_sig('sp_walk_dirname_wrap', [_PWalkIter, c_size_t], c_char_p)
+_sig('sp_walk_filename_wrap', [_PWalkIter, c_size_t], c_char_p)
+_sig('sp_walk_set_dirname_count_wrap', [_PWalkIter, c_size_t])
 
 
 # ============ Property descriptors ============
@@ -933,60 +942,57 @@ class Path(PurePath):
         if not self.is_dir():
             return
 
-        it = _SpWalkIter()
+        path_cls = self.__class__
 
-        # Set up error callback if provided
-        c_callback = None  # Must keep reference to prevent GC
-        if on_error is not None:
-            def error_wrapper(err_ptr, user_data):
-                path_bytes = _lib.sp_walk_error_path(err_ptr)
-                err_code = _lib.sp_walk_error_code(err_ptr)
+        # Error callback and context
+        error_ctx = None
+        c_error_callback = None  # Keep reference to prevent GC
+        if on_error:
+            def error_callback(path_bytes, error_code, user_data):
                 path_str = path_bytes.decode('utf-8') if path_bytes else ''
-                # Create OSError with errno
-                os_err = OSError(err_code, os.strerror(err_code), path_str)
+                os_err = OSError(error_code, os.strerror(error_code), path_str)
                 on_error(os_err)
-            c_callback = _WalkErrorFn(error_wrapper)
-            _lib.sp_walk_begin_with_errors_wrap(
-                byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0,
-                c_callback, None, byref(it))
-        else:
-            _lib.sp_walk_begin_wrap(byref(self._sp), 1 if top_down else 0, 1 if follow_symlinks else 0, byref(it))
+            c_error_callback = _WalkErrorFn(error_callback)
+            error_ctx = _SpWalkErrorContext()
+            error_ctx.error_callback = c_error_callback
+            error_ctx.user_data = None
 
-        if _lib.sp_walk_depth_wrap(byref(it)) < 0:
+        # Allocate iterator and pending buffer (256 pending dirs = 256KB for SP_PATH_MAX=1024)
+        it = _SpWalkIter()
+        pending_count = 256
+        pending_buf = (ctypes.c_char * (pending_count * _walk_path_max))()
+
+        # Begin walk
+        if not _lib.sp_walk_begin_wrap(byref(it), byref(self._sp),
+                                       1 if top_down else 0, 1 if follow_symlinks else 0,
+                                       pending_buf, len(pending_buf),
+                                       byref(error_ctx) if error_ctx else None):
             return
 
         try:
-            dirpath_out = _SpPath()
-            dirnames_arr = (_SpPath * _walk_max_entries)()
-            filenames_arr = (_SpPath * _walk_max_entries)()
-            dirname_count = c_size_t()
-            filename_count = c_size_t()
-
-            while _lib.sp_walk_next_wrap(byref(it), byref(dirpath_out),
-                                         dirnames_arr, byref(dirname_count),
-                                         filenames_arr, byref(filename_count)):
-                # Convert dirpath
-                dp = self.__class__.__new__(self.__class__)
+            while _lib.sp_walk_next_wrap(byref(it)):
+                # Get dirpath
+                dp = path_cls.__new__(path_cls)
                 dp._sp = _SpPath()
-                _lib.sp_path_copy_wrap(byref(dirpath_out), byref(dp._sp))
+                _lib.sp_walk_dirpath_wrap(byref(it), byref(dp._sp))
 
-                # Convert dirnames - extract just names, not full paths
+                # Get dirnames
+                dirname_count = _lib.sp_walk_dirname_count_wrap(byref(it))
                 dns = []
-                for i in range(dirname_count.value):
-                    p = self.__class__.__new__(self.__class__)
-                    p._sp = _SpPath()
-                    _lib.sp_path_copy_wrap(byref(dirnames_arr[i]), byref(p._sp))
-                    dns.append(p.name)
+                for i in range(dirname_count):
+                    name = _lib.sp_walk_dirname_wrap(byref(it), i)
+                    if name:
+                        dns.append(name.decode('utf-8'))
 
-                # Convert filenames - extract just names, not full paths
+                # Get filenames
+                filename_count = _lib.sp_walk_filename_count_wrap(byref(it))
                 fns = []
-                for i in range(filename_count.value):
-                    p = self.__class__.__new__(self.__class__)
-                    p._sp = _SpPath()
-                    _lib.sp_path_copy_wrap(byref(filenames_arr[i]), byref(p._sp))
-                    fns.append(p.name)
+                for i in range(filename_count):
+                    name = _lib.sp_walk_filename_wrap(byref(it), i)
+                    if name:
+                        fns.append(name.decode('utf-8'))
 
-                yield dp, dns, fns
+                yield (dp, dns, fns)
         finally:
             _lib.sp_walk_end_wrap(byref(it))
 

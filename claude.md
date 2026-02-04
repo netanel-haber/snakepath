@@ -161,71 +161,50 @@ The library has three iterators:
 
 All follow the same API pattern (`begin`/`next`/`end`).
 
-### Walk Implementation
-The `sp_walk_begin/next/end` API provides Python-style recursive directory traversal with top-down or bottom-up iteration. Key implementation details:
+### Walk Implementation (BYOS Pattern)
+The walk API uses "Bring Your Own Storage" (BYOS) pattern for memory-efficient, allocation-free traversal with configurable depth limits.
 
-**Per-depth state tracking**: The iterator maintains separate state for each recursion level:
-- `yielded[depth]` - whether this depth has been yielded to the caller
-- `committed[depth]` - whether subdirectories have been committed for traversal (enables pruning)
-- `pending_stack` with per-depth offsets - preserves parent's pending directories when descending
+**Problem:** Tree traversal either uses real stack (limited depth, can overflow) or heap allocation (violates no-malloc constraint).
 
-**Two initialization functions**:
-- `sp_walk_begin(path, top_down, follow_symlinks)` - simple API
-- `sp_walk_begin_with_errors(path, top_down, follow_symlinks, on_error, user_data)` - with error callback
+**Solution:** Caller provides storage buffer; library uses it for pending work items.
 
-**Error callback**: `SpWalkErrorFn` receives `SpWalkError*` containing the path and errno. Called when directory open fails. If no callback is provided, errors are silently ignored (matching Python's default behavior).
+**Three APIs available:**
+1. `SP_WALK_FOREACH(dir, top_down, cap, it)` - macro with caller-provided buffer
+2. `sp_walk_begin/next/end` - BYOS iterator API (caller controls buffer size)
+3. `sp_walk(callback)` - callback-based (uses real stack for unlimited depth)
 
-**Pruning support**: In top-down mode, `SpWalkEntry.dirname_count` is a pointer to internal state. Modify `*entry.dirname_count` to prune subdirectories:
+**BYOS iterator structure:**
 ```c
-SpWalkEntry entry;
-while (sp_walk_next(&it, &entry)) {
-    // Skip hidden directories
-    for (size_t i = 0; i < *entry.dirname_count; ) {
-        if (sp_str(&entry.dirnames[i])[0] == '.') {
-            entry.dirnames[i] = entry.dirnames[--(*entry.dirname_count)];
-        } else {
-            i++;
-        }
-    }
-}
+typedef struct SpWalkIter {
+    SpPath dirpath;                              // Current directory
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];   // Subdirs (names only)
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];  // Files (names only)
+    size_t dirname_count, filename_count;
+    struct { /* private state, includes pending buffer ptr */ } priv_;
+} SpWalkIter;  // ~17KB fixed size
 ```
 
-**Note**: Python pruning is read-only in the bindings - modifications don't affect traversal (by design, to keep C bindings simple).
+**Buffer sizing - overflow skips subtrees:**
+```c
+#define SP_WALK_ENTRIES_CAP(n) ((n) * SP_PATH_MAX)  // n pending directories
+SP_WALK_ENTRIES_CAP_64    // 64 dirs  (~64KB)
+SP_WALK_ENTRIES_CAP_256   // 256 dirs (~256KB)
+SP_WALK_ENTRIES_CAP_1024  // 1024 dirs (~1MB)
+```
 
-## Implementation Gameplan
+**Bottom-up traversal:** Uses marker bytes in pending entries:
+- `SP_WALK_MARKER_SCAN` (0) = directory needs scanning
+- `SP_WALK_MARKER_YIELD` (1) = directory ready to yield (subdirs done)
 
-Remaining pathlib methods to implement (excluding read/write/text/bytes/open), organized into 4 PRs:
+When scanning a directory in bottom-up mode:
+1. Push self with YIELD marker
+2. Push subdirs with SCAN marker
+3. Continue loop (pops first subdir or self-yield)
 
-### Group 1: File type predicates (7 methods) ✅ COMPLETE
-All are stat-based file type checks:
-- `is_symlink` - check if path is a symbolic link (uses lstat)
-- `is_block_device` - check if path is a block device
-- `is_char_device` - check if path is a character device
-- `is_fifo` - check if path is a FIFO/named pipe
-- `is_socket` - check if path is a socket
-- `is_mount` - check if path is a mount point (POSIX)
-- `is_junction` - check if path is a junction (Windows)
+This ensures children are yielded before parents without recursion.
 
-### Group 2: Symlink & link operations (6 methods) ✅ COMPLETE
-- `lstat` - stat without following symlinks
-- `readlink` - read symlink target
-- `resolve` - resolve to canonical absolute path
-- `symlink_to` - create symbolic link
-- `hardlink_to` - create hard link
-- `samefile` - check if two paths point to same file
+**Flavor preservation:** Iterator stores `p->flavor` and uses `sp_path_f()` when popping, so returned paths compare equal with `sp_path_eq()`.
 
-### Group 3: File/directory modification (6 methods) ✅ COMPLETE
-- `touch` - create file or update timestamps
-- `unlink` - delete file
-- `rmdir` - delete empty directory
-- `rename` - rename file/directory
-- `replace` - replace target with this file
-- `chmod` - change file permissions
+**Error callback:** `sp_walk_begin(..., on_error, user_data)` takes optional callback for unreadable directories. Python bindings wrap this with a context struct to convert SpPath to string.
 
-### Group 4: Directory traversal & user info (6 methods) ✅ COMPLETE
-- `iterdir` - iterate directory contents
-- `walk` - recursive directory traversal
-- `owner` - get file owner name
-- `group` - get file group name
-- `expanduser` - expand `~` to home directory
-- `home` - get user's home directory
+**Pruning support:** In top-down mode, modify `it->dirname_count` before next `sp_walk_next()` call.

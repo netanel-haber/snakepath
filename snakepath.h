@@ -322,71 +322,126 @@ void sp_iterdir_end(SpIterdirIter *it);
          !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
     for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
 
-/* Walk limits - sized to keep SpWalkIter under ~200KB for stack safety */
-#ifndef SP_WALK_MAX_DEPTH
-#define SP_WALK_MAX_DEPTH 32
-#endif
+/* Walk limits */
 #ifndef SP_WALK_MAX_ENTRIES
 #define SP_WALK_MAX_ENTRIES 64
 #endif
-#ifndef SP_WALK_PENDING_PER_LEVEL
-#define SP_WALK_PENDING_PER_LEVEL 8
-#endif
 #ifndef SP_WALK_NAME_MAX
-#define SP_WALK_NAME_MAX 256   /* Max filename length for pending names */
+#define SP_WALK_NAME_MAX 128   /* Max filename length */
 #endif
 
-/* Walk error info - passed to on_error callback */
-typedef struct {
-    SpPath path;     /* Path that caused the error */
-    int error_code;  /* errno value */
-} SpWalkError;
+/* Walk buffer sizes - when full, directories and their subtrees are skipped */
+#define SP_WALK_ENTRIES_CAP(n) ((n) * SP_PATH_MAX)  /* Buffer size for n pending directories */
+#define SP_WALK_ENTRIES_CAP_64   SP_WALK_ENTRIES_CAP(64)    /* ~64KB with 1024 path max */
+#define SP_WALK_ENTRIES_CAP_256  SP_WALK_ENTRIES_CAP(256)   /* ~256KB */
+#define SP_WALK_ENTRIES_CAP_1024 SP_WALK_ENTRIES_CAP(1024)  /* ~1MB */
 
-/* Walk error callback type */
-typedef void (*SpWalkErrorFn)(const SpWalkError *error, void *user_data);
+/* Walk entry for callback-based API */
+typedef struct SpWalkEntry {
+    SpPath dirpath;
+    char (*dirnames)[SP_WALK_NAME_MAX];  /* Pointer to array of names */
+    char (*filenames)[SP_WALK_NAME_MAX];
+    size_t dirname_count;
+    size_t filename_count;
+    void *user_data;
+} SpWalkEntry;
 
-/* Walk iterator - designed to be small enough for stack allocation (~100KB)
- * Previously was ~1MB due to storing full SpPath for pending dirs.
- * Now stores just names (256 bytes each) for pending dirs.
+/* Walk error callback - called when a directory can't be read */
+typedef void (*SpWalkErrorFn)(const SpPath *path, int error_code, void *user_data);
+
+/* Walk callback - return true to continue, false to stop. Modify dirname_count for pruning. */
+typedef bool (*SpWalkFn)(struct SpWalkEntry *entry);
+
+/* Walk iterator - caller allocates (stack or heap, their choice)
+ * Use SP_WALK_ENTRIES_CAP(n) for buffer size. Overflow skips subtrees.
+ *
+ * After sp_walk_next() returns true, read results from:
+ *   it.dirpath      - current directory path
+ *   it.dirnames     - array of subdirectory names (not full paths)
+ *   it.dirname_count
+ *   it.filenames    - array of file names (not full paths)
+ *   it.filename_count
+ *
+ * For top-down pruning: modify dirname_count before next sp_walk_next() call.
  */
-typedef struct {
-    int depth;  /* Current depth, -1 = done/error */
-    bool top_down;
-    bool follow_symlinks;
-    SpWalkErrorFn on_error;  /* Optional error callback */
-    void *user_data;         /* User data passed to on_error */
+typedef struct SpWalkIter {
+    /* === Public: read these after sp_walk_next() returns true === */
+    SpPath dirpath;
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    size_t dirname_count;
+    size_t filename_count;
+
+    /* === Private: do not access directly === */
     struct {
-        SpPath dirs[SP_WALK_MAX_DEPTH];           /* Full paths at each depth ~17KB */
-        void *handles[SP_WALK_MAX_DEPTH];
-        /* Pending dirs: store NAMES only (not full paths) - reconstruct via sp_join */
-        char pending_names[SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL][SP_WALK_NAME_MAX]; /* ~32KB */
-        size_t pending_offsets[SP_WALK_MAX_DEPTH];
-        size_t pending_counts[SP_WALK_MAX_DEPTH];
-        size_t pending_top;
-        bool yielded[SP_WALK_MAX_DEPTH];
-        bool committed[SP_WALK_MAX_DEPTH];
-        SpPath current_dir;
-        SpPath dirnames[SP_WALK_MAX_ENTRIES];     /* ~67KB */
-        SpPath filenames[SP_WALK_MAX_ENTRIES];    /* ~67KB */
-        size_t dirname_count;
-        size_t filename_count;
+        bool top_down;
+        bool follow_symlinks;
+        SpWalkErrorFn on_error;
+        void *user_data;
+        int state;              /* 0=need_scan, 1=yielded_topdown, 2=descending, -1=done */
+        size_t subdir_index;    /* Next subdir to descend into (for top-down) */
+        char *pending_buf;      /* Caller-provided buffer for pending directories */
+        size_t pending_capacity;/* Max entries that fit in buffer */
+        size_t pending_count;   /* Current pending count */
+        SpFlavor flavor;        /* Preserve original path's flavor */
     } priv_;
 } SpWalkIter;
 
-/* Walk entry - result for each iteration */
-typedef struct {
-    SpPath dirpath;
-    SpPath *dirnames;       /* Array of directory paths - user may modify to prune */
-    size_t *dirname_count;  /* Pointer to count - modify to prune (set to 0 to skip all) */
-    SpPath *filenames;      /* Array of file paths */
-    size_t *filename_count; /* Pointer to count */
-} SpWalkEntry;
+/* Initialize walk iterator with caller-provided pending storage.
+ *
+ * Parameters:
+ *   it           - Iterator struct (caller allocates)
+ *   p            - Directory to walk (must be a directory)
+ *   top_down     - true=yield parent before children, false=yield children first
+ *   follow_symlinks - true=follow symlinks to directories
+ *   pending_buf  - Buffer for pending directories (caller allocates)
+ *   pending_buf_size - Size of pending buffer in bytes
+ *   on_error     - Optional callback for unreadable directories (may be NULL)
+ *   user_data    - Passed to on_error callback
+ *
+ * Returns false immediately if:
+ *   - it is NULL
+ *   - p is NULL or has embedded nulls
+ *   - p is not a directory
+ *   - pending_buf is NULL
+ *   - pending_buf_size < SP_PATH_MAX (can't hold even 1 entry)
+ */
+bool sp_walk_begin(SpWalkIter *it, const SpPath *p, bool top_down, bool follow_symlinks,
+                   void *pending_buf, size_t pending_buf_size,
+                   SpWalkErrorFn on_error, void *user_data);
 
-SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks);
-SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow_symlinks,
-                                     SpWalkErrorFn on_error, void *user_data);
-bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out);
+/* Get next walk entry. Returns true if entry available, false when done.
+ * After returning true, read it->dirpath, it->dirnames, it->filenames, etc.
+ * For top-down pruning, modify it->dirname_count before calling again.
+ */
+bool sp_walk_next(SpWalkIter *it);
+
+/* End walk iteration (releases any resources). */
 void sp_walk_end(SpWalkIter *it);
+
+/* Callback-based walk - processes entire tree, using real stack for unlimited depth.
+ * Calls callback for each directory. Return false from callback to stop early.
+ * For top-down pruning, modify entry->dirname_count before returning.
+ */
+bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
+             SpWalkFn callback, SpWalkErrorFn on_error, void *user_data);
+
+/* Walk foreach macro - iterates directory tree with caller-provided buffer.
+ * cap: char array for pending dirs (use SP_WALK_ENTRIES_CAP_64/256/1024). Overflow skips subtrees.
+ * iter_var: SpWalkIter* to access dirpath, dirnames, filenames, dirname_count, filename_count
+ *
+ * Example:
+ *   SpPath dir = sp_path("src");
+ *   char cap[SP_WALK_ENTRIES_CAP_256];
+ *   SP_WALK_FOREACH(&dir, true, cap, it) {
+ *       printf("%s: %zu dirs, %zu files\n", sp_str(&it->dirpath), it->dirname_count, it->filename_count);
+ *   }
+ */
+#define SP_WALK_FOREACH(dir, top_down, cap, iter_var) \
+    for (struct { SpWalkIter it; int done; } sp_wctx_ = {{{0}}, 0}; \
+         !sp_wctx_.done && sp_walk_begin(&sp_wctx_.it, dir, top_down, false, cap, sizeof(cap), NULL, NULL); \
+         sp_walk_end(&sp_wctx_.it), sp_wctx_.done = 1) \
+    for (SpWalkIter *iter_var = &sp_wctx_.it; sp_walk_next(iter_var); )
 
 /* Glob iterator - iterate over paths matching a pattern
  * sp_glob_begin:  Initialize iterator, returns iterator with depth=0 (or -1 on error)
@@ -2957,40 +3012,37 @@ void sp_iterdir_end(SpIterdirIter *it) {
     it->done = 1;
 }
 
-/* ============ Walk Implementation ============ */
+/* ============ Walk Implementation (recursive, callback-based) ============ */
 
-/* Helper to close walk handle at a depth */
-static void sp_priv_walk_close_handle(SpWalkIter *it, int depth) {
-    if (it->priv_.handles[depth]) {
-#ifdef SP_WINDOWS
-        FindClose(it->priv_.handles[depth]);
-#else
-        closedir(SP_PRIV_CAST(DIR *, it->priv_.handles[depth]));
-#endif
-        it->priv_.handles[depth] = NULL;
-    }
+/* Comparison function for qsort - sort name strings */
+static int sp_priv_walk_name_cmp(const void *a, const void *b) {
+    return strcmp(SP_PRIV_CAST(const char *, a), SP_PRIV_CAST(const char *, b));
 }
 
-/* Comparison function for qsort - sort SpPath by string value */
-static int sp_priv_walk_path_cmp(const void *a, const void *b) {
-    return strcmp(sp_str(SP_PRIV_CAST(const SpPath *, a)), sp_str(SP_PRIV_CAST(const SpPath *, b)));
+/* Helper to copy name into walk name buffer */
+static void sp_priv_walk_copy_name(char dest[SP_WALK_NAME_MAX], const char *src) {
+    size_t len = strlen(src);
+    if (len >= SP_WALK_NAME_MAX) len = SP_WALK_NAME_MAX - 1;
+    memcpy(dest, src, len);
+    dest[len] = '\0';
 }
 
-/* Helper to scan directory and populate dirnames/filenames arrays */
-static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
-    it->priv_.dirname_count = 0;
-    it->priv_.filename_count = 0;
-    it->priv_.current_dir = it->priv_.dirs[it->depth];
+/* Scan directory and populate entry with dirnames/filenames (names only) */
+static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
+                              char dirnames[][SP_WALK_NAME_MAX], size_t *dirname_count,
+                              char filenames[][SP_WALK_NAME_MAX], size_t *filename_count) {
+    *dirname_count = 0;
+    *filename_count = 0;
 
 #ifdef SP_WINDOWS
     char search[SP_PATH_MAX + 3];
-    const char *dir_str = sp_str(&it->priv_.current_dir);
-    size_t len = it->priv_.current_dir.len;
+    const char *dir_str = sp_str(dir);
+    size_t len = dir->len;
     if (len == 0) {
         search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0';
     } else {
         memcpy(search, dir_str, len);
-        if (!sp_priv_is_sep(search[len - 1], it->priv_.current_dir.flavor)) search[len++] = '\\';
+        if (!sp_priv_is_sep(search[len - 1], dir->flavor)) search[len++] = '\\';
         search[len++] = '*'; search[len] = '\0';
     }
     WIN32_FIND_DATAA fd;
@@ -2999,59 +3051,32 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
 
     do {
         const char *name = fd.cFileName;
-        /* Skip . and .. */
-        if (name[0] == '.') {
-            if (name[1] == '\0') continue;
-            if (name[1] == '.' && name[2] == '\0') continue;
-        }
-        SpPath child = sp_join_one(&it->priv_.current_dir, name);
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
         bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        if (it->follow_symlinks || !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
-            if (is_dir) {
-                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
-                    it->priv_.dirnames[it->priv_.dirname_count++] = child;
-            } else {
-                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
-                    it->priv_.filenames[it->priv_.filename_count++] = child;
-            }
+        if (is_dir) {
+            if (*dirname_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(dirnames[(*dirname_count)++], name);
         } else {
-            /* Don't follow symlinks - check if it's a directory symlink */
-            if (is_dir) {
-                if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
-                    it->priv_.dirnames[it->priv_.dirname_count++] = child;
-            } else {
-                if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
-                    it->priv_.filenames[it->priv_.filename_count++] = child;
-            }
+            if (*filename_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(filenames[(*filename_count)++], name);
         }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 #else
-    const char *dir_str = sp_str(&it->priv_.current_dir);
-    DIR *d = opendir(dir_str);
+    DIR *d = opendir(sp_str(dir));
     if (!d) return false;
 
     struct dirent *de;
     while ((de = readdir(d)) != NULL) {
         const char *name = de->d_name;
-        /* Skip . and .. */
-        if (name[0] == '.') {
-            if (name[1] == '\0') continue;
-            if (name[1] == '.' && name[2] == '\0') continue;
-        }
-        SpPath child = sp_join_one(&it->priv_.current_dir, name);
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
         bool is_dir = false;
 
-        /* Use d_type if available, otherwise stat */
 #ifdef DT_DIR
         if (de->d_type != DT_UNKNOWN) {
-            if (de->d_type == DT_LNK && !it->follow_symlinks) {
-                /* It's a symlink and we're not following - don't descend into it */
-                SpStatResult lst = sp_lstat(&child);
-                is_dir = lst.valid && S_ISDIR(lst.sp_mode);
-            } else if (de->d_type == DT_LNK) {
-                /* Follow symlink */
-                SpStatResult st = sp_stat(&child);
+            if (de->d_type == DT_LNK) {
+                SpPath child = sp_join_one(dir, name);
+                SpStatResult st = follow_symlinks ? sp_stat(&child) : sp_lstat(&child);
                 is_dir = st.valid && S_ISDIR(st.sp_mode);
             } else {
                 is_dir = (de->d_type == DT_DIR);
@@ -3059,177 +3084,223 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
         } else
 #endif
         {
-            /* d_type not available or unknown, use stat */
-            SpStatResult st = it->follow_symlinks ? sp_stat(&child) : sp_lstat(&child);
+            SpPath child = sp_join_one(dir, name);
+            SpStatResult st = follow_symlinks ? sp_stat(&child) : sp_lstat(&child);
             is_dir = st.valid && S_ISDIR(st.sp_mode);
         }
 
         if (is_dir) {
-            if (it->priv_.dirname_count < SP_WALK_MAX_ENTRIES)
-                it->priv_.dirnames[it->priv_.dirname_count++] = child;
+            if (*dirname_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(dirnames[(*dirname_count)++], name);
         } else {
-            if (it->priv_.filename_count < SP_WALK_MAX_ENTRIES)
-                it->priv_.filenames[it->priv_.filename_count++] = child;
+            if (*filename_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(filenames[(*filename_count)++], name);
         }
     }
     closedir(d);
 #endif
 
-    /* Sort for consistent ordering (like Python's Path.walk) */
-    if (it->priv_.dirname_count > 1)
-        qsort(it->priv_.dirnames, it->priv_.dirname_count, sizeof(SpPath), sp_priv_walk_path_cmp);
-    if (it->priv_.filename_count > 1)
-        qsort(it->priv_.filenames, it->priv_.filename_count, sizeof(SpPath), sp_priv_walk_path_cmp);
+    /* Sort for consistent ordering */
+    if (*dirname_count > 1)
+        qsort(dirnames, *dirname_count, SP_WALK_NAME_MAX, sp_priv_walk_name_cmp);
+    if (*filename_count > 1)
+        qsort(filenames, *filename_count, SP_WALK_NAME_MAX, sp_priv_walk_name_cmp);
 
     return true;
 }
 
-/* Internal helper that writes to output pointer (avoids 4MB stack temporary) */
-static void sp_priv_walk_begin_to(SpWalkIter *out, const SpPath *p, bool top_down, bool follow_symlinks,
-                                  SpWalkErrorFn on_error, void *user_data) {
-    memset(out, 0, sizeof(*out));
-    out->depth = -1;  /* Default to done/error */
+/* Recursive walk implementation */
+static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow_symlinks,
+                                   SpWalkFn callback, SpWalkErrorFn on_error, void *user_data) {
+    /* Stack-allocated arrays for this directory level */
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    size_t dirname_count, filename_count;
 
-    if (!p) return;
-    SP_ASSERT_PATH_INVARIANT(p);
-
-    if (sp_priv_has_embedded_null(p)) return;
-    if (!sp_is_dir(p)) return;  /* Must be a directory */
-
-    out->top_down = top_down;
-    out->follow_symlinks = follow_symlinks;
-    out->on_error = on_error;
-    out->user_data = user_data;
-    out->depth = 0;
-    out->priv_.dirs[0] = sp_path_copy(p);
-    /* yielded[0] and committed[0] are already false from memset */
-}
-
-SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks) {
-    SpWalkIter it;
-    sp_priv_walk_begin_to(&it, p, top_down, follow_symlinks, NULL, NULL);
-    return it;
-}
-
-SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow_symlinks,
-                                     SpWalkErrorFn on_error, void *user_data) {
-    SpWalkIter it;
-    sp_priv_walk_begin_to(&it, p, top_down, follow_symlinks, on_error, user_data);
-    return it;
-}
-
-bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
-    if (!it || it->depth < 0) return false;
-
-    while (it->depth >= 0) {
-        /* If we haven't scanned the current directory yet */
-        if (!it->priv_.yielded[it->depth]) {
-            /* Scan the current directory */
-            if (!sp_priv_walk_scan_dir(it)) {
-                /* Report error via callback if provided */
-                if (it->on_error) {
-                    SpWalkError err;
-                    err.path = it->priv_.dirs[it->depth];
-                    err.error_code = errno;
-                    it->on_error(&err, it->user_data);
-                }
-                /* Can't scan this directory, pop and continue */
-                it->depth--;
-                continue;
-            }
-
-            it->priv_.yielded[it->depth] = true;
-
-            if (it->top_down) {
-                /* Top-down: yield before descending
-                 * Don't commit to pending yet - user may modify dirnames to prune */
-                out->dirpath = it->priv_.current_dir;
-                out->dirnames = it->priv_.dirnames;
-                out->dirname_count = &it->priv_.dirname_count;
-                out->filenames = it->priv_.filenames;
-                out->filename_count = &it->priv_.filename_count;
-                return true;
-            }
-            /* Bottom-up: commit immediately (no pruning support in bottom-up) */
-            it->priv_.pending_offsets[it->depth] = it->priv_.pending_top;
-            size_t to_copy = it->priv_.dirname_count;
-            size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
-            if (to_copy > stack_space) to_copy = stack_space;
-            if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            /* Push names only (not full paths) in reverse order so first is popped first */
-            for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
-                SpStr name = sp_name(&it->priv_.dirnames[i]);
-                size_t len = name.len < SP_WALK_NAME_MAX - 1 ? name.len : SP_WALK_NAME_MAX - 1;
-                memcpy(it->priv_.pending_names[it->priv_.pending_top], name.data, len);
-                it->priv_.pending_names[it->priv_.pending_top][len] = '\0';
-                it->priv_.pending_top++;
-            }
-            it->priv_.pending_counts[it->depth] = to_copy;
-            it->priv_.committed[it->depth] = true;
-        }
-
-        /* Top-down: commit pending list after user had chance to modify dirnames */
-        if (it->top_down && !it->priv_.committed[it->depth]) {
-            /* Copy user's (possibly modified) dirnames to pending stack (names only) */
-            it->priv_.pending_offsets[it->depth] = it->priv_.pending_top;
-            size_t to_copy = it->priv_.dirname_count;
-            size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
-            if (to_copy > stack_space) to_copy = stack_space;
-            if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            /* Push names only (not full paths) in reverse order so first is popped first */
-            for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
-                SpStr name = sp_name(&it->priv_.dirnames[i]);
-                size_t len = name.len < SP_WALK_NAME_MAX - 1 ? name.len : SP_WALK_NAME_MAX - 1;
-                memcpy(it->priv_.pending_names[it->priv_.pending_top], name.data, len);
-                it->priv_.pending_names[it->priv_.pending_top][len] = '\0';
-                it->priv_.pending_top++;
-            }
-            it->priv_.pending_counts[it->depth] = to_copy;
-            it->priv_.committed[it->depth] = true;
-        }
-
-        /* Try to descend into subdirectories (use pending stack) */
-        if (it->priv_.pending_counts[it->depth] > 0 && it->depth + 1 < SP_WALK_MAX_DEPTH) {
-            /* Pop a directory name from pending stack and reconstruct full path */
-            it->priv_.pending_counts[it->depth]--;
-            it->priv_.pending_top--;
-            const char *name = it->priv_.pending_names[it->priv_.pending_offsets[it->depth] + it->priv_.pending_counts[it->depth]];
-            SpPath subdir = sp_join_one(&it->priv_.dirs[it->depth], name);
-            it->depth++;
-            it->priv_.dirs[it->depth] = subdir;
-            it->priv_.yielded[it->depth] = false;
-            it->priv_.committed[it->depth] = false;
-            continue;
-        }
-
-        /* No more subdirectories to descend into */
-        if (!it->top_down) {
-            /* Bottom-up: yield after all subdirectories processed */
-            /* Rescan to get current dirname_count and filename_count */
-            sp_priv_walk_scan_dir(it);
-            out->dirpath = it->priv_.current_dir;
-            out->dirnames = it->priv_.dirnames;
-            out->dirname_count = &it->priv_.dirname_count;
-            out->filenames = it->priv_.filenames;
-            out->filename_count = &it->priv_.filename_count;
-            it->depth--;
-            return true;
-        }
-
-        /* Top-down: we've already yielded, just pop */
-        it->depth--;
+    /* Scan current directory */
+    if (!sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count)) {
+        if (on_error) on_error(dir, errno, user_data);
+        return true;  /* Continue walking other branches */
     }
 
-    return false;
+    /* Build entry for callback */
+    SpWalkEntry entry;
+    entry.dirpath = *dir;
+    entry.dirnames = dirnames;
+    entry.dirname_count = dirname_count;
+    entry.filenames = filenames;
+    entry.filename_count = filename_count;
+    entry.user_data = user_data;
+
+    if (top_down) {
+        /* Top-down: call callback first, then recurse */
+        if (!callback(&entry)) return false;  /* User requested stop */
+
+        /* Recurse into subdirectories (entry.dirname_count may have been modified for pruning) */
+        for (size_t i = 0; i < entry.dirname_count; i++) {
+            SpPath subdir = sp_join_one(dir, entry.dirnames[i]);
+            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+                return false;
+        }
+    } else {
+        /* Bottom-up: recurse first, then call callback */
+        for (size_t i = 0; i < dirname_count; i++) {
+            SpPath subdir = sp_join_one(dir, dirnames[i]);
+            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+                return false;
+        }
+
+        /* Re-scan to get fresh counts (directory may have changed) */
+        sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count);
+        entry.dirname_count = dirname_count;
+        entry.filename_count = filename_count;
+
+        if (!callback(&entry)) return false;
+    }
+
+    return true;
+}
+
+bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
+             SpWalkFn callback, SpWalkErrorFn on_error, void *user_data) {
+    if (!p || !callback) return false;
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    if (!sp_is_dir(p)) return false;
+
+    return sp_priv_walk_recursive(p, top_down, follow_symlinks, callback, on_error, user_data);
+}
+
+/* ============ BYOS Walk Iterator Implementation ============ */
+
+/* Pending entry format: byte 0 = marker (0=needs scan, 1=ready to yield), bytes 1+ = path */
+#define SP_WALK_MARKER_SCAN 0
+#define SP_WALK_MARKER_YIELD 1
+
+/* Push a path onto the pending stack with marker */
+static bool sp_priv_walk_push_ex(SpWalkIter *it, const SpPath *path, int marker) {
+    if (it->priv_.pending_count >= it->priv_.pending_capacity) return false;
+    char *slot = it->priv_.pending_buf + (it->priv_.pending_count * SP_PATH_MAX);
+    slot[0] = SP_PRIV_CAST(char, marker);
+    size_t len = path->len;
+    if (len >= SP_PATH_MAX - 1) len = SP_PATH_MAX - 2;
+    memcpy(slot + 1, path->buf, len);
+    slot[len + 1] = '\0';
+    it->priv_.pending_count++;
+    return true;
+}
+
+/* Push a path for scanning (default behavior) */
+static bool sp_priv_walk_push(SpWalkIter *it, const SpPath *path) {
+    return sp_priv_walk_push_ex(it, path, SP_WALK_MARKER_SCAN);
+}
+
+/* Pop a path from the pending stack, returns marker via out_marker */
+static bool sp_priv_walk_pop_ex(SpWalkIter *it, SpPath *out, int *out_marker) {
+    if (it->priv_.pending_count == 0) return false;
+    it->priv_.pending_count--;
+    char *slot = it->priv_.pending_buf + (it->priv_.pending_count * SP_PATH_MAX);
+    *out_marker = SP_PRIV_CAST(unsigned char, slot[0]);
+    *out = sp_path_f(slot + 1, it->priv_.flavor);
+    return true;
+}
+
+bool sp_walk_begin(SpWalkIter *it, const SpPath *p, bool top_down, bool follow_symlinks,
+                   void *pending_buf, size_t pending_buf_size,
+                   SpWalkErrorFn on_error, void *user_data) {
+    /* Fast-fail validation */
+    if (!it) return false;
+    memset(it, 0, sizeof(*it));
+    it->priv_.state = -1;  /* Mark as done initially */
+
+    if (!p) return false;
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    if (!sp_is_dir(p)) return false;
+    if (!pending_buf) return false;
+    if (pending_buf_size < SP_PATH_MAX) return false;
+
+    /* Initialize iterator state */
+    it->priv_.top_down = top_down;
+    it->priv_.follow_symlinks = follow_symlinks;
+    it->priv_.on_error = on_error;
+    it->priv_.user_data = user_data;
+    it->priv_.pending_buf = SP_PRIV_CAST(char *, pending_buf);
+    it->priv_.pending_capacity = pending_buf_size / SP_PATH_MAX;
+    it->priv_.pending_count = 0;
+    it->priv_.state = 0;  /* need_scan */
+    it->priv_.subdir_index = 0;
+    it->priv_.flavor = p->flavor;
+
+    /* Push initial directory onto pending stack */
+    if (!sp_priv_walk_push(it, p)) {
+        it->priv_.state = -1;
+        return false;
+    }
+
+    return true;
+}
+
+bool sp_walk_next(SpWalkIter *it) {
+    if (!it || it->priv_.state == -1) return false;
+
+    /* State machine:
+     * 0 = processing: pop from pending and handle based on marker
+     * 1 = yielded_topdown: user saw it, now push subdirs and go to next
+     */
+    while (true) {
+        if (it->priv_.state == 0) {
+            int marker;
+            if (!sp_priv_walk_pop_ex(it, &it->dirpath, &marker)) {
+                it->priv_.state = -1;
+                return false;  /* Done */
+            }
+
+            if (marker == SP_WALK_MARKER_YIELD) {
+                /* Bottom-up: this directory's subdirs are done, yield it now */
+                /* Re-scan to get current state (matches Python behavior) */
+                sp_priv_walk_scan(&it->dirpath, it->priv_.follow_symlinks,
+                                  it->dirnames, &it->dirname_count,
+                                  it->filenames, &it->filename_count);
+                return true;
+            }
+
+            /* marker == SP_WALK_MARKER_SCAN: scan this directory */
+            if (!sp_priv_walk_scan(&it->dirpath, it->priv_.follow_symlinks,
+                                   it->dirnames, &it->dirname_count,
+                                   it->filenames, &it->filename_count)) {
+                if (it->priv_.on_error)
+                    it->priv_.on_error(&it->dirpath, errno, it->priv_.user_data);
+                continue;  /* Skip unreadable directories */
+            }
+
+            if (it->priv_.top_down) {
+                it->priv_.state = 1;  /* Yielded, waiting for subdirs */
+                return true;  /* Yield to user */
+            } else {
+                /* Bottom-up: push self for later yield, then push subdirs for scan */
+                sp_priv_walk_push_ex(it, &it->dirpath, SP_WALK_MARKER_YIELD);
+                for (size_t i = it->dirname_count; i > 0; i--) {
+                    SpPath subdir = sp_join_one(&it->dirpath, it->dirnames[i - 1]);
+                    sp_priv_walk_push_ex(it, &subdir, SP_WALK_MARKER_SCAN);
+                }
+                /* Continue to process next (which will be first subdir or self-yield) */
+            }
+        } else if (it->priv_.state == 1) {
+            /* Top-down: push remaining subdirs in reverse order (user may have modified dirname_count) */
+            for (size_t i = it->dirname_count; i > 0; i--) {
+                SpPath subdir = sp_join_one(&it->dirpath, it->dirnames[i - 1]);
+                sp_priv_walk_push(it, &subdir);
+            }
+            it->priv_.state = 0;  /* Go process next */
+        }
+    }
 }
 
 void sp_walk_end(SpWalkIter *it) {
     if (!it) return;
-    /* Close any open handles */
-    for (int i = 0; i <= it->depth && i < SP_WALK_MAX_DEPTH; i++) {
-        sp_priv_walk_close_handle(it, i);
-    }
-    it->depth = -1;
+    it->priv_.state = -1;
+    it->priv_.pending_count = 0;
 }
 
 /* ============ Fluent API Implementation ============ */

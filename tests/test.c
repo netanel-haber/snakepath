@@ -25,6 +25,7 @@ static int tests_run = 0;
 static char test_dir_mkdir_temp[64];
 static char test_dir_mkdir_nested[64];
 static char test_dir_glob[64];
+static int walk_test_dir_count = 0;
 
 /* Inline string view comparison (like nob_sv_eq) */
 static int sv_eq(SpStr a, const char *b) {
@@ -45,6 +46,13 @@ typedef struct { const char *path; const char *arg; const char *expected; } Join
 
 #define P SP_FLAVOR_POSIX
 #define W SP_FLAVOR_WINDOWS
+
+/* Walk test callback */
+static bool walk_test_callback(struct SpWalkEntry *entry) {
+    (void)entry;
+    walk_test_dir_count++;
+    return true;
+}
 
 static void test_sv(SpFlavor f, SpStr (*fn)(const SpPath*), SVTest *tests, size_t n) {
     for (size_t i = 0; i < n; i++) {
@@ -726,46 +734,24 @@ int main(void) {
     FILE *wf2 = fopen(walk_f2, "w"); if (wf2) fclose(wf2);
     FILE *wf3 = fopen(walk_f3, "w"); if (wf3) fclose(wf3);
 
-    /* Test walk top-down */
-#ifdef WALK_DEBUG
-    printf("DEBUG: walk_begin on '%s'\n", walk_path);
-    fflush(stdout);
-#endif
+    /* Test walk top-down (callback-based) */
+    walk_test_dir_count = 0;
+    sp_walk(&walk_base, true, false, walk_test_callback, NULL, NULL);
+    ASSERT(walk_test_dir_count == 2);  /* walk_base and walk_sub */
 
-    int walk_dir_count = 0;
-    SpWalkIter wit = sp_walk_begin(&walk_base, true, false);
+    /* Test walk top-down (BYOS iterator) */
+    {
+        SpWalkIter walk_it;
+        char walk_cap[SP_WALK_ENTRIES_CAP(64)];
+        int iter_count = 0;
 
-#ifdef WALK_DEBUG
-    printf("DEBUG: walk_begin returned, depth=%d\n", wit.depth);
-    fflush(stdout);
-#endif
-
-    int walk_iteration = 0;
-    SpWalkEntry went;
-    while (sp_walk_next(&wit, &went)) {
-#ifdef WALK_DEBUG
-        printf("DEBUG: walk_next iteration %d, dirpath='%s', depth=%d, dirname_count=%zu\n",
-               walk_iteration, sp_str(&went.dirpath), wit.depth, *went.dirname_count);
-        fflush(stdout);
-#endif
-        walk_dir_count++;
-        walk_iteration++;
-        if (walk_iteration > 100) {
-#ifdef WALK_DEBUG
-            printf("DEBUG: ABORT - too many iterations\n");
-            fflush(stdout);
-#endif
-            break;
+        ASSERT(sp_walk_begin(&walk_it, &walk_base, true, false, walk_cap, sizeof(walk_cap), NULL, NULL));
+        while (sp_walk_next(&walk_it)) {
+            iter_count++;
         }
+        sp_walk_end(&walk_it);
+        ASSERT(iter_count == 2);
     }
-
-#ifdef WALK_DEBUG
-    printf("DEBUG: walk loop exited, count=%d\n", walk_dir_count);
-    fflush(stdout);
-#endif
-
-    sp_walk_end(&wit);
-    ASSERT(walk_dir_count == 2);  /* walk_base and walk_sub */
 
     /* Cleanup */
     remove(walk_f1);

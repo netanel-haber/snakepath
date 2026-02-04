@@ -282,67 +282,76 @@ SP_EXPORT int sp_iterdir_done_wrap(SpIterdirIter *it) {
     return it->done;
 }
 
-/* walk iterator */
-SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
+/* walk - BYOS iterator API */
 SP_EXPORT size_t sp_walk_max_entries(void) { return SP_WALK_MAX_ENTRIES; }
+SP_EXPORT size_t sp_walk_name_max(void) { return SP_WALK_NAME_MAX; }
+SP_EXPORT size_t sp_walk_iter_size(void) { return sizeof(SpWalkIter); }
+SP_EXPORT size_t sp_walk_path_max(void) { return SP_PATH_MAX; }
 
-SP_EXPORT void sp_walk_begin_wrap(const SpPath *p, int top_down, int follow_symlinks, SpWalkIter *out) {
-    /* Initialize directly to avoid 4MB stack temporary from return-by-value */
-    memset(out, 0, sizeof(*out));
-    out->depth = -1;
-    if (!p || sp_priv_has_embedded_null(p) || !sp_is_dir(p)) return;
-    out->top_down = top_down != 0;
-    out->follow_symlinks = follow_symlinks != 0;
-    out->depth = 0;
-    out->priv_.dirs[0] = sp_path_copy(p);
-}
+/* Error callback type for Python - receives path as string */
+typedef void (*SpWalkErrorFnWrap)(const char *path, int error_code, void *user_data);
 
-SP_EXPORT void sp_walk_begin_with_errors_wrap(const SpPath *p, int top_down, int follow_symlinks,
-                                              SpWalkErrorFn on_error, void *user_data, SpWalkIter *out) {
-    /* Initialize directly to avoid 4MB stack temporary from return-by-value */
-    memset(out, 0, sizeof(*out));
-    out->depth = -1;
-    if (!p || sp_priv_has_embedded_null(p) || !sp_is_dir(p)) return;
-    out->top_down = top_down != 0;
-    out->follow_symlinks = follow_symlinks != 0;
-    out->on_error = on_error;
-    out->user_data = user_data;
-    out->depth = 0;
-    out->priv_.dirs[0] = sp_path_copy(p);
-}
+/* Context for wrapping error callback - caller must keep this alive during walk */
+typedef struct {
+    SpWalkErrorFnWrap error_callback;
+    void *user_data;
+} SpWalkErrorContext;
 
-/* For Python: get error path as string */
-SP_EXPORT const char* sp_walk_error_path(const SpWalkError *err) {
-    return sp_str(&err->path);
-}
+SP_EXPORT size_t sp_walk_error_context_size(void) { return sizeof(SpWalkErrorContext); }
 
-SP_EXPORT int sp_walk_error_code(const SpWalkError *err) {
-    return err->error_code;
-}
-
-SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it, SpPath *dirpath,
-                                SpPath *dirnames, size_t *dirname_count,
-                                SpPath *filenames, size_t *filename_count) {
-    SpWalkEntry entry;
-    if (!sp_walk_next(it, &entry)) return 0;
-
-    *dirpath = entry.dirpath;
-    *dirname_count = *entry.dirname_count;
-    *filename_count = *entry.filename_count;
-
-    for (size_t i = 0; i < *entry.dirname_count; i++) {
-        dirnames[i] = entry.dirnames[i];
+static void sp_walk_error_wrapper(const SpPath *path, int error_code, void *ctx_ptr) {
+    SpWalkErrorContext *ctx = (SpWalkErrorContext *)ctx_ptr;
+    if (ctx && ctx->error_callback) {
+        ctx->error_callback(sp_str(path), error_code, ctx->user_data);
     }
-    for (size_t i = 0; i < *entry.filename_count; i++) {
-        filenames[i] = entry.filenames[i];
-    }
-    return 1;
 }
 
+/* Begin walk - returns 1 on success, 0 on failure
+ * error_ctx must point to a SpWalkErrorContext struct that remains valid during walk */
+SP_EXPORT int sp_walk_begin_wrap(SpWalkIter *it, const SpPath *p, int top_down, int follow_symlinks,
+                                  void *pending_buf, size_t pending_buf_size,
+                                  SpWalkErrorContext *error_ctx) {
+    SpWalkErrorFn err_fn = (error_ctx && error_ctx->error_callback) ? sp_walk_error_wrapper : NULL;
+    void *user_data = error_ctx;  /* Pass context as user_data */
+    return sp_walk_begin(it, p, top_down != 0, follow_symlinks != 0,
+                        pending_buf, pending_buf_size, err_fn, user_data) ? 1 : 0;
+}
+
+/* Get next entry - returns 1 if available, 0 when done */
+SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it) {
+    return sp_walk_next(it) ? 1 : 0;
+}
+
+/* End walk */
 SP_EXPORT void sp_walk_end_wrap(SpWalkIter *it) {
     sp_walk_end(it);
 }
 
-SP_EXPORT int sp_walk_depth_wrap(SpWalkIter *it) {
-    return it->depth;
+/* Access iterator fields */
+SP_EXPORT void sp_walk_dirpath_wrap(SpWalkIter *it, SpPath *out) {
+    *out = it->dirpath;
+}
+
+SP_EXPORT size_t sp_walk_dirname_count_wrap(SpWalkIter *it) {
+    return it->dirname_count;
+}
+
+SP_EXPORT size_t sp_walk_filename_count_wrap(SpWalkIter *it) {
+    return it->filename_count;
+}
+
+SP_EXPORT const char* sp_walk_dirname_wrap(SpWalkIter *it, size_t index) {
+    if (index >= it->dirname_count) return "";
+    return it->dirnames[index];
+}
+
+SP_EXPORT const char* sp_walk_filename_wrap(SpWalkIter *it, size_t index) {
+    if (index >= it->filename_count) return "";
+    return it->filenames[index];
+}
+
+/* Set dirname_count for top-down pruning */
+SP_EXPORT void sp_walk_set_dirname_count_wrap(SpWalkIter *it, size_t count) {
+    if (count <= SP_WALK_MAX_ENTRIES)
+        it->dirname_count = count;
 }

@@ -294,7 +294,23 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 
 <span class="c1">// Convenient foreach macros</span>
 <span class="n">SP_GLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
-<span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span></code></pre>
+<span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
+
+<span class="c1">// Recursive walk (BYOS - Bring Your Own Storage)</span>
+<span class="c1">// Overflow skips subtrees - size buffer for your tree's breadth</span>
+<span class="kt">char</span> <span class="n">cap</span><span class="p">[</span><span class="n">SP_WALK_ENTRIES_CAP_256</span><span class="p">];</span>  <span class="c1">// 256 pending dirs max</span>
+<span class="n">SpWalkIter</span> <span class="n">wit</span><span class="p">;</span>
+<span class="n">sp_walk_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="nb">false</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">cap</span><span class="p">),</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+<span class="k">while</span> <span class="p">(</span><span class="n">sp_walk_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"%s: %zu dirs, %zu files\n"</span><span class="p">,</span>
+           <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">.</span><span class="n">dirpath</span><span class="p">),</span> <span class="n">wit</span><span class="p">.</span><span class="n">dirname_count</span><span class="p">,</span> <span class="n">wit</span><span class="p">.</span><span class="n">filename_count</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="n">sp_walk_end</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">);</span>
+
+<span class="c1">// Foreach macro - caller provides buffer</span>
+<span class="n">SP_WALK_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="n">it</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"dir: %s\n"</span><span class="p">,</span> <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="o">-&gt;</span><span class="n">dirpath</span><span class="p">));</span>
+<span class="p">}</span></code></pre>
           </div>
         </div>
         <h2 id="fluent-api">Fluent API</h2>
