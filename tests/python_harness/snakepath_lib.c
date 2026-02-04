@@ -271,12 +271,28 @@ SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
 SP_EXPORT size_t sp_walk_max_entries(void) { return SP_WALK_MAX_ENTRIES; }
 
 SP_EXPORT void sp_walk_begin_wrap(const SpPath *p, int top_down, int follow_symlinks, SpWalkIter *out) {
-    *out = sp_walk_begin(p, top_down != 0, follow_symlinks != 0);
+    /* Initialize directly to avoid 4MB stack temporary from return-by-value */
+    memset(out, 0, sizeof(*out));
+    out->depth = -1;
+    if (!p || sp_priv_has_embedded_null(p) || !sp_is_dir(p)) return;
+    out->top_down = top_down != 0;
+    out->follow_symlinks = follow_symlinks != 0;
+    out->depth = 0;
+    out->priv_.dirs[0] = sp_path_copy(p);
 }
 
 SP_EXPORT void sp_walk_begin_with_errors_wrap(const SpPath *p, int top_down, int follow_symlinks,
                                               SpWalkErrorFn on_error, void *user_data, SpWalkIter *out) {
-    *out = sp_walk_begin_with_errors(p, top_down != 0, follow_symlinks != 0, on_error, user_data);
+    /* Initialize directly to avoid 4MB stack temporary from return-by-value */
+    memset(out, 0, sizeof(*out));
+    out->depth = -1;
+    if (!p || sp_priv_has_embedded_null(p) || !sp_is_dir(p)) return;
+    out->top_down = top_down != 0;
+    out->follow_symlinks = follow_symlinks != 0;
+    out->on_error = on_error;
+    out->user_data = user_data;
+    out->depth = 0;
+    out->priv_.dirs[0] = sp_path_copy(p);
 }
 
 /* For Python: get error path as string */

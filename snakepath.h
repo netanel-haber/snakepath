@@ -2960,7 +2960,7 @@ static void sp_priv_walk_close_handle(SpWalkIter *it, int depth) {
 
 /* Comparison function for qsort - sort SpPath by string value */
 static int sp_priv_walk_path_cmp(const void *a, const void *b) {
-    return strcmp(sp_str((const SpPath *)a), sp_str((const SpPath *)b));
+    return strcmp(sp_str(SP_PRIV_CAST(const SpPath *, a)), sp_str(SP_PRIV_CAST(const SpPath *, b)));
 }
 
 /* Helper to scan directory and populate dirnames/filenames arrays */
@@ -3071,36 +3071,38 @@ static bool sp_priv_walk_scan_dir(SpWalkIter *it) {
     return true;
 }
 
-static SpWalkIter sp_priv_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks,
-                                     SpWalkErrorFn on_error, void *user_data) {
-    SpWalkIter it;
-    memset(&it, 0, sizeof(it));
-    it.depth = -1;  /* Default to done/error */
+/* Internal helper that writes to output pointer (avoids 4MB stack temporary) */
+static void sp_priv_walk_begin_to(SpWalkIter *out, const SpPath *p, bool top_down, bool follow_symlinks,
+                                  SpWalkErrorFn on_error, void *user_data) {
+    memset(out, 0, sizeof(*out));
+    out->depth = -1;  /* Default to done/error */
 
-    if (!p) return it;
+    if (!p) return;
     SP_ASSERT_PATH_INVARIANT(p);
 
-    if (sp_priv_has_embedded_null(p)) return it;
-    if (!sp_is_dir(p)) return it;  /* Must be a directory */
+    if (sp_priv_has_embedded_null(p)) return;
+    if (!sp_is_dir(p)) return;  /* Must be a directory */
 
-    it.top_down = top_down;
-    it.follow_symlinks = follow_symlinks;
-    it.on_error = on_error;
-    it.user_data = user_data;
-    it.depth = 0;
-    it.priv_.dirs[0] = sp_path_copy(p);
+    out->top_down = top_down;
+    out->follow_symlinks = follow_symlinks;
+    out->on_error = on_error;
+    out->user_data = user_data;
+    out->depth = 0;
+    out->priv_.dirs[0] = sp_path_copy(p);
     /* yielded[0] and committed[0] are already false from memset */
-
-    return it;
 }
 
 SpWalkIter sp_walk_begin(const SpPath *p, bool top_down, bool follow_symlinks) {
-    return sp_priv_walk_begin(p, top_down, follow_symlinks, NULL, NULL);
+    SpWalkIter it;
+    sp_priv_walk_begin_to(&it, p, top_down, follow_symlinks, NULL, NULL);
+    return it;
 }
 
 SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow_symlinks,
                                      SpWalkErrorFn on_error, void *user_data) {
-    return sp_priv_walk_begin(p, top_down, follow_symlinks, on_error, user_data);
+    SpWalkIter it;
+    sp_priv_walk_begin_to(&it, p, top_down, follow_symlinks, on_error, user_data);
+    return it;
 }
 
 bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
