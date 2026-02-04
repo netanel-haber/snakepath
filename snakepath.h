@@ -3178,11 +3178,11 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
             if (to_copy > stack_space) to_copy = stack_space;
             if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            for (size_t i = 0; i < to_copy; i++) {
-                it->priv_.pending_stack[it->priv_.pending_top + i] = it->priv_.dirnames[i];
+            /* Push in reverse order so first dir is popped first (LIFO stack) */
+            for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
+                it->priv_.pending_stack[it->priv_.pending_top++] = it->priv_.dirnames[i];
             }
             it->priv_.pending_counts[it->depth] = to_copy;
-            it->priv_.pending_top += to_copy;
             it->priv_.committed[it->depth] = true;
         }
 
@@ -3194,8 +3194,9 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             size_t stack_space = (SP_WALK_MAX_DEPTH * SP_WALK_PENDING_PER_LEVEL) - it->priv_.pending_top;
             if (to_copy > stack_space) to_copy = stack_space;
             if (to_copy > SP_WALK_PENDING_PER_LEVEL) to_copy = SP_WALK_PENDING_PER_LEVEL;
-            for (size_t i = 0; i < to_copy; i++) {
-                it->priv_.pending_stack[it->priv_.pending_top + i] = it->priv_.dirnames[i];
+            /* Push in reverse order so first dir is popped first (LIFO stack) */
+            for (int i = SP_PRIV_CAST(int, to_copy) - 1; i >= 0; i--) {
+                it->priv_.pending_stack[it->priv_.pending_top++] = it->priv_.dirnames[i];
             }
             it->priv_.pending_counts[it->depth] = to_copy;
             it->priv_.pending_top += to_copy;
