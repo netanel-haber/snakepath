@@ -119,6 +119,36 @@ SP_GLOB_FOREACH(&base, "*.txt", match) { /* use match */ }
 SP_RGLOB_FOREACH(&base, "*.c", match) { /* use match */ }
 ```
 
+### Walk (Directory Tree Traversal)
+
+```c
+// Foreach macro - caller provides buffer; overflow skips subtrees
+SpPath dir = sp_path("src");
+char cap[SP_WALK_ENTRIES_CAP_256];  // 256 pending dirs max
+SP_WALK_FOREACH(&dir, true, cap, it) {  // true = top-down
+    printf("%s: %zu dirs, %zu files\n",
+           sp_str(&it->dirpath), it->dirname_count, it->filename_count);
+    // Access: it->dirnames[i], it->filenames[i]
+}
+
+// BYOS (Bring Your Own Storage) iterator for custom buffer sizes
+SpWalkIter it;
+char cap64[SP_WALK_ENTRIES_CAP(64)];  // 64 pending dirs
+if (sp_walk_begin(&it, &dir, true, false, cap64, sizeof(cap64), NULL, NULL)) {
+    while (sp_walk_next(&it)) {
+        printf("%s\n", sp_str(&it.dirpath));
+    }
+    sp_walk_end(&it);
+}
+
+// Callback-based (unlimited depth via recursion)
+bool my_callback(struct SpWalkEntry *e) {
+    printf("%s\n", sp_str(&e->dirpath));
+    return true;  // continue walking
+}
+sp_walk(&dir, true, false, my_callback, NULL, NULL);
+```
+
 ## Fluent API
 
 Enable with `#define SNAKEPATH_FLUENT` before including.
@@ -150,7 +180,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 
 ### Chainable
 
-`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
+`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->expanduser()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
 
 ### Terminators
 
@@ -160,6 +190,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->str()` | `const char*` |
 | `->name()` `->stem()` `->suffix()` | `SpStr` |
 | `->drive()` `->root()` `->anchor()` | `SpStr` |
+| `->owner()` `->group()` | `SpStr` |
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
@@ -304,8 +335,61 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.symlink_to()` | `sp_symlink_to()` | - |
 | `.hardlink_to()` | `sp_hardlink_to()` | - |
 | `.samefile()` | `sp_samefile()` | - |
+| `.touch()` | `sp_touch()` | - |
+| `.unlink()` | `sp_unlink()` | - |
+| `.rmdir()` | `sp_rmdir()` | - |
+| `.rename()` | `sp_rename()` | - |
+| `.replace()` | `sp_replace()` | - |
+| `.chmod()` | `sp_chmod()` | - |
+| `.iterdir()` | `sp_iterdir_begin/next/end()` | - |
+| `.walk()` | `sp_walk_begin/next/end()` | - |
+| `.owner()` | `sp_owner()` | - |
+| `.group()` | `sp_group()` | - |
+| `.expanduser()` | `sp_expanduser()` | - |
+| `Path.home()` | `sp_home()` | - |
+| `.open()` | - | - |
 
-**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `owner`, `group`, `chmod`, `expanduser`, `home`
+**Not implemented:** `read_bytes`, `read_text`, `write_bytes`, `write_text`
+
+## BYOS (Bring Your Own Storage) Pattern
+
+Snakepath's walk API uses the BYOS pattern for memory-efficient, allocation-free iteration with configurable depth limits. This pattern can be applied to any tree/graph traversal:
+
+**Problem:** Recursive tree traversal either uses real stack (limited depth, can overflow) or heap allocation (violates no-malloc constraint).
+
+**Solution:** Caller provides storage buffer; library uses it for pending work items.
+
+```c
+// Buffer sizing - overflow skips subtrees
+#define SP_WALK_ENTRIES_CAP(n)  ((n) * SP_PATH_MAX)  // Buffer size for n pending items
+
+// Predefined sizes
+SP_WALK_ENTRIES_CAP_64    // 64 dirs  (~64KB with 1024 path max)
+SP_WALK_ENTRIES_CAP_256   // 256 dirs (~256KB)
+SP_WALK_ENTRIES_CAP_1024  // 1024 dirs (~1MB)
+
+// Iterator struct stores state, not pending items
+typedef struct SpWalkIter {
+    SpPath dirpath;                    // Current directory
+    char dirnames[64][128];            // Current dir's subdirs (names only)
+    char filenames[64][128];           // Current dir's files
+    size_t dirname_count, filename_count;
+    struct { /* private state */ } priv_;
+} SpWalkIter;  // ~17KB fixed size
+
+// Usage: caller controls memory
+SpWalkIter it;
+char cap[SP_WALK_ENTRIES_CAP_256];  // ~256KB on stack or heap
+sp_walk_begin(&it, &path, true, false, cap, sizeof(cap), NULL, NULL);
+```
+
+**Key design principles:**
+1. **Fixed iterator size:** Iterator struct has bounded size regardless of tree depth
+2. **Caller-provided buffer:** Pending work stored in caller's buffer (stack, heap, or static)
+3. **Graceful degradation:** If buffer fills, subtrees are skipped (no crash)
+4. **Lazy iteration:** Process one directory at a time, don't collect all results upfront
+
+**For bottom-up traversal:** Uses marker bytes in pending entries to distinguish "needs scan" vs "ready to yield" states, enabling correct child-before-parent ordering without recursion.
 
 ## Adding New Methods to the Library
 

@@ -119,17 +119,6 @@ EXPECTED_FAILURES = {
         ("CompatiblePathTest", "test_truediv"),
     ],
 
-    # =========================================================================
-    # test_absolute_common - uses mock.patch("os.getcwd") which doesn't affect C
-    # Our C library calls getcwd() directly, bypassing Python's mock
-    # =========================================================================
-    "!=": [
-        ("PathSubclassTest", "test_absolute_common"),
-        ("PathTest", "test_absolute_common"),
-        ("PosixPathTest", "test_absolute_common"),
-        ("WindowsPathTest", "test_absolute"),
-        ("WindowsPathTest", "test_absolute_common"),
-    ],
 
     # =========================================================================
     # test_parts_interning - Python interns string parts, C doesn't
@@ -145,35 +134,12 @@ EXPECTED_FAILURES = {
         ("PathTest", "test_unsupported_flavour"),
     ],
 
-    "has no attribute 'expanduser'": [
-        ("PathSubclassTest", "test_expanduser_common"),
-        ("PathTest", "test_expanduser_common"),
-        ("PosixPathTest", "test_expanduser_common"),
-        ("WindowsPathTest", "test_expanduser_common"),
-    ],
-
+    # =========================================================================
+    # expanduser tests use EnvironmentVarGuard mock which doesn't affect C
+    # =========================================================================
     "has no attribute 'unset'": [
         ("PosixPathTest", "test_expanduser"),
         ("WindowsPathTest", "test_expanduser"),
-    ],
-
-    "has no attribute 'group'": [
-        ("PathSubclassTest", "test_group"),
-        ("PathTest", "test_group"),
-        ("PosixPathTest", "test_group"),
-        ("WindowsPathAsPureTest", "test_group"),
-        ("WindowsPathTest", "test_group"),
-    ],
-
-
-    # =========================================================================
-    # home() not implemented
-    # =========================================================================
-    "has no attribute 'home'": [
-        ("PathSubclassTest", "test_home"),
-        ("PathTest", "test_home"),
-        ("PosixPathTest", "test_home"),
-        ("WindowsPathTest", "test_home"),
     ],
 
     # =========================================================================
@@ -187,40 +153,14 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_is_junction"),
     ],
 
-    "has no attribute 'iterdir'": [
-        ("PathSubclassTest", "test_iterdir"),
-        ("PathSubclassTest", "test_iterdir_nodir"),
-        ("PathSubclassTest", "test_rmdir"),
+    # =========================================================================
+    # test_with uses context manager protocol not implemented
+    # =========================================================================
+    "does not support the context manager protocol": [
         ("PathSubclassTest", "test_with"),
-        ("PathTest", "test_iterdir"),
-        ("PathTest", "test_iterdir_nodir"),
-        ("PathTest", "test_rmdir"),
         ("PathTest", "test_with"),
-        ("PosixPathTest", "test_iterdir"),
-        ("PosixPathTest", "test_iterdir_nodir"),
-        ("PosixPathTest", "test_rmdir"),
         ("PosixPathTest", "test_with"),
-        ("WindowsPathTest", "test_iterdir"),
-        ("WindowsPathTest", "test_iterdir_nodir"),
-        ("WindowsPathTest", "test_rmdir"),
         ("WindowsPathTest", "test_with"),
-    ],
-
-
-    "has no attribute 'open'": [
-        ("PathSubclassTest", "test_open_common"),
-        ("PathTest", "test_open_common"),
-        ("PosixPathTest", "test_open_common"),
-        ("PosixPathTest", "test_open_mode"),
-        ("WindowsPathTest", "test_open_common"),
-    ],
-
-    "has no attribute 'owner'": [
-        ("PathSubclassTest", "test_owner"),
-        ("PathTest", "test_owner"),
-        ("PosixPathTest", "test_owner"),
-        ("WindowsPathAsPureTest", "test_owner"),
-        ("WindowsPathTest", "test_owner"),
     ],
 
     "has no attribute 'write_bytes'": [
@@ -241,52 +181,18 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_write_text_with_newlines"),
     ],
 
-    "has no attribute 'rename'": [
-        ("PathSubclassTest", "test_rename"),
-        ("PathTest", "test_rename"),
-        ("PosixPathTest", "test_rename"),
-        ("WindowsPathTest", "test_rename"),
-    ],
-
-    "has no attribute 'replace'": [
-        ("PathSubclassTest", "test_replace"),
-        ("PathTest", "test_replace"),
-        ("PosixPathTest", "test_replace"),
-        ("WindowsPathTest", "test_replace"),
-    ],
-
-
-    "has no attribute 'touch'": [
-        ("PathSubclassTest", "test_touch_common"),
-        ("PathSubclassTest", "test_touch_nochange"),
-        ("PathTest", "test_touch_common"),
-        ("PathTest", "test_touch_nochange"),
-        ("PosixPathTest", "test_touch_common"),
-        ("PosixPathTest", "test_touch_mode"),
-        ("PosixPathTest", "test_touch_nochange"),
-        ("WindowsPathTest", "test_touch_common"),
-        ("WindowsPathTest", "test_touch_nochange"),
-    ],
-
-    "has no attribute 'unlink'": [
-        ("PathSubclassTest", "test_unlink"),
-        ("PathSubclassTest", "test_unlink_missing_ok"),
-        ("PathTest", "test_unlink"),
-        ("PathTest", "test_unlink_missing_ok"),
-        ("PosixPathTest", "test_unlink"),
-        ("PosixPathTest", "test_unlink_missing_ok"),
-        ("WindowsPathTest", "test_unlink"),
-        ("WindowsPathTest", "test_unlink_missing_ok"),
-    ],
-
-    "has no attribute 'walk'": [
-        ("WalkTests", "test_file_like_path"),
-        ("WalkTests", "test_walk_above_recursion_limit"),
-        ("WalkTests", "test_walk_bad_dir"),
-        ("WalkTests", "test_walk_bottom_up"),
-        ("WalkTests", "test_walk_many_open_files"),
+    # =========================================================================
+    # walk prune test modifies dirnames list, which Python bindings don't support
+    # (pruning works in C but Python bindings are read-only)
+    # =========================================================================
+    "!=": [
+        ("PathSubclassTest", "test_absolute_common"),
+        ("PathTest", "test_absolute_common"),
+        ("PosixPathTest", "test_absolute_common"),
+        ("WindowsPathTest", "test_absolute"),
+        ("WindowsPathTest", "test_absolute_common"),
         ("WalkTests", "test_walk_prune"),
-        ("WalkTests", "test_walk_topdown"),
+        ("WalkTests", "test_file_like_path"),
     ],
 
     # =========================================================================
@@ -410,6 +316,7 @@ def setup_pathlib_patch(testfn=None):
         def __exit__(self, *args): pass
     os_helper.EnvironmentVarGuard = EnvironmentVarGuard
     sys.modules['test.support.os_helper'] = os_helper
+
 
 
 class QuietExpectedFailuresResult(unittest.TextTestResult):

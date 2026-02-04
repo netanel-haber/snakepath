@@ -93,25 +93,12 @@ cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 - Windows console encoding: Turkish İ (U+0130) can't print on cp1252, fixed with UTF-8 wrapper in run_cpython_tests.py
 
 ### Running nob on Termux
-On Termux, `gcc` and `g++` are actually clang symlinks, so GCC-specific warnings fail. Use these env vars:
 
 ```bash
-# Full local build on Termux
-SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
+cc -DSNAKEPATH_QUIET -o nob nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
 ```
 
-**Environment variables for nob:**
-| Variable | Effect | When to use |
-|----------|--------|-------------|
-| `SNAKEPATH_SANITIZE=1` | Enable sanitizers (ASan, UBSan, leak, etc.) | CI only (set in ci.yml) |
-| `SNAKEPATH_SKIP_GCC=1` | Skip GCC/G++ builds, use clang only | Termux (gcc is clang) |
-| `SNAKEPATH_NO_NRVO=1` | Disable `-Wnrvo` clang warning | Termux clang has strict NRVO |
-
-**Why Termux is different:**
-- `gcc --version` returns "clang version X.X.X" - it's a symlink
-- GCC-specific warnings (`-Wformat-overflow=2`, `-Wlogical-op`, etc.) don't exist in clang
-- Some sanitizers (leak, pointer-compare) may not be available on Android
-- `/tmp` is a symlink to `/data/data/com.termux/files/usr/tmp`, causing some resolve() tests to fail
+Termux-specific test failures (e.g., `/tmp` symlink breaking resolve tests) are acceptable locally - CI is authoritative. Never add Termux workarounds to EXPECTED_FAILURES.
 
 ## Technical Details
 
@@ -169,43 +156,55 @@ The library has three iterators:
 - `SpPartsIter` - string cursor over path components
 - `SpParentsIter` - generates derived parent paths
 - `SpGlobIter` - directory traversal for glob matching
+- `SpIterdirIter` - single-level directory listing
+- `SpWalkIter` - recursive directory traversal
 
 All follow the same API pattern (`begin`/`next`/`end`).
 
-## Implementation Gameplan
+### Walk Implementation (BYOS Pattern)
+The walk API uses "Bring Your Own Storage" (BYOS) pattern for memory-efficient, allocation-free traversal with configurable depth limits.
 
-Remaining pathlib methods to implement (excluding read/write/text/bytes/open), organized into 4 PRs:
+**Problem:** Tree traversal either uses real stack (limited depth, can overflow) or heap allocation (violates no-malloc constraint).
 
-### Group 1: File type predicates (7 methods) ✅ COMPLETE
-All are stat-based file type checks:
-- `is_symlink` - check if path is a symbolic link (uses lstat)
-- `is_block_device` - check if path is a block device
-- `is_char_device` - check if path is a character device
-- `is_fifo` - check if path is a FIFO/named pipe
-- `is_socket` - check if path is a socket
-- `is_mount` - check if path is a mount point (POSIX)
-- `is_junction` - check if path is a junction (Windows)
+**Solution:** Caller provides storage buffer; library uses it for pending work items.
 
-### Group 2: Symlink & link operations (6 methods)
-- `lstat` - stat without following symlinks
-- `readlink` - read symlink target
-- `resolve` - resolve to canonical absolute path
-- `symlink_to` - create symbolic link
-- `hardlink_to` - create hard link
-- `samefile` - check if two paths point to same file
+**Three APIs available:**
+1. `SP_WALK_FOREACH(dir, top_down, cap, it)` - macro with caller-provided buffer
+2. `sp_walk_begin/next/end` - BYOS iterator API (caller controls buffer size)
+3. `sp_walk(callback)` - callback-based (uses real stack for unlimited depth)
 
-### Group 3: File/directory modification (6 methods)
-- `touch` - create file or update timestamps
-- `unlink` - delete file
-- `rmdir` - delete empty directory
-- `rename` - rename file/directory
-- `replace` - replace target with this file
-- `chmod` - change file permissions
+**BYOS iterator structure:**
+```c
+typedef struct SpWalkIter {
+    SpPath dirpath;                              // Current directory
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];   // Subdirs (names only)
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];  // Files (names only)
+    size_t dirname_count, filename_count;
+    struct { /* private state, includes pending buffer ptr */ } priv_;
+} SpWalkIter;  // ~17KB fixed size
+```
 
-### Group 4: Directory traversal & user info (6 methods)
-- `iterdir` - iterate directory contents
-- `walk` - recursive directory traversal
-- `owner` - get file owner name
-- `group` - get file group name
-- `expanduser` - expand `~` to home directory
-- `home` - get user's home directory
+**Buffer sizing - overflow skips subtrees:**
+```c
+#define SP_WALK_ENTRIES_CAP(n) ((n) * SP_PATH_MAX)  // n pending directories
+SP_WALK_ENTRIES_CAP_64    // 64 dirs  (~64KB)
+SP_WALK_ENTRIES_CAP_256   // 256 dirs (~256KB)
+SP_WALK_ENTRIES_CAP_1024  // 1024 dirs (~1MB)
+```
+
+**Bottom-up traversal:** Uses marker bytes in pending entries:
+- `SP_WALK_MARKER_SCAN` (0) = directory needs scanning
+- `SP_WALK_MARKER_YIELD` (1) = directory ready to yield (subdirs done)
+
+When scanning a directory in bottom-up mode:
+1. Push self with YIELD marker
+2. Push subdirs with SCAN marker
+3. Continue loop (pops first subdir or self-yield)
+
+This ensures children are yielded before parents without recursion.
+
+**Flavor preservation:** Iterator stores `p->flavor` and uses `sp_path_f()` when popping, so returned paths compare equal with `sp_path_eq()`.
+
+**Error callback:** `sp_walk_begin(..., on_error, user_data)` takes optional callback for unreadable directories. Python bindings wrap this with a context struct to convert SpPath to string.
+
+**Pruning support:** In top-down mode, modify `it->dirname_count` before next `sp_walk_next()` call.

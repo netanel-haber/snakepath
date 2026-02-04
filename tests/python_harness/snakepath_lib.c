@@ -204,3 +204,154 @@ SP_EXPORT int sp_glob_depth_wrap(SpGlobIter *it) { return it->depth; }
 SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }
 SP_EXPORT int sp_case_sensitive(void) { return SP_CASE_SENSITIVE; }
 SP_EXPORT int sp_case_insensitive(void) { return SP_CASE_INSENSITIVE; }
+
+/* File/directory modification operations */
+SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) {
+    return sp_touch(p, mode, exist_ok != 0) ? 1 : 0;
+}
+SP_EXPORT int sp_unlink_wrap(const SpPath *p, int missing_ok) {
+    return sp_unlink(p, missing_ok != 0) ? 1 : 0;
+}
+SP_EXPORT int sp_rmdir_wrap(const SpPath *p) {
+    return sp_rmdir(p) ? 1 : 0;
+}
+SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
+    *out = sp_rename(p, target);
+}
+SP_EXPORT void sp_replace_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
+    *out = sp_replace(p, target);
+}
+SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
+    return sp_chmod(p, mode) ? 1 : 0;
+}
+
+/* Home directory and user expansion */
+SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) {
+    *out = sp_home((SpFlavor)flavor);
+}
+
+SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
+    *out = sp_expanduser(p);
+}
+
+/* User/group info - returns: -1 = not implemented, 0 = success, 1 = error/not found */
+SP_EXPORT int sp_owner_wrap(const SpPath *p, const char **data, size_t *len) {
+#ifdef SP_WINDOWS
+    (void)p;
+    *data = NULL;
+    *len = 0;
+    return -1;  /* Not implemented on Windows */
+#else
+    SpStr s = sp_owner(p);
+    *data = s.data;
+    *len = s.len;
+    return s.data ? 0 : 1;
+#endif
+}
+
+SP_EXPORT int sp_group_wrap(const SpPath *p, const char **data, size_t *len) {
+#ifdef SP_WINDOWS
+    (void)p;
+    *data = NULL;
+    *len = 0;
+    return -1;  /* Not implemented on Windows */
+#else
+    SpStr s = sp_group(p);
+    *data = s.data;
+    *len = s.len;
+    return s.data ? 0 : 1;
+#endif
+}
+
+/* iterdir iterator */
+SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
+
+SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) {
+    *out = sp_iterdir_begin(p);
+}
+
+SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) {
+    return sp_iterdir_next(it, out) ? 1 : 0;
+}
+
+SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) {
+    sp_iterdir_end(it);
+}
+
+SP_EXPORT int sp_iterdir_done_wrap(SpIterdirIter *it) {
+    return it->done;
+}
+
+/* walk - BYOS iterator API */
+SP_EXPORT size_t sp_walk_max_entries(void) { return SP_WALK_MAX_ENTRIES; }
+SP_EXPORT size_t sp_walk_name_max(void) { return SP_WALK_NAME_MAX; }
+SP_EXPORT size_t sp_walk_iter_size(void) { return sizeof(SpWalkIter); }
+SP_EXPORT size_t sp_walk_path_max(void) { return SP_PATH_MAX; }
+
+/* Error callback type for Python - receives path as string */
+typedef void (*SpWalkErrorFnWrap)(const char *path, int error_code, void *user_data);
+
+/* Context for wrapping error callback - caller must keep this alive during walk */
+typedef struct {
+    SpWalkErrorFnWrap error_callback;
+    void *user_data;
+} SpWalkErrorContext;
+
+SP_EXPORT size_t sp_walk_error_context_size(void) { return sizeof(SpWalkErrorContext); }
+
+static void sp_walk_error_wrapper(const SpPath *path, int error_code, void *ctx_ptr) {
+    SpWalkErrorContext *ctx = (SpWalkErrorContext *)ctx_ptr;
+    if (ctx && ctx->error_callback) {
+        ctx->error_callback(sp_str(path), error_code, ctx->user_data);
+    }
+}
+
+/* Begin walk - returns 1 on success, 0 on failure
+ * error_ctx must point to a SpWalkErrorContext struct that remains valid during walk */
+SP_EXPORT int sp_walk_begin_wrap(SpWalkIter *it, const SpPath *p, int top_down, int follow_symlinks,
+                                  void *pending_buf, size_t pending_buf_size,
+                                  SpWalkErrorContext *error_ctx) {
+    SpWalkErrorFn err_fn = (error_ctx && error_ctx->error_callback) ? sp_walk_error_wrapper : NULL;
+    void *user_data = error_ctx;  /* Pass context as user_data */
+    return sp_walk_begin(it, p, top_down != 0, follow_symlinks != 0,
+                        pending_buf, pending_buf_size, err_fn, user_data) ? 1 : 0;
+}
+
+/* Get next entry - returns 1 if available, 0 when done */
+SP_EXPORT int sp_walk_next_wrap(SpWalkIter *it) {
+    return sp_walk_next(it) ? 1 : 0;
+}
+
+/* End walk */
+SP_EXPORT void sp_walk_end_wrap(SpWalkIter *it) {
+    sp_walk_end(it);
+}
+
+/* Access iterator fields */
+SP_EXPORT void sp_walk_dirpath_wrap(SpWalkIter *it, SpPath *out) {
+    *out = it->dirpath;
+}
+
+SP_EXPORT size_t sp_walk_dirname_count_wrap(SpWalkIter *it) {
+    return it->dirname_count;
+}
+
+SP_EXPORT size_t sp_walk_filename_count_wrap(SpWalkIter *it) {
+    return it->filename_count;
+}
+
+SP_EXPORT const char* sp_walk_dirname_wrap(SpWalkIter *it, size_t index) {
+    if (index >= it->dirname_count) return "";
+    return it->dirnames[index];
+}
+
+SP_EXPORT const char* sp_walk_filename_wrap(SpWalkIter *it, size_t index) {
+    if (index >= it->filename_count) return "";
+    return it->filenames[index];
+}
+
+/* Set dirname_count for top-down pruning */
+SP_EXPORT void sp_walk_set_dirname_count_wrap(SpWalkIter *it, size_t count) {
+    if (count <= SP_WALK_MAX_ENTRIES)
+        it->dirname_count = count;
+}

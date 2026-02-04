@@ -251,6 +251,9 @@ typedef struct {
     double sp_atime;           /* Time of last access */
     double sp_mtime;           /* Time of last modification */
     double sp_ctime;           /* Time of last status change (Unix) / creation (Windows) */
+    long long sp_atime_ns;     /* Time of last access (nanoseconds since epoch) */
+    long long sp_mtime_ns;     /* Time of last modification (nanoseconds since epoch) */
+    long long sp_ctime_ns;     /* Time of last status change (nanoseconds since epoch) */
     bool valid;                /* True if stat succeeded */
 } SpStatResult;
 
@@ -277,6 +280,168 @@ bool sp_samefile(const SpPath *a, const SpPath *b);  /* check if paths refer to 
 #define SP_MKDIR_DEF_MODE 0777         /* Default mode (0 = use this); umask applied by OS */
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);
+
+/* File/directory modification operations */
+bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);  /* create file or update timestamps */
+bool sp_unlink(const SpPath *p, bool missing_ok);  /* delete file */
+bool sp_rmdir(const SpPath *p);  /* delete empty directory */
+SpPath sp_rename(const SpPath *p, const SpPath *target);  /* rename file/directory, returns new path */
+SpPath sp_replace(const SpPath *p, const SpPath *target);  /* replace target with this file, returns new path */
+bool sp_chmod(const SpPath *p, unsigned int mode);  /* change file permissions */
+
+/* Home directory and user expansion */
+SpPath sp_home(SpFlavor flavor);  /* get user's home directory */
+SpPath sp_expanduser(const SpPath *p);  /* expand ~ to home directory */
+
+/* User/group info */
+SpStr sp_owner(const SpPath *p);  /* get file owner name */
+SpStr sp_group(const SpPath *p);  /* get file group name */
+
+/* Directory iteration */
+typedef struct {
+    SpPath dir;           /* Directory being iterated */
+    int done;             /* -1 = error, 0 = in progress, 1 = done */
+    struct {
+#ifdef SP_WINDOWS
+        void *handle;     /* HANDLE from FindFirstFileA */
+        char find_data[320]; /* WIN32_FIND_DATAA */
+        bool first;
+#else
+        void *handle;     /* DIR* from opendir */
+#endif
+    } priv_;
+} SpIterdirIter;
+
+SpIterdirIter sp_iterdir_begin(const SpPath *p);
+bool sp_iterdir_next(SpIterdirIter *it, SpPath *out);  /* returns child path */
+void sp_iterdir_end(SpIterdirIter *it);
+
+/* Iterdir foreach macro */
+#define SP_ITERDIR_FOREACH(dir, entry_var) \
+    for (struct { SpIterdirIter it; int done; } sp_ictx_ = { sp_iterdir_begin(dir), 0 }; \
+         !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
+    for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
+
+/* Walk limits */
+#ifndef SP_WALK_MAX_ENTRIES
+#define SP_WALK_MAX_ENTRIES 64
+#endif
+#ifndef SP_WALK_NAME_MAX
+#define SP_WALK_NAME_MAX 128   /* Max filename length */
+#endif
+
+/* Walk buffer sizes - when full, directories and their subtrees are skipped */
+#define SP_WALK_ENTRIES_CAP(n) ((n) * SP_PATH_MAX)  /* Buffer size for n pending directories */
+#define SP_WALK_ENTRIES_CAP_64   SP_WALK_ENTRIES_CAP(64)    /* ~64KB with 1024 path max */
+#define SP_WALK_ENTRIES_CAP_256  SP_WALK_ENTRIES_CAP(256)   /* ~256KB */
+#define SP_WALK_ENTRIES_CAP_1024 SP_WALK_ENTRIES_CAP(1024)  /* ~1MB */
+
+/* Walk entry for callback-based API */
+typedef struct SpWalkEntry {
+    SpPath dirpath;
+    char (*dirnames)[SP_WALK_NAME_MAX];  /* Pointer to array of names */
+    char (*filenames)[SP_WALK_NAME_MAX];
+    size_t dirname_count;
+    size_t filename_count;
+    void *user_data;
+} SpWalkEntry;
+
+/* Walk error callback - called when a directory can't be read */
+typedef void (*SpWalkErrorFn)(const SpPath *path, int error_code, void *user_data);
+
+/* Walk callback - return true to continue, false to stop. Modify dirname_count for pruning. */
+typedef bool (*SpWalkFn)(struct SpWalkEntry *entry);
+
+/* Walk iterator - caller allocates (stack or heap, their choice)
+ * Use SP_WALK_ENTRIES_CAP(n) for buffer size. Overflow skips subtrees.
+ *
+ * After sp_walk_next() returns true, read results from:
+ *   it.dirpath      - current directory path
+ *   it.dirnames     - array of subdirectory names (not full paths)
+ *   it.dirname_count
+ *   it.filenames    - array of file names (not full paths)
+ *   it.filename_count
+ *
+ * For top-down pruning: modify dirname_count before next sp_walk_next() call.
+ */
+typedef struct SpWalkIter {
+    /* === Public: read these after sp_walk_next() returns true === */
+    SpPath dirpath;
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    size_t dirname_count;
+    size_t filename_count;
+
+    /* === Private: do not access directly === */
+    struct {
+        bool top_down;
+        bool follow_symlinks;
+        SpWalkErrorFn on_error;
+        void *user_data;
+        int state;              /* 0=need_scan, 1=yielded_topdown, 2=descending, -1=done */
+        size_t subdir_index;    /* Next subdir to descend into (for top-down) */
+        char *pending_buf;      /* Caller-provided buffer for pending directories */
+        size_t pending_capacity;/* Max entries that fit in buffer */
+        size_t pending_count;   /* Current pending count */
+        SpFlavor flavor;        /* Preserve original path's flavor */
+    } priv_;
+} SpWalkIter;
+
+/* Initialize walk iterator with caller-provided pending storage.
+ *
+ * Parameters:
+ *   it           - Iterator struct (caller allocates)
+ *   p            - Directory to walk (must be a directory)
+ *   top_down     - true=yield parent before children, false=yield children first
+ *   follow_symlinks - true=follow symlinks to directories
+ *   pending_buf  - Buffer for pending directories (caller allocates)
+ *   pending_buf_size - Size of pending buffer in bytes
+ *   on_error     - Optional callback for unreadable directories (may be NULL)
+ *   user_data    - Passed to on_error callback
+ *
+ * Returns false immediately if:
+ *   - it is NULL
+ *   - p is NULL or has embedded nulls
+ *   - p is not a directory
+ *   - pending_buf is NULL
+ *   - pending_buf_size < SP_PATH_MAX (can't hold even 1 entry)
+ */
+bool sp_walk_begin(SpWalkIter *it, const SpPath *p, bool top_down, bool follow_symlinks,
+                   void *pending_buf, size_t pending_buf_size,
+                   SpWalkErrorFn on_error, void *user_data);
+
+/* Get next walk entry. Returns true if entry available, false when done.
+ * After returning true, read it->dirpath, it->dirnames, it->filenames, etc.
+ * For top-down pruning, modify it->dirname_count before calling again.
+ */
+bool sp_walk_next(SpWalkIter *it);
+
+/* End walk iteration (releases any resources). */
+void sp_walk_end(SpWalkIter *it);
+
+/* Callback-based walk - processes entire tree, using real stack for unlimited depth.
+ * Calls callback for each directory. Return false from callback to stop early.
+ * For top-down pruning, modify entry->dirname_count before returning.
+ */
+bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
+             SpWalkFn callback, SpWalkErrorFn on_error, void *user_data);
+
+/* Walk foreach macro - iterates directory tree with caller-provided buffer.
+ * cap: char array for pending dirs (use SP_WALK_ENTRIES_CAP_64/256/1024). Overflow skips subtrees.
+ * iter_var: SpWalkIter* to access dirpath, dirnames, filenames, dirname_count, filename_count
+ *
+ * Example:
+ *   SpPath dir = sp_path("src");
+ *   char cap[SP_WALK_ENTRIES_CAP_256];
+ *   SP_WALK_FOREACH(&dir, true, cap, it) {
+ *       printf("%s: %zu dirs, %zu files\n", sp_str(&it->dirpath), it->dirname_count, it->filename_count);
+ *   }
+ */
+#define SP_WALK_FOREACH(dir, top_down, cap, iter_var) \
+    for (struct { SpWalkIter it; int done; } sp_wctx_ = {{{0}}, 0}; \
+         !sp_wctx_.done && sp_walk_begin(&sp_wctx_.it, dir, top_down, false, cap, sizeof(cap), NULL, NULL); \
+         sp_walk_end(&sp_wctx_.it), sp_wctx_.done = 1) \
+    for (SpWalkIter *iter_var = &sp_wctx_.it; sp_walk_next(iter_var); )
 
 /* Glob iterator - iterate over paths matching a pattern
  * sp_glob_begin:  Initialize iterator, returns iterator with depth=0 (or -1 on error)
@@ -341,6 +506,8 @@ struct sp_fluent_ {
     SpStr (*drive)(void);
     SpStr (*root)(void);
     SpStr (*anchor)(void);
+    SpStr (*owner)(void);
+    SpStr (*group)(void);
     const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
@@ -361,6 +528,7 @@ struct sp_fluent_ {
     SpPrivDontUseThisDirectly_ *(*with_stem)(const char *);
     SpPrivDontUseThisDirectly_ *(*with_suffix)(const char *);
     SpPrivDontUseThisDirectly_ *(*absolute)(void);
+    SpPrivDontUseThisDirectly_ *(*expanduser)(void);
     SpPrivDontUseThisDirectly_ *(*relative_to)(const SpPath *);
     SpPrivDontUseThisDirectly_ *(*relative_to_walk_up)(const SpPath *);
 };
@@ -394,6 +562,11 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>  /* For realpath */
+#include <stdio.h>   /* For rename */
+#include <fcntl.h>   /* For O_CREAT, etc. */
+#include <utime.h>   /* For utime() */
+#include <pwd.h>     /* For getpwuid, getpwnam */
+#include <grp.h>     /* For getgrgid */
 #define sp_priv_getcwd getcwd
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
@@ -403,6 +576,7 @@ extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 extern char *realpath(const char *path, char *resolved_path);
 extern int symlink(const char *target, const char *linkpath);
 extern int link(const char *oldpath, const char *newpath);
+extern int chmod(const char *path, mode_t mode);
 #endif
 #endif
 
@@ -1715,8 +1889,30 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_atime = SP_PRIV_CAST(double, st->st_atime);
     r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
     r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
+    /* Nanosecond timestamps - use st_atimespec on BSD, seconds elsewhere.
+     * Note: Linux glibc has st_atim but requires _POSIX_C_SOURCE >= 200809L,
+     * which we can't guarantee. Using seconds-only for portability. */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    /* BSD-style: st_atimespec, st_mtimespec, st_ctimespec */
+    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
+    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
+    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
+#else
+    /* Fallback: seconds-only precision */
+    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
+    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
+    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
+#endif
     r->valid = true;
 }
+#endif
+
+/* Windows FILETIME to Unix timestamp conversion macros */
+#ifdef SP_WINDOWS
+#define SP_FILETIME_TO_UNIX(ft) \
+    (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+#define SP_FILETIME_TO_NS(ft) \
+    ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
 #endif
 
 SpStatResult sp_stat(const SpPath *p) {
@@ -1760,13 +1956,12 @@ SpStatResult sp_stat(const SpPath *p) {
     result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, info.nFileSizeLow);
 
-    /* Times: convert FILETIME to Unix timestamp */
-    #define SP_FILETIME_TO_UNIX(ft) \
-        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
     result.sp_atime = SP_FILETIME_TO_UNIX(info.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(info.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(info.ftCreationTime);
-    #undef SP_FILETIME_TO_UNIX
+    result.sp_atime_ns = SP_FILETIME_TO_NS(info.ftLastAccessTime);
+    result.sp_mtime_ns = SP_FILETIME_TO_NS(info.ftLastWriteTime);
+    result.sp_ctime_ns = SP_FILETIME_TO_NS(info.ftCreationTime);
 
     result.sp_uid = 0;
     result.sp_gid = 0;
@@ -1824,13 +2019,12 @@ SpStatResult sp_lstat(const SpPath *p) {
     result.sp_size = (SP_PRIV_CAST(long long, fd.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, fd.nFileSizeLow);
 
-    /* Times: convert FILETIME to Unix timestamp */
-    #define SP_FILETIME_TO_UNIX(ft) \
-        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
     result.sp_atime = SP_FILETIME_TO_UNIX(fd.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(fd.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(fd.ftCreationTime);
-    #undef SP_FILETIME_TO_UNIX
+    result.sp_atime_ns = SP_FILETIME_TO_NS(fd.ftLastAccessTime);
+    result.sp_mtime_ns = SP_FILETIME_TO_NS(fd.ftLastWriteTime);
+    result.sp_ctime_ns = SP_FILETIME_TO_NS(fd.ftCreationTime);
 
     /* Get inode/dev/nlink via file handle with FILE_FLAG_OPEN_REPARSE_POINT */
     HANDLE fh = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -2147,6 +2341,181 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
 #endif
 }
 
+/* ============ File/Directory Modification Implementation ============ */
+
+bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+    if (mode == 0) mode = 0666;
+
+#ifdef SP_WINDOWS
+    /* Check if file exists first */
+    DWORD attrs = GetFileAttributesA(path_str);
+    bool file_exists = (attrs != INVALID_FILE_ATTRIBUTES);
+
+    if (file_exists) {
+        if (!exist_ok) return false;  /* File exists and exist_ok=false */
+        /* Update timestamps */
+        HANDLE h = CreateFileA(path_str, FILE_WRITE_ATTRIBUTES,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);  /* Full 100-nanosecond precision */
+        SetFileTime(h, NULL, &ft, &ft);
+        CloseHandle(h);
+        return true;
+    }
+    /* File doesn't exist - create it */
+    HANDLE h = CreateFileA(path_str, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    return true;
+#else
+    /* Check if file exists first */
+    struct stat st;
+    bool file_exists = (stat(path_str, &st) == 0);
+
+    if (file_exists) {
+        if (!exist_ok) return false;  /* File exists and exist_ok=false */
+        /* Update timestamps to current time (NULL = now) */
+        return utime(path_str, SP_PRIV_NULL) == 0;
+    }
+    /* File doesn't exist - create it */
+    int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
+    if (fd < 0) return false;
+    close(fd);
+    return true;
+#endif
+}
+
+bool sp_unlink(const SpPath *p, bool missing_ok) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    if (DeleteFileA(path_str)) return true;
+    DWORD err = GetLastError();
+    if (missing_ok && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)) return true;
+    return false;
+#else
+    if (unlink(path_str) == 0) return true;
+    if (missing_ok && errno == ENOENT) return true;
+    return false;
+#endif
+}
+
+bool sp_rmdir(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    return RemoveDirectoryA(path_str) != 0;
+#else
+    return rmdir(path_str) == 0;
+#endif
+}
+
+SpPath sp_rename(const SpPath *p, const SpPath *target) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+    SpPath result = *target;
+
+    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+
+    const char *src_str = sp_str(p);
+    const char *dst_str = sp_str(target);
+
+#ifdef SP_WINDOWS
+    /* MoveFileExA without MOVEFILE_REPLACE_EXISTING won't overwrite */
+    if (!MoveFileExA(src_str, dst_str, 0)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#else
+    /* POSIX rename does NOT replace, it fails if target exists */
+    struct stat st;
+    if (stat(dst_str, &st) == 0) {
+        /* Target exists - check if it's the same file (same inode) */
+        struct stat src_st;
+        if (stat(src_str, &src_st) == 0 && src_st.st_ino == st.st_ino && src_st.st_dev == st.st_dev) {
+            /* Same file, rename is a no-op */
+            return result;
+        }
+        /* Target exists and is different - fail like Python does for rename() vs replace() */
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+    if (rename(src_str, dst_str) != 0) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#endif
+    return result;
+}
+
+SpPath sp_replace(const SpPath *p, const SpPath *target) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+    SpPath result = *target;
+
+    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+
+    const char *src_str = sp_str(p);
+    const char *dst_str = sp_str(target);
+
+#ifdef SP_WINDOWS
+    /* MOVEFILE_REPLACE_EXISTING allows atomic replace */
+    if (!MoveFileExA(src_str, dst_str, MOVEFILE_REPLACE_EXISTING)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#else
+    /* POSIX rename is atomic and replaces target */
+    if (rename(src_str, dst_str) != 0) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#endif
+    return result;
+}
+
+bool sp_chmod(const SpPath *p, unsigned int mode) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* Windows only supports setting the read-only attribute */
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+
+    /* If mode doesn't have write permission, set read-only */
+    DWORD new_attrs = attrs;
+    if ((mode & 0222) == 0) {
+        new_attrs |= FILE_ATTRIBUTE_READONLY;
+    } else {
+        new_attrs &= ~FILE_ATTRIBUTE_READONLY;
+    }
+    if (new_attrs == attrs) return true;  /* No change needed */
+    return SetFileAttributesA(path_str, new_attrs) != 0;
+#else
+    return chmod(path_str, SP_PRIV_CAST(mode_t, mode)) == 0;
+#endif
+}
+
 /* ============ Glob Implementation ============ */
 
 /* Include dirent for POSIX or use Windows APIs */
@@ -2365,6 +2734,576 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
     return sp_glob_begin(base, rglob_pattern, cs);
 }
 
+/* ============ Home Directory and User Expansion Implementation ============ */
+
+SpPath sp_home(SpFlavor flavor) {
+    SP_ASSERT_FLAVOR(flavor);
+    SpPath result = SP_PRIV_ZERO;
+    result.flavor = flavor;
+
+#ifdef SP_WINDOWS
+    /* On Windows, use %USERPROFILE% environment variable */
+    char *userprofile = getenv("USERPROFILE");
+    if (userprofile) {
+        size_t len = strlen(userprofile);
+        if (len < SP_PATH_MAX) {
+            memcpy(result.buf, userprofile, len);
+            result.len = len;
+            result.buf[result.len] = '\0';
+            sp_priv_normalize(result.buf, &result.len, flavor);
+            return result;
+        }
+    }
+#else
+    /* On POSIX, try HOME first, then getpwuid */
+    char *home = getenv("HOME");
+    if (home && *home) {
+        size_t len = strlen(home);
+        if (len < SP_PATH_MAX) {
+            memcpy(result.buf, home, len);
+            result.len = len;
+            result.buf[result.len] = '\0';
+            sp_priv_normalize(result.buf, &result.len, flavor);
+            return result;
+        }
+    }
+    /* Fall back to passwd entry */
+    struct passwd *pw = getpwuid(getuid());
+    if (pw) {
+        const char *dir = pw->pw_dir;
+        if (dir) {
+            size_t len = strlen(dir);
+            if (len < SP_PATH_MAX) {
+                memcpy(result.buf, dir, len);
+                result.len = len;
+                result.buf[result.len] = '\0';
+                sp_priv_normalize(result.buf, &result.len, flavor);
+                return result;
+            }
+        }
+    }
+#endif
+    /* Return empty path on failure */
+    result.buf[0] = SP_ERR_OTHER;
+    return result;
+}
+
+SpPath sp_expanduser(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpPath result = SP_PRIV_ZERO;
+    result.flavor = p->flavor;
+
+    /* If path doesn't start with ~, return copy */
+    if (p->len == 0 || p->buf[0] != '~') {
+        return sp_path_copy(p);
+    }
+
+    /* Check for ~ alone or ~/... */
+    bool is_current_user = (p->len == 1) ||
+                          (p->len > 1 && sp_priv_is_sep(p->buf[1], p->flavor));
+
+    if (is_current_user) {
+        /* Expand ~ to current user's home */
+        SpPath home = sp_home(p->flavor);
+        if (sp_path_is_error(&home)) {
+            result.buf[0] = SP_ERR_OTHER;
+            return result;
+        }
+        if (p->len == 1) {
+            return home;
+        }
+        /* Append the rest of the path after ~/ (skip both ~ and separator) */
+        const char *rest = p->buf + 2;
+        size_t rest_len = p->len - 2;
+
+        /* On Windows, if rest looks like a drive letter (e.g., "a:b" from "~/a:b"),
+           prefix with "./" to prevent it from being interpreted as an absolute path.
+           E.g., ~/a:b should become C:/Users/foo/a:b, not just a:b */
+        if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
+            char protected_path[SP_PATH_MAX];
+            protected_path[0] = '.';
+            protected_path[1] = '/';
+            size_t copy_len = rest_len < SP_PATH_MAX - 3 ? rest_len : SP_PATH_MAX - 3;
+            memcpy(protected_path + 2, rest, copy_len);
+            protected_path[2 + copy_len] = '\0';
+            return sp_join_one(&home, protected_path);
+        }
+
+        return sp_join_sv(&home, SP_PRIV_STR(rest, rest_len));
+    }
+
+#ifndef SP_WINDOWS
+    /* On POSIX, handle ~username */
+    size_t end = 1;
+    while (end < p->len && !sp_priv_is_sep(p->buf[end], p->flavor)) end++;
+    char username[256];
+    size_t ulen = end - 1;
+    if (ulen >= sizeof(username)) {
+        return sp_path_copy(p);  /* Username too long, return unchanged */
+    }
+    memcpy(username, p->buf + 1, ulen);
+    username[ulen] = '\0';
+
+    struct passwd *pw = getpwnam(username);
+    if (!pw) {
+        return sp_path_copy(p);  /* User not found, return unchanged */
+    }
+    const char *pw_dir = pw->pw_dir;
+    if (!pw_dir) {
+        return sp_path_copy(p);  /* No home dir, return unchanged */
+    }
+    size_t home_len = strlen(pw_dir);
+    if (home_len >= SP_PATH_MAX) {
+        return sp_path_copy(p);
+    }
+    memcpy(result.buf, pw_dir, home_len);
+    result.len = home_len;
+
+    /* Append the rest of the path */
+    if (end < p->len) {
+        if (result.len > 0 && !sp_priv_is_sep(result.buf[result.len - 1], p->flavor)) {
+            sp_priv_append_sep(&result);
+        }
+        sp_priv_append_cstr(&result, p->buf + end, p->len - end);
+    }
+    result.buf[result.len] = '\0';
+    sp_priv_normalize(result.buf, &result.len, result.flavor);
+    return result;
+#else
+    /* On Windows, ~username is not commonly supported, return unchanged */
+    return sp_path_copy(p);
+#endif
+}
+
+/* ============ User/Group Info Implementation ============ */
+
+SpStr sp_owner(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+#ifdef SP_WINDOWS
+    /* owner() is not implemented on Windows - Python bindings raise NotImplementedError */
+    (void)p;
+    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+#else
+    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    SpStatResult st = sp_stat(p);
+    if (!st.valid) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+
+    struct passwd *pw = getpwuid(st.sp_uid);
+    if (!pw) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    const char *name = pw->pw_name;
+    if (!name) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    return SP_PRIV_STR(name, strlen(name));
+#endif
+}
+
+SpStr sp_group(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+#ifdef SP_WINDOWS
+    /* group() is not implemented on Windows - Python bindings raise NotImplementedError */
+    (void)p;
+    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+#else
+    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    SpStatResult st = sp_stat(p);
+    if (!st.valid) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+
+    struct group *gr = getgrgid(st.sp_gid);
+    if (!gr) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    const char *name = gr->gr_name;
+    if (!name) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    return SP_PRIV_STR(name, strlen(name));
+#endif
+}
+
+/* ============ Directory Iteration Implementation ============ */
+
+SpIterdirIter sp_iterdir_begin(const SpPath *p) {
+    SpIterdirIter it;
+    memset(&it, 0, sizeof(it));
+    it.done = -1;  /* Default to error */
+
+    if (!p) return it;
+    SP_ASSERT_PATH_INVARIANT(p);
+
+    if (sp_priv_has_embedded_null(p)) return it;
+    it.dir = sp_path_copy(p);
+
+#ifdef SP_WINDOWS
+    /* Build search pattern: dir\* */
+    char search[SP_PATH_MAX + 3];
+    const char *dir_str = sp_str(&it.dir);
+    size_t len = it.dir.len;
+    if (len == 0) {
+        search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0';
+    } else {
+        memcpy(search, dir_str, len);
+        if (!sp_priv_is_sep(search[len - 1], it.dir.flavor)) search[len++] = '\\';
+        search[len++] = '*'; search[len] = '\0';
+    }
+    WIN32_FIND_DATAA *fd = (WIN32_FIND_DATAA *)it.priv_.find_data;
+    it.priv_.handle = FindFirstFileA(search, fd);
+    if (it.priv_.handle == INVALID_HANDLE_VALUE) {
+        it.priv_.handle = NULL;
+        return it;
+    }
+    it.priv_.first = true;
+    it.done = 0;
+#else
+    const char *dir_str = sp_str(&it.dir);
+    it.priv_.handle = opendir(dir_str);
+    if (!it.priv_.handle) return it;
+    it.done = 0;
+#endif
+    return it;
+}
+
+bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
+    if (!it || it->done != 0 || !it->priv_.handle) return false;
+
+#ifdef SP_WINDOWS
+    WIN32_FIND_DATAA *fd = (WIN32_FIND_DATAA *)it->priv_.find_data;
+    while (true) {
+        const char *name;
+        if (it->priv_.first) {
+            it->priv_.first = false;
+            name = fd->cFileName;
+        } else {
+            if (!FindNextFileA(it->priv_.handle, fd)) {
+                it->done = 1;
+                return false;
+            }
+            name = fd->cFileName;
+        }
+        /* Skip . and .. */
+        if (name[0] == '.') {
+            if (name[1] == '\0') continue;
+            if (name[1] == '.' && name[2] == '\0') continue;
+        }
+        *out = sp_join_one(&it->dir, name);
+        return true;
+    }
+#else
+    while (true) {
+        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, it->priv_.handle));
+        if (!de) {
+            it->done = 1;
+            return false;
+        }
+        const char *name = de->d_name;
+        /* Skip . and .. */
+        if (name[0] == '.') {
+            if (name[1] == '\0') continue;
+            if (name[1] == '.' && name[2] == '\0') continue;
+        }
+        *out = sp_join_one(&it->dir, name);
+        return true;
+    }
+#endif
+}
+
+void sp_iterdir_end(SpIterdirIter *it) {
+    if (!it || !it->priv_.handle) return;
+#ifdef SP_WINDOWS
+    FindClose(it->priv_.handle);
+#else
+    closedir(SP_PRIV_CAST(DIR *, it->priv_.handle));
+#endif
+    it->priv_.handle = NULL;
+    it->done = 1;
+}
+
+/* ============ Walk Implementation (recursive, callback-based) ============ */
+
+/* Comparison function for qsort - sort name strings */
+static int sp_priv_walk_name_cmp(const void *a, const void *b) {
+    return strcmp(SP_PRIV_CAST(const char *, a), SP_PRIV_CAST(const char *, b));
+}
+
+/* Helper to copy name into walk name buffer */
+static void sp_priv_walk_copy_name(char dest[SP_WALK_NAME_MAX], const char *src) {
+    size_t len = strlen(src);
+    if (len >= SP_WALK_NAME_MAX) len = SP_WALK_NAME_MAX - 1;
+    memcpy(dest, src, len);
+    dest[len] = '\0';
+}
+
+/* Scan directory and populate entry with dirnames/filenames (names only) */
+static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
+                              char dirnames[][SP_WALK_NAME_MAX], size_t *dirname_count,
+                              char filenames[][SP_WALK_NAME_MAX], size_t *filename_count) {
+    *dirname_count = 0;
+    *filename_count = 0;
+
+#ifdef SP_WINDOWS
+    (void)follow_symlinks;  /* Not used on Windows - FindFirstFile handles reparse points */
+    char search[SP_PATH_MAX + 3];
+    const char *dir_str = sp_str(dir);
+    size_t len = dir->len;
+    if (len == 0) {
+        search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0';
+    } else {
+        memcpy(search, dir_str, len);
+        if (!sp_priv_is_sep(search[len - 1], dir->flavor)) search[len++] = '\\';
+        search[len++] = '*'; search[len] = '\0';
+    }
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(search, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    do {
+        const char *name = fd.cFileName;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+        bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (is_dir) {
+            if (*dirname_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(dirnames[(*dirname_count)++], name);
+        } else {
+            if (*filename_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(filenames[(*filename_count)++], name);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(sp_str(dir));
+    if (!d) return false;
+
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        const char *name = de->d_name;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+        bool is_dir = false;
+
+#ifdef DT_DIR
+        if (de->d_type != DT_UNKNOWN) {
+            if (de->d_type == DT_LNK) {
+                SpPath child = sp_join_one(dir, name);
+                SpStatResult st = follow_symlinks ? sp_stat(&child) : sp_lstat(&child);
+                is_dir = st.valid && S_ISDIR(st.sp_mode);
+            } else {
+                is_dir = (de->d_type == DT_DIR);
+            }
+        } else
+#endif
+        {
+            SpPath child = sp_join_one(dir, name);
+            SpStatResult st = follow_symlinks ? sp_stat(&child) : sp_lstat(&child);
+            is_dir = st.valid && S_ISDIR(st.sp_mode);
+        }
+
+        if (is_dir) {
+            if (*dirname_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(dirnames[(*dirname_count)++], name);
+        } else {
+            if (*filename_count < SP_WALK_MAX_ENTRIES)
+                sp_priv_walk_copy_name(filenames[(*filename_count)++], name);
+        }
+    }
+    closedir(d);
+#endif
+
+    /* Sort for consistent ordering */
+    if (*dirname_count > 1)
+        qsort(dirnames, *dirname_count, SP_WALK_NAME_MAX, sp_priv_walk_name_cmp);
+    if (*filename_count > 1)
+        qsort(filenames, *filename_count, SP_WALK_NAME_MAX, sp_priv_walk_name_cmp);
+
+    return true;
+}
+
+/* Recursive walk implementation */
+static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow_symlinks,
+                                   SpWalkFn callback, SpWalkErrorFn on_error, void *user_data) {
+    /* Stack-allocated arrays for this directory level */
+    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
+    size_t dirname_count, filename_count;
+
+    /* Scan current directory */
+    if (!sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count)) {
+        if (on_error) on_error(dir, errno, user_data);
+        return true;  /* Continue walking other branches */
+    }
+
+    /* Build entry for callback */
+    SpWalkEntry entry;
+    entry.dirpath = *dir;
+    entry.dirnames = dirnames;
+    entry.dirname_count = dirname_count;
+    entry.filenames = filenames;
+    entry.filename_count = filename_count;
+    entry.user_data = user_data;
+
+    if (top_down) {
+        /* Top-down: call callback first, then recurse */
+        if (!callback(&entry)) return false;  /* User requested stop */
+
+        /* Recurse into subdirectories (entry.dirname_count may have been modified for pruning) */
+        for (size_t i = 0; i < entry.dirname_count; i++) {
+            SpPath subdir = sp_join_one(dir, entry.dirnames[i]);
+            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+                return false;
+        }
+    } else {
+        /* Bottom-up: recurse first, then call callback */
+        for (size_t i = 0; i < dirname_count; i++) {
+            SpPath subdir = sp_join_one(dir, dirnames[i]);
+            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+                return false;
+        }
+
+        /* Re-scan to get fresh counts (directory may have changed) */
+        sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count);
+        entry.dirname_count = dirname_count;
+        entry.filename_count = filename_count;
+
+        if (!callback(&entry)) return false;
+    }
+
+    return true;
+}
+
+bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
+             SpWalkFn callback, SpWalkErrorFn on_error, void *user_data) {
+    if (!p || !callback) return false;
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    if (!sp_is_dir(p)) return false;
+
+    return sp_priv_walk_recursive(p, top_down, follow_symlinks, callback, on_error, user_data);
+}
+
+/* ============ BYOS Walk Iterator Implementation ============ */
+
+/* Pending entry format: byte 0 = marker (0=needs scan, 1=ready to yield), bytes 1+ = path */
+#define SP_WALK_MARKER_SCAN 0
+#define SP_WALK_MARKER_YIELD 1
+
+/* Push a path onto the pending stack with marker */
+static bool sp_priv_walk_push_ex(SpWalkIter *it, const SpPath *path, int marker) {
+    if (it->priv_.pending_count >= it->priv_.pending_capacity) return false;
+    char *slot = it->priv_.pending_buf + (it->priv_.pending_count * SP_PATH_MAX);
+    slot[0] = SP_PRIV_CAST(char, marker);
+    size_t len = path->len;
+    if (len >= SP_PATH_MAX - 1) len = SP_PATH_MAX - 2;
+    memcpy(slot + 1, path->buf, len);
+    slot[len + 1] = '\0';
+    it->priv_.pending_count++;
+    return true;
+}
+
+/* Push a path for scanning (default behavior) */
+static bool sp_priv_walk_push(SpWalkIter *it, const SpPath *path) {
+    return sp_priv_walk_push_ex(it, path, SP_WALK_MARKER_SCAN);
+}
+
+/* Pop a path from the pending stack, returns marker via out_marker */
+static bool sp_priv_walk_pop_ex(SpWalkIter *it, SpPath *out, int *out_marker) {
+    if (it->priv_.pending_count == 0) return false;
+    it->priv_.pending_count--;
+    char *slot = it->priv_.pending_buf + (it->priv_.pending_count * SP_PATH_MAX);
+    *out_marker = SP_PRIV_CAST(unsigned char, slot[0]);
+    *out = sp_path_f(slot + 1, it->priv_.flavor);
+    return true;
+}
+
+bool sp_walk_begin(SpWalkIter *it, const SpPath *p, bool top_down, bool follow_symlinks,
+                   void *pending_buf, size_t pending_buf_size,
+                   SpWalkErrorFn on_error, void *user_data) {
+    /* Fast-fail validation */
+    if (!it) return false;
+    memset(it, 0, sizeof(*it));
+    it->priv_.state = -1;  /* Mark as done initially */
+
+    if (!p) return false;
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    if (!sp_is_dir(p)) return false;
+    if (!pending_buf) return false;
+    if (pending_buf_size < SP_PATH_MAX) return false;
+
+    /* Initialize iterator state */
+    it->priv_.top_down = top_down;
+    it->priv_.follow_symlinks = follow_symlinks;
+    it->priv_.on_error = on_error;
+    it->priv_.user_data = user_data;
+    it->priv_.pending_buf = SP_PRIV_CAST(char *, pending_buf);
+    it->priv_.pending_capacity = pending_buf_size / SP_PATH_MAX;
+    it->priv_.pending_count = 0;
+    it->priv_.state = 0;  /* need_scan */
+    it->priv_.subdir_index = 0;
+    it->priv_.flavor = p->flavor;
+
+    /* Push initial directory onto pending stack */
+    if (!sp_priv_walk_push(it, p)) {
+        it->priv_.state = -1;
+        return false;
+    }
+
+    return true;
+}
+
+bool sp_walk_next(SpWalkIter *it) {
+    if (!it || it->priv_.state == -1) return false;
+
+    /* State machine:
+     * 0 = processing: pop from pending and handle based on marker
+     * 1 = yielded_topdown: user saw it, now push subdirs and go to next
+     */
+    while (true) {
+        if (it->priv_.state == 0) {
+            int marker;
+            if (!sp_priv_walk_pop_ex(it, &it->dirpath, &marker)) {
+                it->priv_.state = -1;
+                return false;  /* Done */
+            }
+
+            if (marker == SP_WALK_MARKER_YIELD) {
+                /* Bottom-up: this directory's subdirs are done, yield it now */
+                /* Re-scan to get current state (matches Python behavior) */
+                sp_priv_walk_scan(&it->dirpath, it->priv_.follow_symlinks,
+                                  it->dirnames, &it->dirname_count,
+                                  it->filenames, &it->filename_count);
+                return true;
+            }
+
+            /* marker == SP_WALK_MARKER_SCAN: scan this directory */
+            if (!sp_priv_walk_scan(&it->dirpath, it->priv_.follow_symlinks,
+                                   it->dirnames, &it->dirname_count,
+                                   it->filenames, &it->filename_count)) {
+                if (it->priv_.on_error)
+                    it->priv_.on_error(&it->dirpath, errno, it->priv_.user_data);
+                continue;  /* Skip unreadable directories */
+            }
+
+            if (it->priv_.top_down) {
+                it->priv_.state = 1;  /* Yielded, waiting for subdirs */
+                return true;  /* Yield to user */
+            } else {
+                /* Bottom-up: push self for later yield, then push subdirs for scan */
+                sp_priv_walk_push_ex(it, &it->dirpath, SP_WALK_MARKER_YIELD);
+                for (size_t i = it->dirname_count; i > 0; i--) {
+                    SpPath subdir = sp_join_one(&it->dirpath, it->dirnames[i - 1]);
+                    sp_priv_walk_push_ex(it, &subdir, SP_WALK_MARKER_SCAN);
+                }
+                /* Continue to process next (which will be first subdir or self-yield) */
+            }
+        } else if (it->priv_.state == 1) {
+            /* Top-down: push remaining subdirs in reverse order (user may have modified dirname_count) */
+            for (size_t i = it->dirname_count; i > 0; i--) {
+                SpPath subdir = sp_join_one(&it->dirpath, it->dirnames[i - 1]);
+                sp_priv_walk_push(it, &subdir);
+            }
+            it->priv_.state = 0;  /* Go process next */
+        }
+    }
+}
+
+void sp_walk_end(SpWalkIter *it) {
+    if (!it) return;
+    it->priv_.state = -1;
+    it->priv_.pending_count = 0;
+}
+
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
 
@@ -2400,8 +3339,8 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
 #define SP_FLUENT_TERM_STR(X)                                                                                          \
     X(name, SpStr, sp_name)                                                                                            \
     X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
-        X(anchor, SpStr, sp_anchor)
-#define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute)
+        X(anchor, SpStr, sp_anchor) X(owner, SpStr, sp_owner) X(group, SpStr, sp_group)
+#define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser)
 #define SP_FLUENT_CHAIN_STR(X)                                                                                         \
     X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
 #define SP_FLUENT_CHAIN_PATH(X)                                                                                        \
@@ -2443,6 +3382,8 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_drive_,
     sp_priv_f_root_,
     sp_priv_f_anchor_,
+    sp_priv_f_owner_,
+    sp_priv_f_group_,
     sp_priv_f_str_,
     sp_priv_f_is_absolute_,
     sp_priv_f_is_relative_to_,
@@ -2462,6 +3403,7 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_with_stem_,
     sp_priv_f_with_suffix_,
     sp_priv_f_absolute_,
+    sp_priv_f_expanduser_,
     sp_priv_f_relative_to_,
     sp_priv_f_relative_to_walk_up_
 };

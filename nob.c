@@ -2,10 +2,20 @@
  * Usage: cc -o nob nob.c && ./nob
  *
  * Builds are parallelized across available CPU cores.
+ *
+ * For quiet mode (no command echo):
+ *   cc -DSNAKEPATH_QUIET -o nob nob.c && ./nob
  */
 
+#ifdef SNAKEPATH_QUIET
+#define NOB_NO_ECHO
+#endif
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+
+/* Verbose mode - set VERBOSE=0 to suppress INFO logs */
+static bool verbose = true;
+#define LOG_INFO(...) do { if (verbose) nob_log(NOB_INFO, __VA_ARGS__); } while(0)
 
 #define BASE_WARNINGS \
     "-Wall", "-Wextra", "-Wpedantic", "-Werror", \
@@ -266,7 +276,7 @@ static bool run_python_tests(void) {
 
 static bool clean_artifacts(void) {
     bool all_ok = true;
-    nob_log(NOB_INFO, "Cleaning build artifacts...");
+    LOG_INFO( "Cleaning build artifacts...");
     for (size_t i = 0; all_artifacts[i] != NULL; i++) {
         if (nob_file_exists(all_artifacts[i])) {
             if (!nob_delete_file(all_artifacts[i])) {
@@ -280,6 +290,12 @@ static bool clean_artifacts(void) {
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
+    /* Check VERBOSE env var - default true, set to 0 to suppress INFO logs */
+    const char *verbose_env = getenv("VERBOSE");
+    if (verbose_env && (strcmp(verbose_env, "0") == 0 || strcmp(verbose_env, "false") == 0)) {
+        verbose = false;
+    }
+
     const char *program = nob_shift(argv, argc);
     (void)program;
 
@@ -287,7 +303,7 @@ int main(int argc, char **argv) {
         const char *subcmd = nob_shift(argv, argc);
         if (strcmp(subcmd, "clean") == 0) {
             if (clean_artifacts()) {
-                nob_log(NOB_INFO, "Clean complete.");
+                LOG_INFO( "Clean complete.");
                 return 0;
             } else {
                 nob_log(NOB_ERROR, "Clean failed.");
@@ -295,21 +311,21 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(subcmd, "python") == 0) {
             /* Build and test Python bindings only */
-            nob_log(NOB_INFO, "=== Building Python bindings ===");
+            LOG_INFO( "=== Building Python bindings ===");
             if (!build_python_lib(COMPILER_CLANG, NULL)) {
                 nob_log(NOB_ERROR, "Failed to build Python library");
                 return 1;
             }
-            nob_log(NOB_INFO, "=== Running Python tests ===");
+            LOG_INFO( "=== Running Python tests ===");
             if (!run_python_tests()) {
                 nob_log(NOB_ERROR, "Python tests failed");
                 return 1;
             }
-            nob_log(NOB_INFO, "Python bindings built and tested successfully!");
+            LOG_INFO( "Python bindings built and tested successfully!");
             return 0;
         } else {
             nob_log(NOB_ERROR, "Unknown subcommand: %s", subcmd);
-            nob_log(NOB_INFO, "Usage: ./nob [clean|python]");
+            LOG_INFO( "Usage: ./nob [clean|python]");
             return 1;
         }
     }
@@ -317,7 +333,7 @@ int main(int argc, char **argv) {
     bool all_ok = true;
     Nob_Procs procs = {0};
 
-    nob_log(NOB_INFO, "Building with %d parallel jobs...", nob_nprocs());
+    LOG_INFO( "Building with %d parallel jobs...", nob_nprocs());
 
 #ifdef _WIN32
     BuildConfig test_configs[] = {
@@ -361,11 +377,11 @@ int main(int argc, char **argv) {
     if (skip_gcc) {
         test_configs = test_configs_clang_only;
         test_count = sizeof(test_configs_clang_only) / sizeof(test_configs_clang_only[0]);
-        nob_log(NOB_INFO, "SNAKEPATH_SKIP_GCC set - using clang only");
+        LOG_INFO( "SNAKEPATH_SKIP_GCC set - using clang only");
     } else if (use_sanitizers) {
         test_configs = test_configs_full;
         test_count = sizeof(test_configs_full) / sizeof(test_configs_full[0]);
-        nob_log(NOB_INFO, "SNAKEPATH_SANITIZE set - including sanitizer builds");
+        LOG_INFO( "SNAKEPATH_SANITIZE set - including sanitizer builds");
     } else {
         test_configs = test_configs_no_san;
         test_count = sizeof(test_configs_no_san) / sizeof(test_configs_no_san[0]);
@@ -392,23 +408,23 @@ int main(int argc, char **argv) {
 #endif
 
     /* Phase 1: Build everything in parallel */
-    nob_log(NOB_INFO, "=== Building all targets ===");
+    LOG_INFO( "=== Building all targets ===");
 
     for (size_t i = 0; i < test_count; i++) {
-        nob_log(NOB_INFO, "  Starting build: %s", test_configs[i].name);
+        LOG_INFO( "  Starting build: %s", test_configs[i].name);
         build_source_async(test_configs[i], "tests/test.c", NULL, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
-        nob_log(NOB_INFO, "  Starting build: %s", fluent_configs[i].name);
+        LOG_INFO( "  Starting build: %s", fluent_configs[i].name);
         build_source_async(fluent_configs[i], "tests/test_fluent_api.c", NULL, &procs);
     }
 
-    nob_log(NOB_INFO, "  Starting build: %s", demo_config.name);
+    LOG_INFO( "  Starting build: %s", demo_config.name);
     build_source_async(demo_config, "demo.c", NULL, &procs);
 
     /* Build Python shared library */
-    nob_log(NOB_INFO, "  Starting build: Python bindings");
+    LOG_INFO( "  Starting build: Python bindings");
 #ifdef _WIN32
     build_python_lib(COMPILER_MSVC, &procs);
 #else
@@ -425,15 +441,15 @@ int main(int argc, char **argv) {
     if (!all_ok) goto end;
 
     /* Phase 2: Run all tests in parallel */
-    nob_log(NOB_INFO, "=== Running all tests ===");
+    LOG_INFO( "=== Running all tests ===");
 
     for (size_t i = 0; i < test_count; i++) {
-        nob_log(NOB_INFO, "  Starting test: %s", test_configs[i].name);
+        LOG_INFO( "  Starting test: %s", test_configs[i].name);
         run_test_async(test_configs[i].output, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
-        nob_log(NOB_INFO, "  Starting test: %s", fluent_configs[i].name);
+        LOG_INFO( "  Starting test: %s", fluent_configs[i].name);
         run_test_async(fluent_configs[i].output, &procs);
     }
 
@@ -444,7 +460,7 @@ int main(int argc, char **argv) {
     procs.count = 0;
 
     /* Phase 3: Python tests */
-    nob_log(NOB_INFO, "=== Running Python tests ===");
+    LOG_INFO( "=== Running Python tests ===");
     if (!run_python_tests()) {
         nob_log(NOB_ERROR, "Python tests failed");
         all_ok = false;
@@ -453,7 +469,7 @@ int main(int argc, char **argv) {
 #ifndef _WIN32
     /* Phase 4: Valgrind (must be sequential, slow) */
     if (all_ok) {
-        nob_log(NOB_INFO, "=== Running valgrind ===");
+        LOG_INFO( "=== Running valgrind ===");
         if (!run_valgrind("./tests/test_gcc")) {
             nob_log(NOB_ERROR, "Valgrind check failed");
             all_ok = false;
@@ -462,7 +478,7 @@ int main(int argc, char **argv) {
 #endif
 
     /* Phase 5: Run demo to show it works */
-    nob_log(NOB_INFO, "=== Running demo ===");
+    LOG_INFO( "=== Running demo ===");
     if (!run_test_async(demo_output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
         all_ok = false;
@@ -472,7 +488,7 @@ end:
     nob_da_free(procs);
 
     if (all_ok) {
-        nob_log(NOB_INFO, "All builds and tests passed!");
+        LOG_INFO( "All builds and tests passed!");
         return 0;
     } else {
         nob_log(NOB_ERROR, "Some tests failed!");
