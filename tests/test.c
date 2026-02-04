@@ -629,13 +629,14 @@ int main(void) {
     /* owner/group tests */
     printf("\nowner/group Tests:\n");
 
-    /* Test owner - should return non-empty string for existing file */
+#ifndef SP_WINDOWS
+    /* Test owner - should return non-empty string for existing file (POSIX only) */
     SpPath owner_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
     SpStr owner_str = sp_owner(&owner_file);
     ASSERT(owner_str.len > 0);
     ASSERT(owner_str.data != NULL);
 
-    /* Test group - should return non-empty string for existing file */
+    /* Test group - should return non-empty string for existing file (POSIX only) */
     SpStr group_str = sp_group(&owner_file);
     ASSERT(group_str.len > 0);
     ASSERT(group_str.data != NULL);
@@ -644,6 +645,17 @@ int main(void) {
     SpPath owner_nonexist = sp_path_f("/nonexistent/file", P);
     SpStr owner_none = sp_owner(&owner_nonexist);
     ASSERT(owner_none.len == 0);
+#else
+    /* On Windows, owner/group are not implemented - should return empty */
+    SpPath owner_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
+    SpStr owner_str = sp_owner(&owner_file);
+    ASSERT(owner_str.len == 0);
+    ASSERT(owner_str.data == NULL);
+
+    SpStr group_str = sp_group(&owner_file);
+    ASSERT(group_str.len == 0);
+    ASSERT(group_str.data == NULL);
+#endif
 
     printf("  owner/group tests OK\n");
 
