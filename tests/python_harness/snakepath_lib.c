@@ -234,17 +234,33 @@ SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
     *out = sp_expanduser(p);
 }
 
-/* User/group info */
-SP_EXPORT void sp_owner_wrap(const SpPath *p, const char **data, size_t *len) {
+/* User/group info - returns: -1 = not implemented, 0 = success, 1 = error/not found */
+SP_EXPORT int sp_owner_wrap(const SpPath *p, const char **data, size_t *len) {
+#ifdef SP_WINDOWS
+    (void)p;
+    *data = NULL;
+    *len = 0;
+    return -1;  /* Not implemented on Windows */
+#else
     SpStr s = sp_owner(p);
     *data = s.data;
     *len = s.len;
+    return s.data ? 0 : 1;
+#endif
 }
 
-SP_EXPORT void sp_group_wrap(const SpPath *p, const char **data, size_t *len) {
+SP_EXPORT int sp_group_wrap(const SpPath *p, const char **data, size_t *len) {
+#ifdef SP_WINDOWS
+    (void)p;
+    *data = NULL;
+    *len = 0;
+    return -1;  /* Not implemented on Windows */
+#else
     SpStr s = sp_group(p);
     *data = s.data;
     *len = s.len;
+    return s.data ? 0 : 1;
+#endif
 }
 
 /* iterdir iterator */

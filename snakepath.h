@@ -495,8 +495,6 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #ifdef SP_WINDOWS
 #include <direct.h>
 #include <windows.h>
-#include <aclapi.h>   /* For GetNamedSecurityInfoA, LookupAccountSidA */
-#pragma comment(lib, "advapi32.lib")
 #define sp_priv_getcwd _getcwd
 #else
 #include <sys/types.h>
@@ -1849,6 +1847,14 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
 }
 #endif
 
+/* Windows FILETIME to Unix timestamp conversion macros */
+#ifdef SP_WINDOWS
+#define SP_FILETIME_TO_UNIX(ft) \
+    (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+#define SP_FILETIME_TO_NS(ft) \
+    ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
+#endif
+
 SpStatResult sp_stat(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpStatResult result = SP_PRIV_ZERO;
@@ -1890,19 +1896,12 @@ SpStatResult sp_stat(const SpPath *p) {
     result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, info.nFileSizeLow);
 
-    /* Times: convert FILETIME to Unix timestamp */
-    #define SP_FILETIME_TO_UNIX(ft) \
-        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
-    #define SP_FILETIME_TO_NS(ft) \
-        ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
     result.sp_atime = SP_FILETIME_TO_UNIX(info.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(info.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(info.ftCreationTime);
     result.sp_atime_ns = SP_FILETIME_TO_NS(info.ftLastAccessTime);
     result.sp_mtime_ns = SP_FILETIME_TO_NS(info.ftLastWriteTime);
     result.sp_ctime_ns = SP_FILETIME_TO_NS(info.ftCreationTime);
-    #undef SP_FILETIME_TO_UNIX
-    #undef SP_FILETIME_TO_NS
 
     result.sp_uid = 0;
     result.sp_gid = 0;
@@ -1960,19 +1959,12 @@ SpStatResult sp_lstat(const SpPath *p) {
     result.sp_size = (SP_PRIV_CAST(long long, fd.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, fd.nFileSizeLow);
 
-    /* Times: convert FILETIME to Unix timestamp */
-    #define SP_FILETIME_TO_UNIX(ft) \
-        (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
-    #define SP_FILETIME_TO_NS(ft) \
-        ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
     result.sp_atime = SP_FILETIME_TO_UNIX(fd.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(fd.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(fd.ftCreationTime);
     result.sp_atime_ns = SP_FILETIME_TO_NS(fd.ftLastAccessTime);
     result.sp_mtime_ns = SP_FILETIME_TO_NS(fd.ftLastWriteTime);
     result.sp_ctime_ns = SP_FILETIME_TO_NS(fd.ftCreationTime);
-    #undef SP_FILETIME_TO_UNIX
-    #undef SP_FILETIME_TO_NS
 
     /* Get inode/dev/nlink via file handle with FILE_FLAG_OPEN_REPARSE_POINT */
     HANDLE fh = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -2828,30 +2820,9 @@ SpPath sp_expanduser(const SpPath *p) {
 SpStr sp_owner(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
-    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    const char *path_str = sp_str(p);
-
-    PSID owner_sid = SP_PRIV_NULL;
-    PSECURITY_DESCRIPTOR sd = SP_PRIV_NULL;
-    DWORD result = GetNamedSecurityInfoA(path_str, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
-                                         &owner_sid, SP_PRIV_NULL, SP_PRIV_NULL, SP_PRIV_NULL, &sd);
-    if (result != ERROR_SUCCESS || !owner_sid) {
-        if (sd) LocalFree(sd);
-        return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    }
-
-    static char name_buf[256];
-    DWORD name_len = sizeof(name_buf);
-    char domain[256];
-    DWORD domain_len = sizeof(domain);
-    SID_NAME_USE use;
-    if (!LookupAccountSidA(SP_PRIV_NULL, owner_sid, name_buf, &name_len, domain, &domain_len, &use)) {
-        LocalFree(sd);
-        return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    }
-
-    LocalFree(sd);
-    return SP_PRIV_STR(name_buf, strlen(name_buf));
+    /* owner() is not implemented on Windows - Python bindings raise NotImplementedError */
+    (void)p;
+    return SP_PRIV_STR(SP_PRIV_NULL, 0);
 #else
     if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     SpStatResult st = sp_stat(p);
@@ -2868,30 +2839,9 @@ SpStr sp_owner(const SpPath *p) {
 SpStr sp_group(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
-    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    const char *path_str = sp_str(p);
-
-    PSID group_sid = SP_PRIV_NULL;
-    PSECURITY_DESCRIPTOR sd = SP_PRIV_NULL;
-    DWORD result = GetNamedSecurityInfoA(path_str, SE_FILE_OBJECT, GROUP_SECURITY_INFORMATION,
-                                         SP_PRIV_NULL, &group_sid, SP_PRIV_NULL, SP_PRIV_NULL, &sd);
-    if (result != ERROR_SUCCESS || !group_sid) {
-        if (sd) LocalFree(sd);
-        return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    }
-
-    static char name_buf[256];
-    DWORD name_len = sizeof(name_buf);
-    char domain[256];
-    DWORD domain_len = sizeof(domain);
-    SID_NAME_USE use;
-    if (!LookupAccountSidA(SP_PRIV_NULL, group_sid, name_buf, &name_len, domain, &domain_len, &use)) {
-        LocalFree(sd);
-        return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    }
-
-    LocalFree(sd);
-    return SP_PRIV_STR(name_buf, strlen(name_buf));
+    /* group() is not implemented on Windows - Python bindings raise NotImplementedError */
+    (void)p;
+    return SP_PRIV_STR(SP_PRIV_NULL, 0);
 #else
     if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     SpStatResult st = sp_stat(p);
@@ -3166,36 +3116,11 @@ SpWalkIter sp_walk_begin_with_errors(const SpPath *p, bool top_down, bool follow
 bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
     if (!it || it->depth < 0) return false;
 
-#ifdef SP_WALK_DEBUG
-    int sp_walk_debug_loop = 0;
-#endif
-
     while (it->depth >= 0) {
-#ifdef SP_WALK_DEBUG
-        sp_walk_debug_loop++;
-        fprintf(stderr, "SP_WALK_DEBUG: loop iter %d, depth=%d, yielded=%d, committed=%d, pending_count=%zu\n",
-                sp_walk_debug_loop, it->depth, it->priv_.yielded[it->depth],
-                it->priv_.committed[it->depth], it->priv_.pending_counts[it->depth]);
-        fflush(stderr);
-        if (sp_walk_debug_loop > 1000) {
-            fprintf(stderr, "SP_WALK_DEBUG: ABORT - infinite loop detected\n");
-            fflush(stderr);
-            return false;
-        }
-#endif
-
         /* If we haven't scanned the current directory yet */
         if (!it->priv_.yielded[it->depth]) {
-#ifdef SP_WALK_DEBUG
-            fprintf(stderr, "SP_WALK_DEBUG: scanning dir '%s'\n", sp_str(&it->priv_.dirs[it->depth]));
-            fflush(stderr);
-#endif
             /* Scan the current directory */
             if (!sp_priv_walk_scan_dir(it)) {
-#ifdef SP_WALK_DEBUG
-                fprintf(stderr, "SP_WALK_DEBUG: scan failed, popping\n");
-                fflush(stderr);
-#endif
                 /* Report error via callback if provided */
                 if (it->on_error) {
                     SpWalkError err;
@@ -3208,12 +3133,6 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
                 continue;
             }
 
-#ifdef SP_WALK_DEBUG
-            fprintf(stderr, "SP_WALK_DEBUG: scan OK, dirname_count=%zu, filename_count=%zu\n",
-                    it->priv_.dirname_count, it->priv_.filename_count);
-            fflush(stderr);
-#endif
-
             it->priv_.yielded[it->depth] = true;
 
             if (it->top_down) {
@@ -3224,10 +3143,6 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
                 out->dirname_count = &it->priv_.dirname_count;
                 out->filenames = it->priv_.filenames;
                 out->filename_count = &it->priv_.filename_count;
-#ifdef SP_WALK_DEBUG
-                fprintf(stderr, "SP_WALK_DEBUG: yielding (top-down) '%s'\n", sp_str(&out->dirpath));
-                fflush(stderr);
-#endif
                 return true;
             }
             /* Bottom-up: commit immediately (no pruning support in bottom-up) */
@@ -3259,10 +3174,6 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             it->priv_.pending_counts[it->depth] = to_copy;
             it->priv_.pending_top += to_copy;
             it->priv_.committed[it->depth] = true;
-#ifdef SP_WALK_DEBUG
-            fprintf(stderr, "SP_WALK_DEBUG: committed pending, count=%zu\n", to_copy);
-            fflush(stderr);
-#endif
         }
 
         /* Try to descend into subdirectories (use pending stack) */
@@ -3271,10 +3182,6 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             it->priv_.pending_counts[it->depth]--;
             it->priv_.pending_top--;
             SpPath subdir = it->priv_.pending_stack[it->priv_.pending_offsets[it->depth] + it->priv_.pending_counts[it->depth]];
-#ifdef SP_WALK_DEBUG
-            fprintf(stderr, "SP_WALK_DEBUG: descending into '%s'\n", sp_str(&subdir));
-            fflush(stderr);
-#endif
             it->depth++;
             it->priv_.dirs[it->depth] = subdir;
             it->priv_.yielded[it->depth] = false;
@@ -3292,26 +3199,14 @@ bool sp_walk_next(SpWalkIter *it, SpWalkEntry *out) {
             out->dirname_count = &it->priv_.dirname_count;
             out->filenames = it->priv_.filenames;
             out->filename_count = &it->priv_.filename_count;
-#ifdef SP_WALK_DEBUG
-            fprintf(stderr, "SP_WALK_DEBUG: yielding (bottom-up) '%s', popping\n", sp_str(&out->dirpath));
-            fflush(stderr);
-#endif
             it->depth--;
             return true;
         }
 
         /* Top-down: we've already yielded, just pop */
-#ifdef SP_WALK_DEBUG
-        fprintf(stderr, "SP_WALK_DEBUG: popping (top-down already yielded)\n");
-        fflush(stderr);
-#endif
         it->depth--;
     }
 
-#ifdef SP_WALK_DEBUG
-    fprintf(stderr, "SP_WALK_DEBUG: walk complete, returning false\n");
-    fflush(stderr);
-#endif
     return false;
 }
 

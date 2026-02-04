@@ -199,8 +199,8 @@ _sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
 _sig('sp_home_wrap', [c_int, _PP])
 _sig('sp_expanduser_wrap', [_PP, _PP])
 # User/group info
-_sig('sp_owner_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
-_sig('sp_group_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
+_sig('sp_owner_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)], c_int)
+_sig('sp_group_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)], c_int)
 # iterdir iterator
 _sizeof_iterdir_iter = _lib.sp_sizeof_iterdir_iter()
 class _SpIterdirIter(Structure):
@@ -893,16 +893,20 @@ class Path(PurePath):
     def owner(self):
         """Return the file owner name."""
         data, length = c_char_p(), c_size_t()
-        _lib.sp_owner_wrap(byref(self._sp), byref(data), byref(length))
-        if not data.value or not length.value:
+        result = _lib.sp_owner_wrap(byref(self._sp), byref(data), byref(length))
+        if result == -1:
+            raise NotImplementedError("Path.owner() is unsupported on this system")
+        if result != 0 or not data.value or not length.value:
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return data.value[:length.value].decode('utf-8')
 
     def group(self):
         """Return the file group name."""
         data, length = c_char_p(), c_size_t()
-        _lib.sp_group_wrap(byref(self._sp), byref(data), byref(length))
-        if not data.value or not length.value:
+        result = _lib.sp_group_wrap(byref(self._sp), byref(data), byref(length))
+        if result == -1:
+            raise NotImplementedError("Path.group() is unsupported on this system")
+        if result != 0 or not data.value or not length.value:
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return data.value[:length.value].decode('utf-8')
 
