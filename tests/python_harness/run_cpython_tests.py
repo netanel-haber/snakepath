@@ -207,13 +207,6 @@ EXPECTED_FAILURES = {
     ],
 
 
-    "has no attribute 'open'": [
-        ("PathSubclassTest", "test_open_common"),
-        ("PathTest", "test_open_common"),
-        ("PosixPathTest", "test_open_common"),
-        ("PosixPathTest", "test_open_mode"),
-        ("WindowsPathTest", "test_open_common"),
-    ],
 
     "has no attribute 'owner'": [
         ("PathSubclassTest", "test_owner"),
@@ -239,44 +232,6 @@ EXPECTED_FAILURES = {
         ("PosixPathTest", "test_write_text_with_newlines"),
         ("WindowsPathTest", "test_read_write_text"),
         ("WindowsPathTest", "test_write_text_with_newlines"),
-    ],
-
-    "has no attribute 'rename'": [
-        ("PathSubclassTest", "test_rename"),
-        ("PathTest", "test_rename"),
-        ("PosixPathTest", "test_rename"),
-        ("WindowsPathTest", "test_rename"),
-    ],
-
-    "has no attribute 'replace'": [
-        ("PathSubclassTest", "test_replace"),
-        ("PathTest", "test_replace"),
-        ("PosixPathTest", "test_replace"),
-        ("WindowsPathTest", "test_replace"),
-    ],
-
-
-    "has no attribute 'touch'": [
-        ("PathSubclassTest", "test_touch_common"),
-        ("PathSubclassTest", "test_touch_nochange"),
-        ("PathTest", "test_touch_common"),
-        ("PathTest", "test_touch_nochange"),
-        ("PosixPathTest", "test_touch_common"),
-        ("PosixPathTest", "test_touch_mode"),
-        ("PosixPathTest", "test_touch_nochange"),
-        ("WindowsPathTest", "test_touch_common"),
-        ("WindowsPathTest", "test_touch_nochange"),
-    ],
-
-    "has no attribute 'unlink'": [
-        ("PathSubclassTest", "test_unlink"),
-        ("PathSubclassTest", "test_unlink_missing_ok"),
-        ("PathTest", "test_unlink"),
-        ("PathTest", "test_unlink_missing_ok"),
-        ("PosixPathTest", "test_unlink"),
-        ("PosixPathTest", "test_unlink_missing_ok"),
-        ("WindowsPathTest", "test_unlink"),
-        ("WindowsPathTest", "test_unlink_missing_ok"),
     ],
 
     "has no attribute 'walk'": [

@@ -9,16 +9,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Platform-specific rmdir and getpid */
+/* Platform-specific rmdir and getpid for test cleanup (not the library's sp_rmdir) */
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
-#define sp_rmdir _rmdir
-#define sp_getpid _getpid
+#define test_rmdir _rmdir
+#define test_getpid _getpid
 #else
 #include <unistd.h>
-#define sp_rmdir rmdir
-#define sp_getpid getpid
+#define test_rmdir rmdir
+#define test_getpid getpid
 #endif
 
 static int tests_run = 0;
@@ -77,9 +77,9 @@ static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), Join
 int main(void) {
     /* Initialize unique test directory names based on PID to avoid race conditions */
 #ifdef __cplusplus
-    long pid = static_cast<long>(sp_getpid());
+    long pid = static_cast<long>(test_getpid());
 #else
-    long pid = (long)sp_getpid();
+    long pid = (long)test_getpid();
 #endif
     snprintf(test_dir_mkdir_temp, sizeof(test_dir_mkdir_temp), "./test_mkdir_temp_%ld", pid);
     snprintf(test_dir_mkdir_nested, sizeof(test_dir_mkdir_nested), "./test_mkdir_nested_%ld", pid);
@@ -358,7 +358,7 @@ int main(void) {
     SpPath mkdir_test = sp_path_f(test_dir_mkdir_temp, SP_FLAVOR_NATIVE);
 
     /* First ensure it doesn't exist (cleanup from previous failed runs) */
-    sp_rmdir(sp_str(&mkdir_test));
+    test_rmdir(sp_str(&mkdir_test));
 
     /* Test basic mkdir */
     int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
@@ -374,7 +374,7 @@ int main(void) {
     ASSERT(mkdir_result == SP_MKDIR_OK);
 
     /* Cleanup */
-    sp_rmdir(sp_str(&mkdir_test));
+    test_rmdir(sp_str(&mkdir_test));
 
     /* Test mkdir with parents=true */
     char nested_path[128], nested_sub[128];
@@ -386,9 +386,9 @@ int main(void) {
     ASSERT(sp_is_dir(&mkdir_nested) == true);
 
     /* Cleanup nested dirs */
-    sp_rmdir(nested_path);
-    sp_rmdir(nested_sub);
-    sp_rmdir(test_dir_mkdir_nested);
+    test_rmdir(nested_path);
+    test_rmdir(nested_sub);
+    test_rmdir(test_dir_mkdir_nested);
 
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
@@ -507,10 +507,94 @@ int main(void) {
     remove(glob_f1);
     remove(glob_f2);
     remove(glob_f3);
-    sp_rmdir(glob_sub_path);
-    sp_rmdir(test_dir_glob);
+    test_rmdir(glob_sub_path);
+    test_rmdir(test_dir_glob);
 
     printf("  glob tests OK\n");
+
+    /* touch/unlink/chmod tests */
+    printf("\ntouch/unlink/chmod Tests:\n");
+
+    /* Create a unique test file path */
+    char touch_file_path[128];
+    snprintf(touch_file_path, sizeof(touch_file_path), "./test_touch_%ld.tmp", pid);
+    SpPath touch_file = sp_path_f(touch_file_path, SP_FLAVOR_NATIVE);
+
+    /* Test touch creates new file */
+    ASSERT(sp_touch(&touch_file, 0644, true) == true);
+    ASSERT(sp_exists(&touch_file) == true);
+    ASSERT(sp_is_file(&touch_file) == true);
+
+    /* Test touch with exist_ok=false on existing file fails */
+    ASSERT(sp_touch(&touch_file, 0644, false) == false);
+
+    /* Test touch with exist_ok=true on existing file succeeds */
+    ASSERT(sp_touch(&touch_file, 0644, true) == true);
+
+    /* Test chmod */
+    ASSERT(sp_chmod(&touch_file, 0444) == true);
+
+    /* Test unlink */
+    ASSERT(sp_unlink(&touch_file, false) == true);
+    ASSERT(sp_exists(&touch_file) == false);
+
+    /* Test unlink with missing_ok=false on nonexistent file fails */
+    ASSERT(sp_unlink(&touch_file, false) == false);
+
+    /* Test unlink with missing_ok=true on nonexistent file succeeds */
+    ASSERT(sp_unlink(&touch_file, true) == true);
+
+    printf("  touch/unlink/chmod tests OK\n");
+
+    /* rename/replace tests */
+    printf("\nrename/replace Tests:\n");
+
+    char rename_src_path[128], rename_dst_path[128];
+    snprintf(rename_src_path, sizeof(rename_src_path), "./test_rename_src_%ld.tmp", pid);
+    snprintf(rename_dst_path, sizeof(rename_dst_path), "./test_rename_dst_%ld.tmp", pid);
+    SpPath rename_src = sp_path_f(rename_src_path, SP_FLAVOR_NATIVE);
+    SpPath rename_dst = sp_path_f(rename_dst_path, SP_FLAVOR_NATIVE);
+
+    /* Create source file */
+    ASSERT(sp_touch(&rename_src, 0644, true) == true);
+
+    /* Test rename */
+    SpPath rename_result = sp_rename(&rename_src, &rename_dst);
+    ASSERT(!sp_path_is_error(&rename_result));
+    ASSERT(sp_exists(&rename_src) == false);
+    ASSERT(sp_exists(&rename_dst) == true);
+
+    /* Test replace (create src again, replace dst) */
+    ASSERT(sp_touch(&rename_src, 0644, true) == true);
+    SpPath replace_result = sp_replace(&rename_src, &rename_dst);
+    ASSERT(!sp_path_is_error(&replace_result));
+    ASSERT(sp_exists(&rename_src) == false);
+    ASSERT(sp_exists(&rename_dst) == true);
+
+    /* Cleanup */
+    sp_unlink(&rename_dst, true);
+
+    printf("  rename/replace tests OK\n");
+
+    /* rmdir tests */
+    printf("\nrmdir Tests:\n");
+
+    char rmdir_path[128];
+    snprintf(rmdir_path, sizeof(rmdir_path), "./test_rmdir_%ld", pid);
+    SpPath rmdir_dir = sp_path_f(rmdir_path, SP_FLAVOR_NATIVE);
+
+    /* Create directory */
+    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false) == SP_MKDIR_OK);
+    ASSERT(sp_is_dir(&rmdir_dir) == true);
+
+    /* Test rmdir on empty directory */
+    ASSERT(sp_rmdir(&rmdir_dir) == true);
+    ASSERT(sp_exists(&rmdir_dir) == false);
+
+    /* Test rmdir on nonexistent directory fails */
+    ASSERT(sp_rmdir(&rmdir_dir) == false);
+
+    printf("  rmdir tests OK\n");
 
     printf("\n%d assertions passed\n", tests_run);
     return 0;

@@ -304,8 +304,15 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.symlink_to()` | `sp_symlink_to()` | - |
 | `.hardlink_to()` | `sp_hardlink_to()` | - |
 | `.samefile()` | `sp_samefile()` | - |
+| `.touch()` | `sp_touch()` | - |
+| `.unlink()` | `sp_unlink()` | - |
+| `.rmdir()` | `sp_rmdir()` | - |
+| `.rename()` | `sp_rename()` | - |
+| `.replace()` | `sp_replace()` | - |
+| `.chmod()` | `sp_chmod()` | - |
+| `.open()` | - | - |
 
-**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `open`, `touch`, `unlink`, `rmdir`, `rename`, `replace`, `owner`, `group`, `chmod`, `expanduser`, `home`
+**Not implemented:** `iterdir`, `walk`, `read_bytes`, `read_text`, `write_bytes`, `write_text`, `owner`, `group`, `expanduser`, `home`
 
 ## Adding New Methods to the Library
 

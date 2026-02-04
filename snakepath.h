@@ -251,6 +251,9 @@ typedef struct {
     double sp_atime;           /* Time of last access */
     double sp_mtime;           /* Time of last modification */
     double sp_ctime;           /* Time of last status change (Unix) / creation (Windows) */
+    long long sp_atime_ns;     /* Time of last access (nanoseconds since epoch) */
+    long long sp_mtime_ns;     /* Time of last modification (nanoseconds since epoch) */
+    long long sp_ctime_ns;     /* Time of last status change (nanoseconds since epoch) */
     bool valid;                /* True if stat succeeded */
 } SpStatResult;
 
@@ -277,6 +280,14 @@ bool sp_samefile(const SpPath *a, const SpPath *b);  /* check if paths refer to 
 #define SP_MKDIR_DEF_MODE 0777         /* Default mode (0 = use this); umask applied by OS */
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);
+
+/* File/directory modification operations */
+bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);  /* create file or update timestamps */
+bool sp_unlink(const SpPath *p, bool missing_ok);  /* delete file */
+bool sp_rmdir(const SpPath *p);  /* delete empty directory */
+SpPath sp_rename(const SpPath *p, const SpPath *target);  /* rename file/directory, returns new path */
+SpPath sp_replace(const SpPath *p, const SpPath *target);  /* replace target with this file, returns new path */
+bool sp_chmod(const SpPath *p, unsigned int mode);  /* change file permissions */
 
 /* Glob iterator - iterate over paths matching a pattern
  * sp_glob_begin:  Initialize iterator, returns iterator with depth=0 (or -1 on error)
@@ -403,6 +414,14 @@ extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 extern char *realpath(const char *path, char *resolved_path);
 extern int symlink(const char *target, const char *linkpath);
 extern int link(const char *oldpath, const char *newpath);
+extern int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags);
+extern int chmod(const char *path, mode_t mode);
+#endif
+#include <fcntl.h>  /* For AT_FDCWD, O_CREAT, etc. */
+#include <time.h>   /* For struct timespec */
+/* UTIME_NOW may not be defined on all systems */
+#ifndef UTIME_NOW
+#define UTIME_NOW ((1l << 30) - 1l)
 #endif
 #endif
 
@@ -1715,6 +1734,20 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_atime = SP_PRIV_CAST(double, st->st_atime);
     r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
     r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
+    /* Nanosecond timestamps - use st_atim etc. if available, else multiply seconds */
+#if defined(__APPLE__)
+    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
+    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
+    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
+#elif defined(st_mtime) || defined(__linux__) || defined(__ANDROID__)
+    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atim.tv_sec) * 1000000000LL + st->st_atim.tv_nsec;
+    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtim.tv_sec) * 1000000000LL + st->st_mtim.tv_nsec;
+    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctim.tv_sec) * 1000000000LL + st->st_ctim.tv_nsec;
+#else
+    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
+    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
+    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
+#endif
     r->valid = true;
 }
 #endif
@@ -1763,10 +1796,16 @@ SpStatResult sp_stat(const SpPath *p) {
     /* Times: convert FILETIME to Unix timestamp */
     #define SP_FILETIME_TO_UNIX(ft) \
         (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+    #define SP_FILETIME_TO_NS(ft) \
+        ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
     result.sp_atime = SP_FILETIME_TO_UNIX(info.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(info.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(info.ftCreationTime);
+    result.sp_atime_ns = SP_FILETIME_TO_NS(info.ftLastAccessTime);
+    result.sp_mtime_ns = SP_FILETIME_TO_NS(info.ftLastWriteTime);
+    result.sp_ctime_ns = SP_FILETIME_TO_NS(info.ftCreationTime);
     #undef SP_FILETIME_TO_UNIX
+    #undef SP_FILETIME_TO_NS
 
     result.sp_uid = 0;
     result.sp_gid = 0;
@@ -1827,10 +1866,16 @@ SpStatResult sp_lstat(const SpPath *p) {
     /* Times: convert FILETIME to Unix timestamp */
     #define SP_FILETIME_TO_UNIX(ft) \
         (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
+    #define SP_FILETIME_TO_NS(ft) \
+        ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
     result.sp_atime = SP_FILETIME_TO_UNIX(fd.ftLastAccessTime);
     result.sp_mtime = SP_FILETIME_TO_UNIX(fd.ftLastWriteTime);
     result.sp_ctime = SP_FILETIME_TO_UNIX(fd.ftCreationTime);
+    result.sp_atime_ns = SP_FILETIME_TO_NS(fd.ftLastAccessTime);
+    result.sp_mtime_ns = SP_FILETIME_TO_NS(fd.ftLastWriteTime);
+    result.sp_ctime_ns = SP_FILETIME_TO_NS(fd.ftCreationTime);
     #undef SP_FILETIME_TO_UNIX
+    #undef SP_FILETIME_TO_NS
 
     /* Get inode/dev/nlink via file handle with FILE_FLAG_OPEN_REPARSE_POINT */
     HANDLE fh = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -2144,6 +2189,188 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
     if (errno == EACCES || errno == EPERM) return SP_MKDIR_ERR_PERMISSION;
     if (errno == ENOTDIR) return SP_MKDIR_ERR_NOT_DIR;
     return SP_MKDIR_ERR_OTHER;
+#endif
+}
+
+/* ============ File/Directory Modification Implementation ============ */
+
+bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+    if (mode == 0) mode = 0666;
+
+#ifdef SP_WINDOWS
+    /* Check if file exists first */
+    DWORD attrs = GetFileAttributesA(path_str);
+    bool file_exists = (attrs != INVALID_FILE_ATTRIBUTES);
+
+    if (file_exists) {
+        if (!exist_ok) return false;  /* File exists and exist_ok=false */
+        /* Update timestamps */
+        HANDLE h = CreateFileA(path_str, FILE_WRITE_ATTRIBUTES,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        SYSTEMTIME st;
+        FILETIME ft;
+        GetSystemTime(&st);
+        SystemTimeToFileTime(&st, &ft);
+        SetFileTime(h, NULL, &ft, &ft);
+        CloseHandle(h);
+        return true;
+    }
+    /* File doesn't exist - create it */
+    HANDLE h = CreateFileA(path_str, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    return true;
+#else
+    /* Check if file exists first */
+    struct stat st;
+    bool file_exists = (stat(path_str, &st) == 0);
+
+    if (file_exists) {
+        if (!exist_ok) return false;  /* File exists and exist_ok=false */
+        /* Update timestamps */
+        struct timespec times[2];
+        times[0].tv_nsec = UTIME_NOW;
+        times[0].tv_sec = 0;
+        times[1].tv_nsec = UTIME_NOW;
+        times[1].tv_sec = 0;
+        return utimensat(AT_FDCWD, path_str, times, 0) == 0;
+    }
+    /* File doesn't exist - create it */
+    int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
+    if (fd < 0) return false;
+    close(fd);
+    return true;
+#endif
+}
+
+bool sp_unlink(const SpPath *p, bool missing_ok) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    if (DeleteFileA(path_str)) return true;
+    DWORD err = GetLastError();
+    if (missing_ok && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)) return true;
+    return false;
+#else
+    if (unlink(path_str) == 0) return true;
+    if (missing_ok && errno == ENOENT) return true;
+    return false;
+#endif
+}
+
+bool sp_rmdir(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    return RemoveDirectoryA(path_str) != 0;
+#else
+    return rmdir(path_str) == 0;
+#endif
+}
+
+SpPath sp_rename(const SpPath *p, const SpPath *target) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+    SpPath result = *target;
+
+    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+
+    const char *src_str = sp_str(p);
+    const char *dst_str = sp_str(target);
+
+#ifdef SP_WINDOWS
+    /* MoveFileExA without MOVEFILE_REPLACE_EXISTING won't overwrite */
+    if (!MoveFileExA(src_str, dst_str, 0)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#else
+    /* POSIX rename does NOT replace, it fails if target exists */
+    struct stat st;
+    if (stat(dst_str, &st) == 0) {
+        /* Target exists - check if it's the same file (same inode) */
+        struct stat src_st;
+        if (stat(src_str, &src_st) == 0 && src_st.st_ino == st.st_ino && src_st.st_dev == st.st_dev) {
+            /* Same file, rename is a no-op */
+            return result;
+        }
+        /* Target exists and is different - fail like Python does for rename() vs replace() */
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+    if (rename(src_str, dst_str) != 0) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#endif
+    return result;
+}
+
+SpPath sp_replace(const SpPath *p, const SpPath *target) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(target);
+    SpPath result = *target;
+
+    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+        return result;
+    }
+
+    const char *src_str = sp_str(p);
+    const char *dst_str = sp_str(target);
+
+#ifdef SP_WINDOWS
+    /* MOVEFILE_REPLACE_EXISTING allows atomic replace */
+    if (!MoveFileExA(src_str, dst_str, MOVEFILE_REPLACE_EXISTING)) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#else
+    /* POSIX rename is atomic and replaces target */
+    if (rename(src_str, dst_str) != 0) {
+        result.len = 0;
+        result.buf[0] = SP_ERR_OTHER;
+    }
+#endif
+    return result;
+}
+
+bool sp_chmod(const SpPath *p, unsigned int mode) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    /* Windows only supports setting the read-only attribute */
+    DWORD attrs = GetFileAttributesA(path_str);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+
+    /* If mode doesn't have write permission, set read-only */
+    DWORD new_attrs = attrs;
+    if ((mode & 0222) == 0) {
+        new_attrs |= FILE_ATTRIBUTE_READONLY;
+    } else {
+        new_attrs &= ~FILE_ATTRIBUTE_READONLY;
+    }
+    if (new_attrs == attrs) return true;  /* No change needed */
+    return SetFileAttributesA(path_str, new_attrs) != 0;
+#else
+    return chmod(path_str, SP_PRIV_CAST(mode_t, mode)) == 0;
 #endif
 }
 

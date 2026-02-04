@@ -204,3 +204,23 @@ SP_EXPORT int sp_glob_depth_wrap(SpGlobIter *it) { return it->depth; }
 SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }
 SP_EXPORT int sp_case_sensitive(void) { return SP_CASE_SENSITIVE; }
 SP_EXPORT int sp_case_insensitive(void) { return SP_CASE_INSENSITIVE; }
+
+/* File/directory modification operations */
+SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) {
+    return sp_touch(p, mode, exist_ok != 0) ? 1 : 0;
+}
+SP_EXPORT int sp_unlink_wrap(const SpPath *p, int missing_ok) {
+    return sp_unlink(p, missing_ok != 0) ? 1 : 0;
+}
+SP_EXPORT int sp_rmdir_wrap(const SpPath *p) {
+    return sp_rmdir(p) ? 1 : 0;
+}
+SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
+    *out = sp_rename(p, target);
+}
+SP_EXPORT void sp_replace_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
+    *out = sp_replace(p, target);
+}
+SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
+    return sp_chmod(p, mode) ? 1 : 0;
+}

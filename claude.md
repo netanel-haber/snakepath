@@ -93,25 +93,12 @@ cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 - Windows console encoding: Turkish İ (U+0130) can't print on cp1252, fixed with UTF-8 wrapper in run_cpython_tests.py
 
 ### Running nob on Termux
-On Termux, `gcc` and `g++` are actually clang symlinks, so GCC-specific warnings fail. Use these env vars:
 
 ```bash
-# Full local build on Termux
-SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
+cc -DSNAKEPATH_QUIET -o nob nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
 ```
 
-**Environment variables for nob:**
-| Variable | Effect | When to use |
-|----------|--------|-------------|
-| `SNAKEPATH_SANITIZE=1` | Enable sanitizers (ASan, UBSan, leak, etc.) | CI only (set in ci.yml) |
-| `SNAKEPATH_SKIP_GCC=1` | Skip GCC/G++ builds, use clang only | Termux (gcc is clang) |
-| `SNAKEPATH_NO_NRVO=1` | Disable `-Wnrvo` clang warning | Termux clang has strict NRVO |
-
-**Why Termux is different:**
-- `gcc --version` returns "clang version X.X.X" - it's a symlink
-- GCC-specific warnings (`-Wformat-overflow=2`, `-Wlogical-op`, etc.) don't exist in clang
-- Some sanitizers (leak, pointer-compare) may not be available on Android
-- `/tmp` is a symlink to `/data/data/com.termux/files/usr/tmp`, causing some resolve() tests to fail
+Termux-specific test failures (e.g., `/tmp` symlink breaking resolve tests) are acceptable locally - CI is authoritative. Never add Termux workarounds to EXPECTED_FAILURES.
 
 ## Technical Details
 
@@ -186,7 +173,7 @@ All are stat-based file type checks:
 - `is_mount` - check if path is a mount point (POSIX)
 - `is_junction` - check if path is a junction (Windows)
 
-### Group 2: Symlink & link operations (6 methods)
+### Group 2: Symlink & link operations (6 methods) ✅ COMPLETE
 - `lstat` - stat without following symlinks
 - `readlink` - read symlink target
 - `resolve` - resolve to canonical absolute path
@@ -194,7 +181,7 @@ All are stat-based file type checks:
 - `hardlink_to` - create hard link
 - `samefile` - check if two paths point to same file
 
-### Group 3: File/directory modification (6 methods)
+### Group 3: File/directory modification (6 methods) ✅ COMPLETE
 - `touch` - create file or update timestamps
 - `unlink` - delete file
 - `rmdir` - delete empty directory

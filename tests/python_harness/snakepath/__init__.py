@@ -92,6 +92,9 @@ class _SpStatResult(Structure):
         ("st_atime", ctypes.c_double),
         ("st_mtime", ctypes.c_double),
         ("st_ctime", ctypes.c_double),
+        ("st_atime_ns", ctypes.c_longlong),
+        ("st_mtime_ns", ctypes.c_longlong),
+        ("st_ctime_ns", ctypes.c_longlong),
         ("valid", ctypes.c_bool),
     ]
 
@@ -185,6 +188,13 @@ _sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
 _sig('sp_glob_next_wrap', [_PGlobIter, _PP], c_int)
 _sig('sp_glob_end_wrap', [_PGlobIter])
 _sig('sp_glob_depth_wrap', [_PGlobIter], c_int)
+# File/directory modification operations
+_sig('sp_touch_wrap', [_PP, ctypes.c_uint, c_int], c_int)
+_sig('sp_unlink_wrap', [_PP, c_int], c_int)
+_sig('sp_rmdir_wrap', [_PP], c_int)
+_sig('sp_rename_wrap', [_PP, _PP, _PP])
+_sig('sp_replace_wrap', [_PP, _PP, _PP])
+_sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
 
 
 # ============ Property descriptors ============
@@ -762,6 +772,67 @@ class Path(PurePath):
             results.append(result)
         _lib.sp_glob_end_wrap(byref(it))
         return iter(results)
+
+    def touch(self, mode=0o666, exist_ok=True):
+        """Create file or update timestamps."""
+        if not _lib.sp_touch_wrap(byref(self._sp), mode, 1 if exist_ok else 0):
+            raise FileExistsError(17, "File exists", str(self))
+
+    def unlink(self, missing_ok=False):
+        """Remove the file."""
+        if not _lib.sp_unlink_wrap(byref(self._sp), 1 if missing_ok else 0):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+
+    def rmdir(self):
+        """Remove the empty directory."""
+        if not _lib.sp_rmdir_wrap(byref(self._sp)):
+            raise OSError(1, "Operation not permitted", str(self))
+
+    def rename(self, target):
+        """Rename this file/directory to the given target."""
+        if isinstance(target, PurePath):
+            target_sp = target._sp
+        else:
+            target_path = self.__class__.__new__(self.__class__)
+            target_path._sp = _SpPath()
+            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
+            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
+            target_sp = target_path._sp
+
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_rename_wrap(byref(self._sp), byref(target_sp), byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise OSError(1, "Operation not permitted", str(self), str(target))
+        return result
+
+    def replace(self, target):
+        """Replace target with this file (atomic operation)."""
+        if isinstance(target, PurePath):
+            target_sp = target._sp
+        else:
+            target_path = self.__class__.__new__(self.__class__)
+            target_path._sp = _SpPath()
+            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
+            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
+            target_sp = target_path._sp
+
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_replace_wrap(byref(self._sp), byref(target_sp), byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise OSError(1, "Operation not permitted", str(self), str(target))
+        return result
+
+    def chmod(self, mode):
+        """Change the file mode (permissions)."""
+        if not _lib.sp_chmod_wrap(byref(self._sp), mode):
+            raise OSError(1, "Operation not permitted", str(self))
+
+    def open(self, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+        """Open the file pointed to by this path."""
+        import io
+        return io.open(str(self), mode, buffering, encoding, errors, newline)
 
 
 class PosixPath(Path, PurePosixPath):
