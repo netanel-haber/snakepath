@@ -195,8 +195,8 @@ curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span cl
     <span class="n">SpPath</span> <span class="n">boring</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"/foo/bar.txt"</span><span class="p">);</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
-    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">fluent</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx.conf"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">str</span><span class="p">();</span>
-    <span class="n">printf</span><span class="p">(</span><span class="s">"FLUENT API: %s\n"</span><span class="p">,</span> <span class="n">fluent</span><span class="p">);</span>
+    <span class="n">SpPath</span> <span class="n">fluent</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx.conf"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"FLUENT API: %s\n"</span><span class="p">,</span> <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fluent</span><span class="p">));</span>
 <span class="p">}</span>
 EOF
 ./demo
@@ -329,10 +329,10 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 <span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
 <span class="n">SpTerm</span> <span class="n">name</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">();</span>
 
-<span class="c1">// PurePosixPath('/etc').joinpath('init.d').name -&gt; "init.d"</span>
-<span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">s</span> <span class="o">=</span> <span class="n">SPF_P</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"init.d"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"apache2"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">str</span><span class="p">();</span>
+<span class="c1">// PurePosixPath('/etc').joinpath('init.d', 'apache2')</span>
+<span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">SPF_P</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"init.d"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"apache2"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
 
-<span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">SPF_W</span><span class="p">(</span><span class="s">"C:/Users"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"docs"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="n">SpPath</span> <span class="n">w</span> <span class="o">=</span> <span class="n">SPF_W</span><span class="p">(</span><span class="s">"C:/Users"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"docs"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
 <span class="n">SpPath</span> <span class="n">child</span> <span class="o">=</span> <span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"file.txt"</span><span class="p">);</span></code></pre>
           </div>
         </div>
@@ -404,14 +404,6 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
               </td>
               <td>
                 <code class="language-plaintext highlighter-rouge">SpPath</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;str()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">const char*</code>
               </td>
             </tr>
             <tr>
