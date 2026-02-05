@@ -2686,12 +2686,19 @@ SpPath sp_home(SpFlavor flavor) {
     SpPath result = SP_PRIV_ZERO;
     result.flavor = flavor;
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
 #ifdef SP_WINDOWS
     if (sp_priv_set_path_str(&result, getenv("USERPROFILE"))) return result;
 #else
     if (sp_priv_set_path_str(&result, getenv("HOME"))) return result;
     struct passwd *pw = getpwuid(getuid());
     if (pw && sp_priv_set_path_str(&result, pw->pw_dir)) return result;
+#endif
+#ifdef _MSC_VER
+#pragma warning(pop)
 #endif
     result.buf[0] = SP_ERR_OTHER;
     return result;
