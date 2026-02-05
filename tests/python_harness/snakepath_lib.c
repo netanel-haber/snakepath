@@ -68,7 +68,7 @@ WRAP_PATH_PATH(relative_to)
 WRAP_PATH_PATH(relative_to_walk_up)
 
 SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
-    return sp_relative_to_is_error(p) ? 1 : 0;
+    return (p->len == 0 && p->buf[0] == SP_ERR_NOT_RELATIVE) ? 1 : 0;
 }
 
 /* Multi-segment variants */
@@ -98,7 +98,7 @@ WRAP_BOOL_BINARY(path_eq)
 /* Additional functions */
 SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
 SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
-SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern) { return sp_match(p, pattern); }
+SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern) { return SP_MATCH(p, pattern); }
 SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_sensitive) { return sp_match_ex(p, pattern, case_sensitive); }
 WRAP_BOOL_UNARY(is_reserved)
 WRAP_BOOL_UNARY(is_file)

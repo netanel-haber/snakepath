@@ -244,8 +244,8 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
 int sp_path_cmp(const SpPath *a, const SpPath *b);
 unsigned long sp_path_hash(const SpPath *p);
-int sp_match(const SpPath *p, const char *pattern);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
+#define SP_MATCH(p, pattern) sp_match_ex((p), (pattern), -1)
 bool sp_is_reserved(const SpPath *p);
 bool sp_is_file(const SpPath *p);
 bool sp_is_dir(const SpPath *p);
@@ -497,13 +497,6 @@ static inline bool sp_sv_eq(SpStr a, SpStr b) {
     assert((b.len == 0 || b.data != NULL) && "SpStr with non-zero len must have valid data");
     return a.len == b.len && memcmp(a.data, b.data, a.len) == 0;
 }
-static inline bool sp_sv_eq_cstr(SpStr a, const char *b) {
-    assert((a.len == 0 || a.data != NULL) && "SpStr with non-zero len must have valid data");
-    assert(b != NULL && "string pointer must not be NULL");
-    size_t blen = strlen(b);
-    return a.len == blen && memcmp(a.data, b, a.len) == 0;
-}
-
 #ifdef __cplusplus
 }
 #endif
@@ -870,11 +863,6 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
     }
     buf[j] = '\0';
     *len = j;
-}
-
-static inline SpPath sp_priv_empty_path(void) {
-    SpPath p = SP_PRIV_ZERO;
-    return p;
 }
 
 static inline SpPath sp_priv_error_path(char err_code) {
@@ -1375,9 +1363,6 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
     return r;
 }
 
-/* Helper to check if a part is ".." */
-static inline bool sp_priv_is_dotdot(SpStr part) { return part.len == 2 && part.data[0] == '.' && part.data[1] == '.'; }
-
 /* Collect path parts into array, returns count */
 static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     SpPartsIter it = sp_parts_begin(p);
@@ -1397,8 +1382,6 @@ static inline SpPath sp_priv_relative_to_error(SpFlavor flavor) {
     return r;
 }
 
-static inline bool sp_relative_to_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] == SP_ERR_NOT_RELATIVE; }
-
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(p);
     SP_ASSERT_PATH_INVARIANT(other);
@@ -1410,7 +1393,7 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
 
     /* Check if other contains '..' - not allowed with walk_up */
     for (size_t i = 0; i < o_count; i++) {
-        if (sp_priv_is_dotdot(o_parts[i])) {
+        if (o_parts[i].len == 2 && o_parts[i].data[0] == '.' && o_parts[i].data[1] == '.') {
             return sp_priv_relative_to_error(p->flavor);
         }
     }
@@ -1461,17 +1444,19 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     return r;
 }
 
-bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
+static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char **parts) {
     SpPath empty = SP_PRIV_ZERO;
-    empty.flavor = p->flavor;
-    SpPath other = sp_join_impl(&empty, parts);
+    empty.flavor = flavor;
+    return sp_join_impl(&empty, parts);
+}
+
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts);
     return sp_is_relative_to(p, &other);
 }
 
 SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
-    SpPath empty = SP_PRIV_ZERO;
-    empty.flavor = p->flavor;
-    SpPath other = sp_join_impl(&empty, parts);
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts);
     return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
 }
 
@@ -1693,8 +1678,6 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     }
     return SP_MATCH_YES;
 }
-
-int sp_match(const SpPath *p, const char *pattern) { return sp_match_ex(p, pattern, -1); }
 
 /* Helper for POSIX-only file type checks (returns false on Windows) */
 #ifndef SP_WINDOWS
