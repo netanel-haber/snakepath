@@ -18,8 +18,15 @@ static int sv_eq(SpStr a, const char *b) {
     return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
 }
 
+/* SpTerm comparison */
+static int term_eq(SpTerm a, const char *b) {
+    size_t blen = strlen(b);
+    return a.len == blen && (a.len == 0 || memcmp(a.buf, b, a.len) == 0);
+}
+
 #define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
 #define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
+#define ASSERT_TERM(t, exp) ASSERT(term_eq(t, exp))
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
 #define ASSERT_FLUENT(f, exp) do { SpPath _p = (f)->path(); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 
@@ -47,32 +54,32 @@ int main(void) {
     /* ============ Drive ============ */
 
     /* >>> PureWindowsPath('c:/Program Files/').drive -> 'c:' */
-    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_drive(&p), "c:"); }
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_TERM(sp_drive(&p), "c:"); }
 
     /* >>> PurePosixPath('/etc').drive -> '' */
-    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_drive(&p), ""); }
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_TERM(sp_drive(&p), ""); }
 
     /* >>> PureWindowsPath('//host/share/foo.txt').drive -> '\\\\host\\share' */
-    { SpPath p = SPF_W("//host/share/foo.txt")->path(); ASSERT_SV(sp_drive(&p), "\\\\host\\share"); }
+    { SpPath p = SPF_W("//host/share/foo.txt")->path(); ASSERT_TERM(sp_drive(&p), "\\\\host\\share"); }
 
     /* ============ Root ============ */
 
     /* >>> PureWindowsPath('c:/Program Files/').root -> '\\' */
-    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_root(&p), "\\"); }
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_TERM(sp_root(&p), "\\"); }
 
     /* >>> PurePosixPath('/etc').root -> '/' */
-    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_root(&p), "/"); }
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_TERM(sp_root(&p), "/"); }
 
     /* >>> PureWindowsPath('c:Program Files/').root -> '' */
-    { SpPath p = SPF_W("c:Program Files/")->path(); ASSERT_SV(sp_root(&p), ""); }
+    { SpPath p = SPF_W("c:Program Files/")->path(); ASSERT_TERM(sp_root(&p), ""); }
 
     /* ============ Anchor ============ */
 
     /* >>> PureWindowsPath('c:/Program Files/').anchor -> 'c:\\' */
-    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_SV(sp_anchor(&p), "c:\\"); }
+    { SpPath p = SPF_W("c:/Program Files/")->path(); ASSERT_TERM(sp_anchor(&p), "c:\\"); }
 
     /* >>> PurePosixPath('/etc').anchor -> '/' */
-    { SpPath p = SPF_P("/etc")->path(); ASSERT_SV(sp_anchor(&p), "/"); }
+    { SpPath p = SPF_P("/etc")->path(); ASSERT_TERM(sp_anchor(&p), "/"); }
 
     /* ============ Parent ============ */
 
@@ -88,24 +95,24 @@ int main(void) {
     /* ============ Name ============ */
 
     /* >>> PurePosixPath('my/library/setup.py').name -> 'setup.py' */
-    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_SV(sp_name(&p), "setup.py"); }
+    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_TERM(sp_name(&p), "setup.py"); }
 
     /* >>> PureWindowsPath('//some/share/setup.py').name -> 'setup.py' */
-    { SpPath p = SPF_W("//some/share/setup.py")->path(); ASSERT_SV(sp_name(&p), "setup.py"); }
+    { SpPath p = SPF_W("//some/share/setup.py")->path(); ASSERT_TERM(sp_name(&p), "setup.py"); }
 
     /* >>> PureWindowsPath('//some/share').name -> '' */
-    { SpPath p = SPF_W("//some/share")->path(); ASSERT_SV(sp_name(&p), ""); }
+    { SpPath p = SPF_W("//some/share")->path(); ASSERT_TERM(sp_name(&p), ""); }
 
     /* ============ Suffix ============ */
 
     /* >>> PurePosixPath('my/library/setup.py').suffix -> '.py' */
-    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_SV(sp_suffix(&p), ".py"); }
+    { SpPath p = SPF_P("my/library/setup.py")->path(); ASSERT_TERM(sp_suffix(&p), ".py"); }
 
     /* >>> PurePosixPath('my/library.tar.gz').suffix -> '.gz' */
-    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_SV(sp_suffix(&p), ".gz"); }
+    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_TERM(sp_suffix(&p), ".gz"); }
 
     /* >>> PurePosixPath('my/library').suffix -> '' */
-    { SpPath p = SPF_P("my/library")->path(); ASSERT_SV(sp_suffix(&p), ""); }
+    { SpPath p = SPF_P("my/library")->path(); ASSERT_TERM(sp_suffix(&p), ""); }
 
     /* ============ Suffixes ============ */
 
@@ -120,10 +127,10 @@ int main(void) {
     /* ============ Stem ============ */
 
     /* >>> PurePosixPath('my/library.tar.gz').stem -> 'library.tar' */
-    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_SV(sp_stem(&p), "library.tar"); }
+    { SpPath p = SPF_P("my/library.tar.gz")->path(); ASSERT_TERM(sp_stem(&p), "library.tar"); }
 
     /* >>> PurePosixPath('my/library.tar').stem -> 'library' */
-    { SpPath p = SPF_P("my/library.tar")->path(); ASSERT_SV(sp_stem(&p), "library"); }
+    { SpPath p = SPF_P("my/library.tar")->path(); ASSERT_TERM(sp_stem(&p), "library"); }
 
     /* ============ as_posix ============ */
 
@@ -227,7 +234,7 @@ int main(void) {
     /* Path('~/subdir').expanduser() returns absolute path */
     { SpPath p = SPF("~/subdir")->expanduser()->path();
       ASSERT(sp_is_absolute(&p) == true);
-      ASSERT_SV(sp_name(&p), "subdir"); }
+      ASSERT_TERM(sp_name(&p), "subdir"); }
 
     /* ============ owner/group (fluent terminators) ============ */
 
@@ -244,7 +251,7 @@ int main(void) {
     /* ============ Chaining ============ */
 
     /* Path('/a/b/c.txt').parent.name -> 'b' */
-    { SpPath p = SPF_P("/a/b/c.txt")->parent()->path(); ASSERT_SV(sp_name(&p), "b"); }
+    { SpPath p = SPF_P("/a/b/c.txt")->parent()->path(); ASSERT_TERM(sp_name(&p), "b"); }
 
     /* Path('/a/b/c').parent.parent -> '/a' */
     ASSERT_FLUENT(SPF_P("/a/b/c")->parent()->parent(), "/a");
@@ -253,10 +260,10 @@ int main(void) {
     ASSERT_FLUENT(SPF_P("/a")->join("b")->join("c")->parent(), "/a/b");
 
     /* Path('a/b.txt').with_name('c.py').suffix -> '.py' */
-    { SpPath p = SPF_P("a/b.txt")->with_name("c.py")->path(); ASSERT_SV(sp_suffix(&p), ".py"); }
+    { SpPath p = SPF_P("a/b.txt")->with_name("c.py")->path(); ASSERT_TERM(sp_suffix(&p), ".py"); }
 
     /* Path('a/b.txt').with_suffix('.md').stem -> 'b' */
-    { SpPath p = SPF_P("a/b.txt")->with_suffix(".md")->path(); ASSERT_SV(sp_stem(&p), "b"); }
+    { SpPath p = SPF_P("a/b.txt")->with_suffix(".md")->path(); ASSERT_TERM(sp_stem(&p), "b"); }
 
     /* ============ Branching from common base ============ */
 

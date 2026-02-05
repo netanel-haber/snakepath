@@ -193,8 +193,8 @@ curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span cl
 
 <span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
     <span class="n">SpPath</span> <span class="n">boring</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"/foo/bar.txt"</span><span class="p">);</span>
-    <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">data</span><span class="p">);</span>
-    <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">data</span><span class="p">);</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
     <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">fluent</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx.conf"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">str</span><span class="p">();</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"FLUENT API: %s\n"</span><span class="p">,</span> <span class="n">fluent</span><span class="p">);</span>
 <span class="p">}</span>
@@ -226,12 +226,14 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
             <pre
-              class="highlight"><code><span class="n">SpStr</span> <span class="n">name</span>   <span class="o">=</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Final component: "file.txt"</span>
-<span class="n">SpStr</span> <span class="n">stem</span>   <span class="o">=</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Name without suffix: "file"</span>
-<span class="n">SpStr</span> <span class="n">suffix</span> <span class="o">=</span> <span class="n">sp_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Extension: ".txt"</span>
-<span class="n">SpStr</span> <span class="n">drive</span>  <span class="o">=</span> <span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>  <span class="c1">// Drive letter: "C:" (Windows)</span>
-<span class="n">SpStr</span> <span class="n">root</span>   <span class="o">=</span> <span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Root: "/" or "\"</span>
-<span class="n">SpStr</span> <span class="n">anchor</span> <span class="o">=</span> <span class="n">sp_anchor</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Drive + root: "C:\"</span></code></pre>
+              class="highlight"><code><span class="n">SpTerm</span> <span class="n">name</span>   <span class="o">=</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Final component: "file.txt"</span>
+<span class="n">SpTerm</span> <span class="n">stem</span>   <span class="o">=</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Name without suffix: "file"</span>
+<span class="n">SpTerm</span> <span class="n">suffix</span> <span class="o">=</span> <span class="n">sp_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Extension: ".txt"</span>
+<span class="n">SpTerm</span> <span class="n">drive</span>  <span class="o">=</span> <span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>  <span class="c1">// Drive letter: "C:" (Windows)</span>
+<span class="n">SpTerm</span> <span class="n">root</span>   <span class="o">=</span> <span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Root: "/" or "\"</span>
+<span class="n">SpTerm</span> <span class="n">anchor</span> <span class="o">=</span> <span class="n">sp_anchor</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Drive + root: "C:\"</span>
+<span class="c1">// SpTerm has .buf (null-terminated) and .len fields</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">"%s\n"</span><span class="p">,</span> <span class="n">name</span><span class="p">.</span><span class="n">buf</span><span class="p">);</span>        <span class="c1">// Direct %s usage works!</span></code></pre>
           </div>
         </div>
         <h3 id="navigation">Navigation</h3>
@@ -325,7 +327,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 <span class="cp">#include</span> <span class="cpf">"snakepath.h"</span>
 
 <span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
-<span class="n">SpStr</span> <span class="n">name</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">();</span>
+<span class="n">SpTerm</span> <span class="n">name</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">();</span>
 
 <span class="c1">// PurePosixPath('/etc').joinpath('init.d').name -&gt; "init.d"</span>
 <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">s</span> <span class="o">=</span> <span class="n">SPF_P</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"init.d"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"apache2"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">str</span><span class="p">();</span>
@@ -419,7 +421,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">-&gt;suffix()</code>
               </td>
               <td>
-                <code class="language-plaintext highlighter-rouge">SpStr</code>
+                <code class="language-plaintext highlighter-rouge">SpTerm</code>
               </td>
             </tr>
             <tr>
@@ -429,7 +431,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">-&gt;anchor()</code>
               </td>
               <td>
-                <code class="language-plaintext highlighter-rouge">SpStr</code>
+                <code class="language-plaintext highlighter-rouge">SpTerm</code>
               </td>
             </tr>
             <tr>
@@ -509,11 +511,13 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
             <pre
-              class="highlight"><code><span class="n">SpStr</span>   <span class="p">{</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">data</span><span class="p">;</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="p">}</span>  <span class="c1">// String view</span>
+              class="highlight"><code><span class="n">SpStr</span>   <span class="p">{</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">data</span><span class="p">;</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="p">}</span>  <span class="c1">// String view (non-owning)</span>
+<span class="n">SpTerm</span>  <span class="p">{</span> <span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="p">}</span>           <span class="c1">// Terminated string (owning, null-terminated)</span>
 <span class="n">SpPath</span>  <span class="p">{</span> <span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="mi">4096</span><span class="p">];</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="n">SpFlavor</span> <span class="n">flavor</span><span class="p">;</span> <span class="p">}</span>
 <span class="n">SpFlavor</span> <span class="p">{</span> <span class="n">SP_FLAVOR_NATIVE</span><span class="p">,</span> <span class="n">SP_FLAVOR_POSIX</span><span class="p">,</span> <span class="n">SP_FLAVOR_WINDOWS</span> <span class="p">}</span></code></pre>
           </div>
         </div>
+        <p><strong>SpTerm vs SpStr:</strong> Component functions (<code class="language-plaintext highlighter-rouge">name</code>, <code class="language-plaintext highlighter-rouge">stem</code>, <code class="language-plaintext highlighter-rouge">suffix</code>, <code class="language-plaintext highlighter-rouge">drive</code>, <code class="language-plaintext highlighter-rouge">root</code>, <code class="language-plaintext highlighter-rouge">anchor</code>) return <code class="language-plaintext highlighter-rouge">SpTerm</code> which owns its data and is null-terminated, allowing direct <code class="language-plaintext highlighter-rouge">%s</code> usage. <code class="language-plaintext highlighter-rouge">SpStr</code> is a view into existing memory (used internally and for iteration).</p>
         <h2 id="configuration">Configuration</h2>
         <p>Define before including:</p>
         <div class="language-c highlighter-rouge">

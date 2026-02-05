@@ -124,8 +124,9 @@ _PP = POINTER(_SpPath)
 _PStat = POINTER(_SpStatResult)
 
 # Bulk signature setup by pattern
+# SpTerm-returning functions: pass buffer, buffer size, receive length
 for n in ['drive', 'root', 'anchor', 'name', 'stem', 'suffix']:
-    _sig(f'sp_{n}_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t)])
+    _sig(f'sp_{n}_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)])
 
 for n in ['parent', 'absolute']:
     _sig(f'sp_{n}_wrap', [_PP, _PP])
@@ -245,16 +246,18 @@ _sig('sp_walk_set_dirname_count_wrap', [_PWalkIter, c_size_t])
 
 # ============ Property descriptors ============
 
-class _StrViewProp:
-    """Descriptor for string-view properties (drive, root, anchor, name, stem, suffix)"""
+class _TermProp:
+    """Descriptor for SpTerm properties (drive, root, anchor, name, stem, suffix)"""
     __slots__ = ('_func',)
+    _TERM_BUF_SIZE = 256  # matches SP_TERM_MAX
     def __init__(self, name):
         self._func = getattr(_lib, f'sp_{name}_wrap')
     def __get__(self, obj, objtype=None):
         if obj is None: return self
-        data, length = c_char_p(), c_size_t()
-        self._func(byref(obj._sp), byref(data), byref(length))
-        return '' if not data.value or not length.value else data.value[:length.value].decode('utf-8')
+        buf = ctypes.create_string_buffer(self._TERM_BUF_SIZE)
+        length = c_size_t()
+        self._func(byref(obj._sp), buf, self._TERM_BUF_SIZE, byref(length))
+        return '' if not length.value else buf.value[:length.value].decode('utf-8')
 
 
 class _PathProp:
@@ -357,12 +360,12 @@ class PurePath:
     parser = __import__('posixpath') if os.name != 'nt' else __import__('ntpath')
 
     # String-view properties via descriptors
-    drive = _StrViewProp('drive')
-    root = _StrViewProp('root')
-    anchor = _StrViewProp('anchor')
-    name = _StrViewProp('name')
-    stem = _StrViewProp('stem')
-    suffix = _StrViewProp('suffix')
+    drive = _TermProp('drive')
+    root = _TermProp('root')
+    anchor = _TermProp('anchor')
+    name = _TermProp('name')
+    stem = _TermProp('stem')
+    suffix = _TermProp('suffix')
 
     # Path-returning properties
     parent = _PathProp('parent')

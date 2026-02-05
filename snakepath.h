@@ -97,6 +97,27 @@ typedef struct {
     size_t len;
 } SpStr;
 
+/* Terminated string - owning, null-terminated copy for component strings */
+#ifndef SP_TERM_MAX
+#define SP_TERM_MAX 256
+#endif
+typedef struct {
+    char buf[SP_TERM_MAX];
+    size_t len;
+} SpTerm;
+
+/* Helper to create SpTerm from data pointer and length */
+static inline SpTerm sp_priv_term(const char *data, size_t len) {
+    SpTerm t = SP_PRIV_ZERO;
+    if (data && len > 0) {
+        size_t n = len < SP_TERM_MAX - 1 ? len : SP_TERM_MAX - 1;
+        memcpy(t.buf, data, n);
+        t.buf[n] = '\0';
+        t.len = n;
+    }
+    return t;
+}
+
 /* Path structure - fixed buffer, no heap */
 typedef struct {
     char buf[SP_PATH_MAX];
@@ -185,12 +206,12 @@ const char *sp_str(const SpPath *p);
 SpStr sp_as_sv(const SpPath *p);
 void sp_as_posix(const SpPath *p, char *out, size_t out_size);
 
-SpStr sp_drive(const SpPath *p);
-SpStr sp_root(const SpPath *p);
-SpStr sp_anchor(const SpPath *p);
-SpStr sp_name(const SpPath *p);
-SpStr sp_stem(const SpPath *p);
-SpStr sp_suffix(const SpPath *p);
+SpTerm sp_drive(const SpPath *p);
+SpTerm sp_root(const SpPath *p);
+SpTerm sp_anchor(const SpPath *p);
+SpTerm sp_name(const SpPath *p);
+SpTerm sp_stem(const SpPath *p);
+SpTerm sp_suffix(const SpPath *p);
 SpSuffixes sp_suffixes(const SpPath *p);
 SpPath sp_parent(const SpPath *p);
 
@@ -499,13 +520,13 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
 struct sp_fluent_ {
     /* Terminators - end chain and return value */
     SpPath (*path)(void);
-    SpStr (*name)(void);
-    SpStr (*stem)(void);
-    SpStr (*suffix)(void);
+    SpTerm (*name)(void);
+    SpTerm (*stem)(void);
+    SpTerm (*suffix)(void);
     SpSuffixes (*suffixes)(void);
-    SpStr (*drive)(void);
-    SpStr (*root)(void);
-    SpStr (*anchor)(void);
+    SpTerm (*drive)(void);
+    SpTerm (*root)(void);
+    SpTerm (*anchor)(void);
     SpStr (*owner)(void);
     SpStr (*group)(void);
     const char *(*str)(void);
@@ -942,30 +963,30 @@ void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
     out[n] = '\0';
 }
 
-SpStr sp_drive(const SpPath *p) {
+SpTerm sp_drive(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (p->len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(p->buf, sp_priv_drive_len(p->buf, p->len, p->flavor));
+    if (p->len == 0) return sp_priv_term(NULL, 0);
+    return sp_priv_term(p->buf, sp_priv_drive_len(p->buf, p->len, p->flavor));
 }
 
-SpStr sp_root(const SpPath *p) {
+SpTerm sp_root(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (p->len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (p->len == 0) return sp_priv_term(NULL, 0);
     size_t start = sp_priv_drive_len(p->buf, p->len, p->flavor);
     size_t rlen = sp_priv_root_len(p->buf, p->len, p->flavor);
     if (start + rlen > p->len) rlen = p->len > start ? p->len - start : 0;
-    return SP_PRIV_STR(p->buf + start, rlen);
+    return sp_priv_term(p->buf + start, rlen);
 }
 
-SpStr sp_anchor(const SpPath *p) {
+SpTerm sp_anchor(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (p->len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (p->len == 0) return sp_priv_term(NULL, 0);
     size_t alen = sp_priv_anchor_len(p->buf, p->len, p->flavor);
-    return SP_PRIV_STR(p->buf, alen > p->len ? p->len : alen);
+    return sp_priv_term(p->buf, alen > p->len ? p->len : alen);
 }
 
-SpStr sp_name(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
+/* Private: get name as SpStr pointing into path buffer (for internal use) */
+static inline SpStr sp_priv_name_sv(const SpPath *p) {
     if (p->len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (anchor == p->len) return SP_PRIV_STR(p->buf + p->len, 0);
@@ -975,31 +996,37 @@ SpStr sp_name(const SpPath *p) {
     return SP_PRIV_STR(p->buf + i, p->len - i);
 }
 
-SpStr sp_suffix(const SpPath *p) {
-    SpStr name = sp_name(p);
-    if (name.len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    bool all_dots = true;
-    for (size_t j = 0; j < name.len && all_dots; j++) {
-        if (name.data[j] != '.') all_dots = false;
-    }
-    if (all_dots) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    size_t i = name.len;
-    while (i > 0 && name.data[i - 1] != '.') i--;
-    if (i <= 1 || i == name.len) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(name.data + i - 1, name.len - i + 1);
+SpTerm sp_name(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SpStr sv = sp_priv_name_sv(p);
+    return sp_priv_term(sv.data, sv.len);
 }
 
-SpStr sp_stem(const SpPath *p) {
+SpTerm sp_suffix(const SpPath *p) {
+    SpTerm name = sp_name(p);
+    if (name.len == 0) return sp_priv_term(NULL, 0);
+    bool all_dots = true;
+    for (size_t j = 0; j < name.len && all_dots; j++) {
+        if (name.buf[j] != '.') all_dots = false;
+    }
+    if (all_dots) return sp_priv_term(NULL, 0);
+    size_t i = name.len;
+    while (i > 0 && name.buf[i - 1] != '.') i--;
+    if (i <= 1 || i == name.len) return sp_priv_term(NULL, 0);
+    return sp_priv_term(name.buf + i - 1, name.len - i + 1);
+}
+
+SpTerm sp_stem(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpStr name = sp_name(p);
-    if (name.len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(name.data, name.len - sp_suffix(p).len);
+    SpTerm name = sp_name(p);
+    if (name.len == 0) return sp_priv_term(NULL, 0);
+    return sp_priv_term(name.buf, name.len - sp_suffix(p).len);
 }
 
 SpSuffixes sp_suffixes(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpSuffixes r = SP_PRIV_ZERO;
-    SpStr name = sp_name(p);
+    SpStr name = sp_priv_name_sv(p);
     if (name.len == 0 || name.data[name.len - 1] == '.') return r;
     size_t i = (name.data[0] == '.') ? 1 : 0;
     while (i < name.len && r.count < SP_MAX_SUFFIXES) {
@@ -1216,8 +1243,8 @@ static bool sp_priv_is_valid_name(const char *s, size_t len, SpFlavor flavor) {
 }
 
 static bool sp_priv_has_usable_name(const SpPath *p) {
-    SpStr n = sp_name(p);
-    return n.len > 0 && !(n.len == 1 && n.data[0] == '.');
+    SpTerm n = sp_name(p);
+    return n.len > 0 && !(n.len == 1 && n.buf[0] == '.');
 }
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
@@ -1253,12 +1280,12 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
     size_t slen = strlen(stem);
     if (!sp_priv_is_valid_name(stem, slen, p->flavor)) return sp_priv_error_path(SP_ERR_INVALID_ARG);
 
-    SpStr suf = sp_suffix(p);
+    SpTerm suf = sp_suffix(p);
     char name[SP_PATH_MAX];
     if (slen + suf.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suf.len - 1;
     memcpy(name, stem, slen);
     if (suf.len > 0) {
-        memcpy(name + slen, suf.data, suf.len);
+        memcpy(name + slen, suf.buf, suf.len);
     }
     name[slen + suf.len] = '\0';
     return sp_with_name(p, name);
@@ -1278,12 +1305,12 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
         }
     }
 
-    SpStr stm = sp_stem(p);
+    SpTerm stm = sp_stem(p);
     char name[SP_PATH_MAX];
     size_t stmlen = stm.len;
     if (stmlen + suflen >= SP_PATH_MAX) stmlen = SP_PATH_MAX - suflen - 1;
     if (stmlen > 0) {
-        memcpy(name, stm.data, stmlen);
+        memcpy(name, stm.buf, stmlen);
     }
     memcpy(name + stmlen, suffix, suflen);
     name[stmlen + suflen] = '\0';
@@ -1292,11 +1319,11 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
 
 bool sp_is_absolute(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpStr drv = sp_drive(p);
-    SpStr rt = sp_root(p);
+    SpTerm drv = sp_drive(p);
+    SpTerm rt = sp_root(p);
     if (sp_priv_is_windows_flavor(p->flavor)) {
         /* UNC paths are always absolute */
-        if (drv.len >= 2 && sp_priv_is_sep(drv.data[0], p->flavor) && sp_priv_is_sep(drv.data[1], p->flavor)) {
+        if (drv.len >= 2 && sp_priv_is_sep(drv.buf[0], p->flavor) && sp_priv_is_sep(drv.buf[1], p->flavor)) {
             return true;
         }
         return drv.len > 0 && rt.len > 0;
@@ -1591,8 +1618,8 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
 
     if (!pat_has_sep) {
         if (SP_PRIV_IS_DOUBLESTAR(pattern, plen)) return SP_MATCH_YES;
-        SpStr name = sp_name(p);
-        return (name.len > 0 && sp_priv_fnmatch(pattern, plen, name.data, name.len, ci)) ? SP_MATCH_YES : SP_MATCH_NO;
+        SpTerm name = sp_name(p);
+        return (name.len > 0 && sp_priv_fnmatch(pattern, plen, name.buf, name.len, ci)) ? SP_MATCH_YES : SP_MATCH_NO;
     }
 
     bool pat_has_drive = false, pat_has_root = false;
@@ -1611,9 +1638,9 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     bool pat_anchored = pat_has_drive || pat_has_root;
 
     if (pat_has_drive) {
-        SpStr drv = sp_drive(p);
+        SpTerm drv = sp_drive(p);
         if (drv.len < 2) return SP_MATCH_NO;
-        char pd = sp_priv_tolower(pattern[0]), pthd = sp_priv_tolower(drv.data[0]);
+        char pd = sp_priv_tolower(pattern[0]), pthd = sp_priv_tolower(drv.buf[0]);
         if (pattern[0] != '*' && pd != pthd) return SP_MATCH_NO;
     }
     if (pat_has_root) {
@@ -1695,14 +1722,14 @@ static bool sp_priv_check_posix_type(const SpPath *p, unsigned int type_mask, bo
 bool sp_is_reserved(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     if (!sp_priv_is_windows_flavor(p->flavor) || sp_priv_is_unc(p->buf, p->len, p->flavor)) return false;
-    SpStr name = sp_name(p);
+    SpTerm name = sp_name(p);
     if (name.len == 0 || name.len > 12) return false;
     char upper[13];
     size_t len = 0;
-    for (size_t i = 0; i < name.len && name.data[i] != '.' && name.data[i] != ':' && len < 12; i++) {
-        unsigned char c = SP_PRIV_CAST(unsigned char, name.data[i]);
+    for (size_t i = 0; i < name.len && name.buf[i] != '.' && name.buf[i] != ':' && len < 12; i++) {
+        unsigned char c = SP_PRIV_CAST(unsigned char, name.buf[i]);
         if (c == 0xC2 && i + 1 < name.len) {
-            unsigned char c2 = SP_PRIV_CAST(unsigned char, name.data[i + 1]);
+            unsigned char c2 = SP_PRIV_CAST(unsigned char, name.buf[i + 1]);
             if (c2 == 0xB9) {
                 upper[len++] = '1';
                 i++;
@@ -3336,10 +3363,10 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(is_socket, bool, sp_is_socket(&sp_priv_f_ctx))                                                                   \
     X(is_mount, bool, sp_is_mount(&sp_priv_f_ctx))                                                                     \
     X(is_junction, bool, sp_is_junction(&sp_priv_f_ctx))
-#define SP_FLUENT_TERM_STR(X)                                                                                          \
-    X(name, SpStr, sp_name)                                                                                            \
-    X(stem, SpStr, sp_stem) X(suffix, SpStr, sp_suffix) X(drive, SpStr, sp_drive) X(root, SpStr, sp_root)              \
-        X(anchor, SpStr, sp_anchor) X(owner, SpStr, sp_owner) X(group, SpStr, sp_group)
+#define SP_FLUENT_TERM_TERM(X)                                                                                         \
+    X(name, SpTerm, sp_name) X(stem, SpTerm, sp_stem) X(suffix, SpTerm, sp_suffix) X(drive, SpTerm, sp_drive)          \
+        X(root, SpTerm, sp_root) X(anchor, SpTerm, sp_anchor)
+#define SP_FLUENT_TERM_STR(X) X(owner, SpStr, sp_owner) X(group, SpStr, sp_group)
 #define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser)
 #define SP_FLUENT_CHAIN_STR(X)                                                                                         \
     X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
@@ -3359,6 +3386,7 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
         return fn(&sp_priv_f_ctx);                                                                                     \
     }
 SP_FLUENT_TERM_VOID(SP_GEN_TERM_VOID)
+SP_FLUENT_TERM_TERM(SP_GEN_TERM_STR)
 SP_FLUENT_TERM_STR(SP_GEN_TERM_STR)
 static bool sp_priv_f_is_relative_to_(const SpPath *o) {
     sp_priv_f_ctx_active = false;

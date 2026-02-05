@@ -3,9 +3,10 @@
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 #include <stdio.h>
+#include <string.h>
 
-static void print_sv(const char *label, SpStr sv) {
-    printf("  %-12s: %.*s\n", label, (int)sv.len, sv.data);
+static void print_term(const char *label, SpTerm t) {
+    printf("  %-12s: %s\n", label, t.buf);
 }
 
 int main(void) {
@@ -24,9 +25,9 @@ int main(void) {
     for (int i = 0; repo_files[i]; i++) {
         SpPath p = sp_path(repo_files[i]);
         printf("%s\n", sp_str(&p));
-        print_sv("name", sp_name(&p));
-        print_sv("stem", sp_stem(&p));
-        print_sv("suffix", sp_suffix(&p));
+        print_term("name", sp_name(&p));
+        print_term("stem", sp_stem(&p));
+        print_term("suffix", sp_suffix(&p));
         printf("\n");
     }
 
@@ -35,10 +36,10 @@ int main(void) {
     SpPath build_dir = sp_path("build");
     for (int i = 0; repo_files[i]; i++) {
         SpPath src = sp_path(repo_files[i]);
-        if (!sp_sv_eq_cstr(sp_suffix(&src), ".c")) continue;
-        
+        if (strcmp(sp_suffix(&src).buf, ".c") != 0) continue;
+
         SpPath obj = sp_with_suffix(&src, ".o");
-        SpPath output = sp_join_one(&build_dir, sp_name(&obj).data);
+        SpPath output = sp_join_one(&build_dir, sp_name(&obj).buf);
         printf("  %s -> %s\n", repo_files[i], sp_str(&output));
     }
 
@@ -46,10 +47,10 @@ int main(void) {
 
     for (int i = 0; repo_files[i]; i++) {
         SpPath src = sp_path(repo_files[i]);
-        if (!sp_sv_eq_cstr(sp_suffix(&src), ".h")) continue;
+        if (strcmp(sp_suffix(&src).buf, ".h") != 0) continue;
 
-        SpStr new_name = SPF(repo_files[i])->with_suffix(".hpp")->name();
-        printf("  %s -> %.*s\n", repo_files[i], (int)new_name.len, new_name.data);
+        SpTerm new_name = SPF(repo_files[i])->with_suffix(".hpp")->name();
+        printf("  %s -> %s\n", repo_files[i], new_name.buf);
     }
 
     printf("\n=== ITERATE PARENT DIRECTORIES ===\n\n");
@@ -69,14 +70,14 @@ int main(void) {
     SpPath posix = sp_path_f("/home/dev/snakepath/snakepath.h", SP_FLAVOR_POSIX);
 
     printf("Windows path:\n");
-    print_sv("drive", sp_drive(&win));
-    print_sv("root", sp_root(&win));
-    print_sv("name", sp_name(&win));
+    print_term("drive", sp_drive(&win));
+    print_term("root", sp_root(&win));
+    print_term("name", sp_name(&win));
     
     printf("\nPOSIX path:\n");
-    print_sv("drive", sp_drive(&posix));
-    print_sv("root", sp_root(&posix));
-    print_sv("name", sp_name(&posix));
+    print_term("drive", sp_drive(&posix));
+    print_term("root", sp_root(&posix));
+    print_term("name", sp_name(&posix));
 
     printf("\n=== RELATIVE PATH COMPUTATION ===\n\n");
 

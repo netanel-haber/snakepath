@@ -17,6 +17,15 @@
         SpStr sv = sp_##fn(p); *data = sv.data; *len = sv.len; \
     }
 
+#define WRAP_TERM(fn) \
+    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) { \
+        SpTerm t = sp_##fn(p); \
+        size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1; \
+        memcpy(buf, t.buf, n); \
+        buf[n] = '\0'; \
+        *len = t.len; \
+    }
+
 #define WRAP_PATH_UNARY(fn) \
     SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpPath *out) { *out = sp_##fn(p); }
 
@@ -32,13 +41,13 @@
 #define WRAP_BOOL_BINARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
 
-/* Path -> SpStr */
-WRAP_STR(drive)
-WRAP_STR(root)
-WRAP_STR(anchor)
-WRAP_STR(name)
-WRAP_STR(stem)
-WRAP_STR(suffix)
+/* Path -> SpTerm (null-terminated component strings) */
+WRAP_TERM(drive)
+WRAP_TERM(root)
+WRAP_TERM(anchor)
+WRAP_TERM(name)
+WRAP_TERM(stem)
+WRAP_TERM(suffix)
 
 /* Path -> Path */
 WRAP_PATH_UNARY(parent)

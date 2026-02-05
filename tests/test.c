@@ -33,10 +33,17 @@ static int sv_eq(SpStr a, const char *b) {
     return a.len == blen && (a.len == 0 || memcmp(a.data, b, a.len) == 0);
 }
 
+/* SpTerm comparison */
+static int term_eq(SpTerm a, const char *b) {
+    size_t blen = strlen(b);
+    return a.len == blen && (a.len == 0 || memcmp(a.buf, b, a.len) == 0);
+}
+
 #define ARRAY_LEN(a) (sizeof(a)/sizeof((a)[0]))
 
 #define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
 #define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
+#define ASSERT_TERM(t, exp) ASSERT(term_eq(t, exp))
 #define ASSERT_PATH(p, exp) do { SpPath _p = (p); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 #define ASSERT_ABS(path, flav, expected) do { SpPath _p = sp_path_f(path, flav); ASSERT(sp_is_absolute(&_p) == expected); } while(0)
 
@@ -54,10 +61,10 @@ static bool walk_test_callback(struct SpWalkEntry *entry) {
     return true;
 }
 
-static void test_sv(SpFlavor f, SpStr (*fn)(const SpPath*), SVTest *tests, size_t n) {
+static void test_term(SpFlavor f, SpTerm (*fn)(const SpPath*), SVTest *tests, size_t n) {
     for (size_t i = 0; i < n; i++) {
         SpPath p = sp_path_f(tests[i].path, f);
-        ASSERT_SV(fn(&p), tests[i].expected);
+        ASSERT_TERM(fn(&p), tests[i].expected);
     }
 }
 
@@ -96,22 +103,22 @@ int main(void) {
     printf("POSIX Tests:\n");
     
     SVTest posix_anchor[] = {{"", ""}, {"a/b", ""}, {"/", "/"}, {"/a/b", "/"}};
-    test_sv(P, sp_anchor, posix_anchor, ARRAY_LEN(posix_anchor));
-    
+    test_term(P, sp_anchor, posix_anchor, ARRAY_LEN(posix_anchor));
+
     SVTest posix_drive[] = {{"/a/b", ""}};
-    test_sv(P, sp_drive, posix_drive, ARRAY_LEN(posix_drive));
-    
+    test_term(P, sp_drive, posix_drive, ARRAY_LEN(posix_drive));
+
     SVTest posix_root[] = {{"a/b", ""}, {"/a/b", "/"}};
-    test_sv(P, sp_root, posix_root, ARRAY_LEN(posix_root));
-    
+    test_term(P, sp_root, posix_root, ARRAY_LEN(posix_root));
+
     SVTest posix_name[] = {{"", ""}, {".", ""}, {"..", ".."}, {"/", ""}, {"a/b", "b"}, {"a/b.py", "b.py"}};
-    test_sv(P, sp_name, posix_name, ARRAY_LEN(posix_name));
-    
+    test_term(P, sp_name, posix_name, ARRAY_LEN(posix_name));
+
     SVTest posix_stem[] = {{"", ""}, {"a/b", "b"}, {"a/b.py", "b"}, {"a/.hgrc", ".hgrc"}, {"a/b.tar.gz", "b.tar"}};
-    test_sv(P, sp_stem, posix_stem, ARRAY_LEN(posix_stem));
-    
+    test_term(P, sp_stem, posix_stem, ARRAY_LEN(posix_stem));
+
     SVTest posix_suffix[] = {{"a/b.py", ".py"}, {"a/.hgrc", ""}, {"a/.hg.rc", ".rc"}, {"a/b.tar.gz", ".gz"}};
-    test_sv(P, sp_suffix, posix_suffix, ARRAY_LEN(posix_suffix));
+    test_term(P, sp_suffix, posix_suffix, ARRAY_LEN(posix_suffix));
     
     SVTest posix_parent[] = {{"a/b/c", "a/b"}, {"/a/b/c", "/a/b"}, {"/", "/"}, {"a", "."}};
     test_path(P, sp_parent, posix_parent, ARRAY_LEN(posix_parent));
@@ -179,19 +186,19 @@ int main(void) {
     printf("\nWindows Tests:\n");
     
     SVTest win_drive[] = {{"C:/a/b", "C:"}, {"/a/b", ""}};
-    test_sv(W, sp_drive, win_drive, ARRAY_LEN(win_drive));
-    
+    test_term(W, sp_drive, win_drive, ARRAY_LEN(win_drive));
+
     SVTest win_root[] = {{"C:/a/b", "\\"}, {"C:a/b", ""}};
-    test_sv(W, sp_root, win_root, ARRAY_LEN(win_root));
-    
+    test_term(W, sp_root, win_root, ARRAY_LEN(win_root));
+
     SVTest win_anchor[] = {{"C:/a/b", "C:\\"}, {"C:a/b", "C:"}};
-    test_sv(W, sp_anchor, win_anchor, ARRAY_LEN(win_anchor));
-    
+    test_term(W, sp_anchor, win_anchor, ARRAY_LEN(win_anchor));
+
     SVTest win_name[] = {{"C:/a/b.py", "b.py"}};
-    test_sv(W, sp_name, win_name, ARRAY_LEN(win_name));
-    
+    test_term(W, sp_name, win_name, ARRAY_LEN(win_name));
+
     SVTest win_suffix[] = {{"C:/a/b.py", ".py"}};
-    test_sv(W, sp_suffix, win_suffix, ARRAY_LEN(win_suffix));
+    test_term(W, sp_suffix, win_suffix, ARRAY_LEN(win_suffix));
     
     SVTest win_parent[] = {{"C:/a/b/c", "C:\\a\\b"}};
     test_path(W, sp_parent, win_parent, ARRAY_LEN(win_parent));
@@ -247,19 +254,19 @@ int main(void) {
     
     printf("\nEdge Cases:\n");
     
-    SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_SV(sp_name(&e1), ""); ASSERT_SV(sp_suffix(&e1), "");
-    SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_SV(sp_name(&e2), "");
-    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_SV(sp_name(&e3), "..");
-    SpPath e4 = sp_path_f("...", P); ASSERT_SV(sp_suffix(&e4), "");
-    
+    SpPath e1 = sp_path_f("", P); ASSERT_PATH(e1, "."); ASSERT_TERM(sp_name(&e1), ""); ASSERT_TERM(sp_suffix(&e1), "");
+    SpPath e2 = sp_path_f(".", P); ASSERT_PATH(e2, "."); ASSERT_TERM(sp_name(&e2), "");
+    SpPath e3 = sp_path_f("..", P); ASSERT_PATH(e3, ".."); ASSERT_TERM(sp_name(&e3), "..");
+    SpPath e4 = sp_path_f("...", P); ASSERT_TERM(sp_suffix(&e4), "");
+
     SpPath e5 = sp_path_f("a/b.c.d.e", P); SpSuffixes es5 = sp_suffixes(&e5);
     ASSERT(es5.count == 3); ASSERT_SV(es5.items[0], ".c"); ASSERT_SV(es5.items[1], ".d"); ASSERT_SV(es5.items[2], ".e");
-    
-    SpPath e6 = sp_path_f(".tar.gz", P); ASSERT_SV(sp_stem(&e6), ".tar"); ASSERT_SV(sp_suffix(&e6), ".gz");
-    
+
+    SpPath e6 = sp_path_f(".tar.gz", P); ASSERT_TERM(sp_stem(&e6), ".tar"); ASSERT_TERM(sp_suffix(&e6), ".gz");
+
     SpPath e7 = sp_path_f("file.txt", P);
-    ASSERT_SV(sp_name(&e7), "file.txt"); ASSERT_SV(sp_stem(&e7), "file");
-    ASSERT_SV(sp_suffix(&e7), ".txt"); ASSERT_PATH(sp_parent(&e7), ".");
+    ASSERT_TERM(sp_name(&e7), "file.txt"); ASSERT_TERM(sp_stem(&e7), "file");
+    ASSERT_TERM(sp_suffix(&e7), ".txt"); ASSERT_PATH(sp_parent(&e7), ".");
     
     SpPath e8 = sp_path_f("/a/b/c/d/e/f/g", P);
     ASSERT(sp_parts_count(&e8) == 8); ASSERT_PATH(sp_parent(&e8), "/a/b/c/d/e/f");
