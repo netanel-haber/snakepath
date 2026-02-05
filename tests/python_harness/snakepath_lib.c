@@ -17,6 +17,15 @@
         SpStr sv = sp_##fn(p); *data = sv.data; *len = sv.len; \
     }
 
+#define WRAP_TERM(fn) \
+    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) { \
+        SpTerm t = sp_##fn(p); \
+        size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1; \
+        memcpy(buf, t.buf, n); \
+        buf[n] = '\0'; \
+        *len = t.len; \
+    }
+
 #define WRAP_PATH_UNARY(fn) \
     SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpPath *out) { *out = sp_##fn(p); }
 
@@ -32,13 +41,13 @@
 #define WRAP_BOOL_BINARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
 
-/* Path -> SpStr */
-WRAP_STR(drive)
-WRAP_STR(root)
-WRAP_STR(anchor)
-WRAP_STR(name)
-WRAP_STR(stem)
-WRAP_STR(suffix)
+/* Path -> SpTerm (null-terminated component strings) */
+WRAP_TERM(drive)
+WRAP_TERM(root)
+WRAP_TERM(anchor)
+WRAP_TERM(name)
+WRAP_TERM(stem)
+WRAP_TERM(suffix)
 
 /* Path -> Path */
 WRAP_PATH_UNARY(parent)
@@ -50,8 +59,7 @@ WRAP_PATH_CSTR(with_suffix)
 WRAP_PATH_CSTR(join_one)
 
 SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, SpPath *out) {
-    SpStr sv = {s, len};
-    *out = sp_join_sv(p, sv);
+    *out = sp_join_n(p, s, len);
 }
 
 /* Path + Path -> Path */
@@ -129,8 +137,7 @@ SP_EXPORT void sp_path_new_wrap(const char *s, int flavor, SpPath *out) {
 }
 
 SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
-    SpStr sv = {s, len};
-    *out = sp_path_from_sv(sv, (SpFlavor)flavor);
+    *out = sp_path_from_n(s, len, (SpFlavor)flavor);
 }
 
 SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
@@ -235,31 +242,35 @@ SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
 }
 
 /* User/group info - returns: -1 = not implemented, 0 = success, 1 = error/not found */
-SP_EXPORT int sp_owner_wrap(const SpPath *p, const char **data, size_t *len) {
+SP_EXPORT int sp_owner_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
 #ifdef SP_WINDOWS
     (void)p;
-    *data = NULL;
+    buf[0] = '\0';
     *len = 0;
     return -1;  /* Not implemented on Windows */
 #else
-    SpStr s = sp_owner(p);
-    *data = s.data;
-    *len = s.len;
-    return s.data ? 0 : 1;
+    SpTerm t = sp_owner(p);
+    size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1;
+    memcpy(buf, t.buf, n);
+    buf[n] = '\0';
+    *len = t.len;
+    return t.len > 0 ? 0 : 1;
 #endif
 }
 
-SP_EXPORT int sp_group_wrap(const SpPath *p, const char **data, size_t *len) {
+SP_EXPORT int sp_group_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
 #ifdef SP_WINDOWS
     (void)p;
-    *data = NULL;
+    buf[0] = '\0';
     *len = 0;
     return -1;  /* Not implemented on Windows */
 #else
-    SpStr s = sp_group(p);
-    *data = s.data;
-    *len = s.len;
-    return s.data ? 0 : 1;
+    SpTerm t = sp_group(p);
+    size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1;
+    memcpy(buf, t.buf, n);
+    buf[n] = '\0';
+    *len = t.len;
+    return t.len > 0 ? 0 : 1;
 #endif
 }
 

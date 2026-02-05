@@ -17,8 +17,8 @@ cat <<'EOF' | cc -xc - -o demo &&
 
 int main(void) {
     SpPath boring = sp_path("/foo/bar.txt");
-    printf("BORING API: %s\n", sp_name(&boring).data);
-    printf("BORING API: %s\n", sp_stem(&boring).data);
+    printf("BORING API: %s\n", sp_name(&boring).buf);
+    printf("BORING API: %s\n", sp_stem(&boring).buf);
 
     const char* fluent =
         SPF("/etc")->join("nginx")->join("nginx.conf")->str();
@@ -52,12 +52,14 @@ SpPath p = sp_path_f("C:/x", SP_FLAVOR_WINDOWS); // Explicit Windows
 ### Path Components
 
 ```c
-SpStr name   = sp_name(&p);     // Final component: "file.txt"
-SpStr stem   = sp_stem(&p);     // Name without suffix: "file"
-SpStr suffix = sp_suffix(&p);   // Extension: ".txt"
-SpStr drive  = sp_drive(&p);    // Drive letter: "C:" (Windows)
-SpStr root   = sp_root(&p);     // Root: "/" or "\"
-SpStr anchor = sp_anchor(&p);   // Drive + root: "C:\"
+SpTerm name   = sp_name(&p);     // Final component: "file.txt"
+SpTerm stem   = sp_stem(&p);     // Name without suffix: "file"
+SpTerm suffix = sp_suffix(&p);   // Extension: ".txt"
+SpTerm drive  = sp_drive(&p);    // Drive letter: "C:" (Windows)
+SpTerm root   = sp_root(&p);     // Root: "/" or "\"
+SpTerm anchor = sp_anchor(&p);   // Drive + root: "C:\"
+// SpTerm has .buf (null-terminated) and .len fields
+printf("%s\n", name.buf);        // Direct %s usage works!
 ```
 
 ### Navigation
@@ -80,7 +82,7 @@ while (sp_parents_next(&pit, &par)) { /* use par */ }
 
 ```c
 SpPath joined = sp_join_one(&p, "subdir");
-SpPath joined = sp_join_sv(&p, sv);          // Join with SpStr (preserves embedded nulls)
+SpPath joined = sp_join_n(&p, data, len);    // Join with length (preserves embedded nulls)
 SpPath joined = sp_join(&p, "a", "b", "c");  // C only (variadic)
 SpPath joined = sp_joinpath(&p, &other);
 ```
@@ -160,7 +162,7 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #include "snakepath.h"
 
 // Path('a/b/c').parent.name -> "b"
-SpStr name = SPF("a/b/c")->parent()->name();
+SpTerm name = SPF("a/b/c")->parent()->name();
 
 // PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
 const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
@@ -188,9 +190,9 @@ SpPath child = sp_join_one(&p, "file.txt");
 |--------|---------|
 | `->path()` | `SpPath` |
 | `->str()` | `const char*` |
-| `->name()` `->stem()` `->suffix()` | `SpStr` |
-| `->drive()` `->root()` `->anchor()` | `SpStr` |
-| `->owner()` `->group()` | `SpStr` |
+| `->name()` `->stem()` `->suffix()` | `SpTerm` |
+| `->drive()` `->root()` `->anchor()` | `SpTerm` |
+| `->owner()` `->group()` | `SpTerm` |
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
@@ -202,10 +204,13 @@ SpPath child = sp_join_one(&p, "file.txt");
 ## Core Types
 
 ```c
-SpStr       { const char *data; size_t len; }        // String view
+SpStr       { const char *data; size_t len; }        // String view (non-owning)
+SpTerm      { char buf[256]; size_t len; }           // Terminated string (owning, null-terminated)
 SpPath      { char buf[4096]; size_t len; SpFlavor flavor; }
 SpFlavor    { SP_FLAVOR_NATIVE, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS }
 ```
+
+**SpTerm vs SpStr:** Component functions (`name`, `stem`, `suffix`, `drive`, `root`, `anchor`) return `SpTerm` which owns its data and is null-terminated, allowing direct `%s` usage. `SpStr` is a view into existing memory (used internally and for iteration).
 
 ## Configuration
 
@@ -399,7 +404,7 @@ When adding a new method, you need to update multiple files. The library provide
 
 | Macro | Signature | Use For |
 |-------|-----------|---------|
-| `WRAP_STR(fn)` | `Path → SpStr` | String view getters (name, stem, suffix, etc.) |
+| `WRAP_TERM(fn)` | `Path → SpTerm` | Component getters (name, stem, suffix, drive, root, anchor, owner, group) |
 | `WRAP_PATH_UNARY(fn)` | `Path → Path` | Unary path transforms (parent, absolute) |
 | `WRAP_PATH_CSTR(fn)` | `Path + cstr → Path` | Methods taking a string arg (with_name, join_one) |
 | `WRAP_PATH_PATH(fn)` | `Path + Path → Path` | Methods taking another path (joinpath, relative_to) |
