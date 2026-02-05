@@ -2490,16 +2490,31 @@ static void sp_priv_glob_close_handle(void *handle) {
 #endif
 }
 
+#ifdef SP_WINDOWS
+/* Build Windows FindFirstFile search pattern "dir\*" into buf. Returns pattern length. */
+static size_t sp_priv_win_search_pattern(const SpPath *dir, char *buf) {
+    size_t len = dir->len;
+    if (len == 0) {
+        buf[0] = '.';
+        buf[1] = '\\';
+        buf[2] = '*';
+        buf[3] = '\0';
+        return 4;
+    }
+    memcpy(buf, dir->buf, len);
+    if (!sp_priv_is_sep(buf[len - 1], dir->flavor)) {
+        buf[len++] = '\\';
+    }
+    buf[len++] = '*';
+    buf[len] = '\0';
+    return len;
+}
+#endif
+
 static void *sp_priv_glob_open_dir(const SpPath *dir) {
 #ifdef SP_WINDOWS
     char search[SP_PATH_MAX + 3];
-    size_t len = dir->len;
-    if (len == 0) { search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0'; }
-    else {
-        memcpy(search, dir->buf, len);
-        if (!sp_priv_is_sep(search[len - 1], dir->flavor)) search[len++] = '\\';
-        search[len++] = '*'; search[len] = '\0';
-    }
+    sp_priv_win_search_pattern(dir, search);
     WIN32_FIND_DATAA fd;
     HANDLE handle = FindFirstFileA(search, &fd);
     return (handle == INVALID_HANDLE_VALUE) ? NULL : handle;
@@ -2793,41 +2808,41 @@ SpPath sp_expanduser(const SpPath *p) {
 
 /* ============ User/Group Info Implementation ============ */
 
-SpTerm sp_owner(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-#ifdef SP_WINDOWS
-    /* owner() is not implemented on Windows - Python bindings raise NotImplementedError */
-    (void)p;
-    return sp_priv_term(NULL, 0);
-#else
+#ifndef SP_WINDOWS
+/* Helper for sp_owner/sp_group - looks up name by uid or gid */
+static SpTerm sp_priv_id_to_name(const SpPath *p, bool get_owner) {
     if (sp_priv_has_embedded_null(p)) return sp_priv_term(NULL, 0);
     SpStatResult st = sp_stat(p);
     if (!st.valid) return sp_priv_term(NULL, 0);
+    const char *name = NULL;
+    if (get_owner) {
+        struct passwd *pw = getpwuid(st.sp_uid);
+        if (pw) name = pw->pw_name;
+    } else {
+        struct group *gr = getgrgid(st.sp_gid);
+        if (gr) name = gr->gr_name;
+    }
+    return name ? sp_priv_term(name, strlen(name)) : sp_priv_term(NULL, 0);
+}
+#endif
 
-    struct passwd *pw = getpwuid(st.sp_uid);
-    if (!pw) return sp_priv_term(NULL, 0);
-    const char *name = pw->pw_name;
-    if (!name) return sp_priv_term(NULL, 0);
-    return sp_priv_term(name, strlen(name));
+SpTerm sp_owner(const SpPath *p) {
+    SP_ASSERT_PATH_INVARIANT(p);
+#ifdef SP_WINDOWS
+    (void)p;
+    return sp_priv_term(NULL, 0);
+#else
+    return sp_priv_id_to_name(p, true);
 #endif
 }
 
 SpTerm sp_group(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
-    /* group() is not implemented on Windows - Python bindings raise NotImplementedError */
     (void)p;
     return sp_priv_term(NULL, 0);
 #else
-    if (sp_priv_has_embedded_null(p)) return sp_priv_term(NULL, 0);
-    SpStatResult st = sp_stat(p);
-    if (!st.valid) return sp_priv_term(NULL, 0);
-
-    struct group *gr = getgrgid(st.sp_gid);
-    if (!gr) return sp_priv_term(NULL, 0);
-    const char *name = gr->gr_name;
-    if (!name) return sp_priv_term(NULL, 0);
-    return sp_priv_term(name, strlen(name));
+    return sp_priv_id_to_name(p, false);
 #endif
 }
 
@@ -2845,17 +2860,8 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     it.dir = sp_path_copy(p);
 
 #ifdef SP_WINDOWS
-    /* Build search pattern: dir\* */
     char search[SP_PATH_MAX + 3];
-    const char *dir_str = sp_str(&it.dir);
-    size_t len = it.dir.len;
-    if (len == 0) {
-        search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0';
-    } else {
-        memcpy(search, dir_str, len);
-        if (!sp_priv_is_sep(search[len - 1], it.dir.flavor)) search[len++] = '\\';
-        search[len++] = '*'; search[len] = '\0';
-    }
+    sp_priv_win_search_pattern(&it.dir, search);
     WIN32_FIND_DATAA *fd = (WIN32_FIND_DATAA *)it.priv_.find_data;
     it.priv_.handle = FindFirstFileA(search, fd);
     if (it.priv_.handle == INVALID_HANDLE_VALUE) {
@@ -2865,8 +2871,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     it.priv_.first = true;
     it.done = 0;
 #else
-    const char *dir_str = sp_str(&it.dir);
-    it.priv_.handle = opendir(dir_str);
+    it.priv_.handle = opendir(sp_str(&it.dir));
     if (!it.priv_.handle) return it;
     it.done = 0;
 #endif
@@ -2953,15 +2958,7 @@ static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
 #ifdef SP_WINDOWS
     (void)follow_symlinks;  /* Not used on Windows - FindFirstFile handles reparse points */
     char search[SP_PATH_MAX + 3];
-    const char *dir_str = sp_str(dir);
-    size_t len = dir->len;
-    if (len == 0) {
-        search[0] = '.'; search[1] = '\\'; search[2] = '*'; search[3] = '\0';
-    } else {
-        memcpy(search, dir_str, len);
-        if (!sp_priv_is_sep(search[len - 1], dir->flavor)) search[len++] = '\\';
-        search[len++] = '*'; search[len] = '\0';
-    }
+    sp_priv_win_search_pattern(dir, search);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(search, &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -3107,11 +3104,6 @@ static bool sp_priv_walk_push_ex(SpWalkIter *it, const SpPath *path, int marker)
     return true;
 }
 
-/* Push a path for scanning (default behavior) */
-static bool sp_priv_walk_push(SpWalkIter *it, const SpPath *path) {
-    return sp_priv_walk_push_ex(it, path, SP_WALK_MARKER_SCAN);
-}
-
 /* Pop a path from the pending stack, returns marker via out_marker */
 static bool sp_priv_walk_pop_ex(SpWalkIter *it, SpPath *out, int *out_marker) {
     if (it->priv_.pending_count == 0) return false;
@@ -3150,7 +3142,7 @@ bool sp_walk_begin(SpWalkIter *it, const SpPath *p, bool top_down, bool follow_s
     it->priv_.flavor = p->flavor;
 
     /* Push initial directory onto pending stack */
-    if (!sp_priv_walk_push(it, p)) {
+    if (!sp_priv_walk_push_ex(it, p, SP_WALK_MARKER_SCAN)) {
         it->priv_.state = -1;
         return false;
     }
@@ -3207,7 +3199,7 @@ bool sp_walk_next(SpWalkIter *it) {
             /* Top-down: push remaining subdirs in reverse order (user may have modified dirname_count) */
             for (size_t i = it->dirname_count; i > 0; i--) {
                 SpPath subdir = sp_join_one(&it->dirpath, it->dirnames[i - 1]);
-                sp_priv_walk_push(it, &subdir);
+                sp_priv_walk_push_ex(it, &subdir, SP_WALK_MARKER_SCAN);
             }
             it->priv_.state = 0;  /* Go process next */
         }
