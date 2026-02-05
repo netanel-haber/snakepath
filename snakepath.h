@@ -2094,54 +2094,24 @@ SpPath sp_readlink(const SpPath *p) {
     }
     CloseHandle(h);
 
-    /* Parse REPARSE_DATA_BUFFER structure */
+    /* Parse REPARSE_DATA_BUFFER structure - symlinks and junctions have similar layout */
     DWORD tag = *(DWORD *)reparse_buf;
-    if (tag == 0xA000000C /* IO_REPARSE_TAG_SYMLINK */) {
-        /* SymbolicLinkReparseBuffer starts at offset 8 */
-        WORD subst_offset = *(WORD *)(reparse_buf + 8);
-        WORD subst_len = *(WORD *)(reparse_buf + 10);
-        WORD print_offset = *(WORD *)(reparse_buf + 12);
-        WORD print_len = *(WORD *)(reparse_buf + 14);
-        DWORD flags = *(DWORD *)(reparse_buf + 16);
-        (void)subst_offset; (void)subst_len; (void)flags;
-
-        /* Use PrintName (more readable than SubstituteName) */
-        WCHAR *print_name = (WCHAR *)(reparse_buf + 20 + print_offset);
-        int print_chars = print_len / 2;
-
-        /* Convert UTF-16 to UTF-8 */
-        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_chars,
-                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
-        if (utf8_len > 0) {
-            result.len = SP_PRIV_CAST(size_t, utf8_len);
-            result.buf[result.len] = '\0';
-            sp_priv_normalize(result.buf, &result.len, result.flavor);
-        } else {
-            result.buf[0] = SP_ERR_OTHER;
-        }
-    } else if (tag == 0xA0000003 /* IO_REPARSE_TAG_MOUNT_POINT (junction) */) {
-        /* MountPointReparseBuffer - similar structure */
-        WORD subst_offset = *(WORD *)(reparse_buf + 8);
-        WORD subst_len = *(WORD *)(reparse_buf + 10);
-        WORD print_offset = *(WORD *)(reparse_buf + 12);
-        WORD print_len = *(WORD *)(reparse_buf + 14);
-        (void)subst_offset; (void)subst_len;
-
-        WCHAR *print_name = (WCHAR *)(reparse_buf + 16 + print_offset);
-        int print_chars = print_len / 2;
-
-        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_chars,
-                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
-        if (utf8_len > 0) {
-            result.len = SP_PRIV_CAST(size_t, utf8_len);
-            result.buf[result.len] = '\0';
-            sp_priv_normalize(result.buf, &result.len, result.flavor);
-        } else {
-            result.buf[0] = SP_ERR_OTHER;
-        }
-    } else {
-        /* Not a symlink or junction */
+    size_t data_offset = (tag == 0xA000000C) ? 20 : (tag == 0xA0000003) ? 16 : 0;
+    if (data_offset == 0) {
         result.buf[0] = SP_ERR_OTHER;
+    } else {
+        WORD print_offset = *(WORD *)(reparse_buf + 12);
+        WORD print_len = *(WORD *)(reparse_buf + 14);
+        WCHAR *print_name = (WCHAR *)(reparse_buf + data_offset + print_offset);
+        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_len / 2,
+                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
+        if (utf8_len > 0) {
+            result.len = SP_PRIV_CAST(size_t, utf8_len);
+            result.buf[result.len] = '\0';
+            sp_priv_normalize(result.buf, &result.len, result.flavor);
+        } else {
+            result.buf[0] = SP_ERR_OTHER;
+        }
     }
 #else
     char buf[SP_PATH_MAX];
@@ -2418,78 +2388,42 @@ bool sp_rmdir(const SpPath *p) {
 #endif
 }
 
-SpPath sp_rename(const SpPath *p, const SpPath *target) {
+static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_replace) {
     SP_ASSERT_PATH_INVARIANT(p);
     SP_ASSERT_PATH_INVARIANT(target);
     SpPath result = *target;
 
     if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
+        return sp_priv_error_path(SP_ERR_OTHER);
     }
 
     const char *src_str = sp_str(p);
     const char *dst_str = sp_str(target);
 
 #ifdef SP_WINDOWS
-    /* MoveFileExA without MOVEFILE_REPLACE_EXISTING won't overwrite */
-    if (!MoveFileExA(src_str, dst_str, 0)) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
+    if (!MoveFileExA(src_str, dst_str, allow_replace ? MOVEFILE_REPLACE_EXISTING : 0)) {
+        return sp_priv_error_path(SP_ERR_OTHER);
     }
 #else
-    /* POSIX rename does NOT replace, it fails if target exists */
-    struct stat st;
-    if (stat(dst_str, &st) == 0) {
-        /* Target exists - check if it's the same file (same inode) */
-        struct stat src_st;
-        if (stat(src_str, &src_st) == 0 && src_st.st_ino == st.st_ino && src_st.st_dev == st.st_dev) {
-            /* Same file, rename is a no-op */
-            return result;
+    if (!allow_replace) {
+        struct stat st;
+        if (stat(dst_str, &st) == 0) {
+            struct stat src_st;
+            if (stat(src_str, &src_st) == 0 && src_st.st_ino == st.st_ino && src_st.st_dev == st.st_dev) {
+                return result;  /* Same file, no-op */
+            }
+            return sp_priv_error_path(SP_ERR_OTHER);
         }
-        /* Target exists and is different - fail like Python does for rename() vs replace() */
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
     }
     if (rename(src_str, dst_str) != 0) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
+        return sp_priv_error_path(SP_ERR_OTHER);
     }
 #endif
     return result;
 }
 
-SpPath sp_replace(const SpPath *p, const SpPath *target) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(target);
-    SpPath result = *target;
-
-    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
-    }
-
-    const char *src_str = sp_str(p);
-    const char *dst_str = sp_str(target);
-
-#ifdef SP_WINDOWS
-    /* MOVEFILE_REPLACE_EXISTING allows atomic replace */
-    if (!MoveFileExA(src_str, dst_str, MOVEFILE_REPLACE_EXISTING)) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
-    }
-#else
-    /* POSIX rename is atomic and replaces target */
-    if (rename(src_str, dst_str) != 0) {
-        result.len = 0;
-        result.buf[0] = SP_ERR_OTHER;
-    }
-#endif
-    return result;
-}
+SpPath sp_rename(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, false); }
+SpPath sp_replace(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, true); }
 
 bool sp_chmod(const SpPath *p, unsigned int mode) {
     SP_ASSERT_PATH_INVARIANT(p);
@@ -2735,54 +2669,30 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
 
 /* ============ Home Directory and User Expansion Implementation ============ */
 
+/* Helper: set path from string if valid */
+static bool sp_priv_set_path_str(SpPath *result, const char *s) {
+    if (!s || !*s) return false;
+    size_t len = strlen(s);
+    if (len >= SP_PATH_MAX) return false;
+    memcpy(result->buf, s, len);
+    result->len = len;
+    result->buf[len] = '\0';
+    sp_priv_normalize(result->buf, &result->len, result->flavor);
+    return true;
+}
+
 SpPath sp_home(SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
     SpPath result = SP_PRIV_ZERO;
     result.flavor = flavor;
 
 #ifdef SP_WINDOWS
-    /* On Windows, use %USERPROFILE% environment variable */
-    char *userprofile = getenv("USERPROFILE");
-    if (userprofile) {
-        size_t len = strlen(userprofile);
-        if (len < SP_PATH_MAX) {
-            memcpy(result.buf, userprofile, len);
-            result.len = len;
-            result.buf[result.len] = '\0';
-            sp_priv_normalize(result.buf, &result.len, flavor);
-            return result;
-        }
-    }
+    if (sp_priv_set_path_str(&result, getenv("USERPROFILE"))) return result;
 #else
-    /* On POSIX, try HOME first, then getpwuid */
-    char *home = getenv("HOME");
-    if (home && *home) {
-        size_t len = strlen(home);
-        if (len < SP_PATH_MAX) {
-            memcpy(result.buf, home, len);
-            result.len = len;
-            result.buf[result.len] = '\0';
-            sp_priv_normalize(result.buf, &result.len, flavor);
-            return result;
-        }
-    }
-    /* Fall back to passwd entry */
+    if (sp_priv_set_path_str(&result, getenv("HOME"))) return result;
     struct passwd *pw = getpwuid(getuid());
-    if (pw) {
-        const char *dir = pw->pw_dir;
-        if (dir) {
-            size_t len = strlen(dir);
-            if (len < SP_PATH_MAX) {
-                memcpy(result.buf, dir, len);
-                result.len = len;
-                result.buf[result.len] = '\0';
-                sp_priv_normalize(result.buf, &result.len, flavor);
-                return result;
-            }
-        }
-    }
+    if (pw && sp_priv_set_path_str(&result, pw->pw_dir)) return result;
 #endif
-    /* Return empty path on failure */
     result.buf[0] = SP_ERR_OTHER;
     return result;
 }
