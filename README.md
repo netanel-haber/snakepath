@@ -20,9 +20,8 @@ int main(void) {
     printf("BORING API: %s\n", sp_name(&boring).buf);
     printf("BORING API: %s\n", sp_stem(&boring).buf);
 
-    const char* fluent =
-        SPF("/etc")->join("nginx")->join("nginx.conf")->str();
-    printf("FLUENT API: %s\n", fluent);
+    SpPath fluent = SPF("/etc")->join("nginx")->join("nginx.conf")->path();
+    printf("FLUENT API: %s\n", sp_str(&fluent));
 }
 EOF
 ./demo
@@ -164,10 +163,10 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 // Path('a/b/c').parent.name -> "b"
 SpTerm name = SPF("a/b/c")->parent()->name();
 
-// PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
-const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
+// PurePosixPath('/etc').joinpath('init.d', 'apache2') -> PurePosixPath('/etc/init.d/apache2')
+SpPath p = SPF_P("/etc")->join("init.d")->join("apache2")->path();
 
-SpPath p = SPF_W("C:/Users")->join("docs")->path();
+SpPath w = SPF_W("C:/Users")->join("docs")->path();
 SpPath child = sp_join_one(&p, "file.txt");
 ```
 
@@ -189,7 +188,6 @@ SpPath child = sp_join_one(&p, "file.txt");
 | Method | Returns |
 |--------|---------|
 | `->path()` | `SpPath` |
-| `->str()` | `const char*` |
 | `->name()` `->stem()` `->suffix()` | `SpTerm` |
 | `->drive()` `->root()` `->anchor()` | `SpTerm` |
 | `->owner()` `->group()` | `SpTerm` |

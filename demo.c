@@ -91,14 +91,14 @@ int main(void) {
 
     printf("\n=== CHAINED TRANSFORMATIONS ===\n\n");
 
-    const char *result = SPF_P("/home/nhaber/snakepath/test.c")
+    SpPath result = SPF_P("/home/nhaber/snakepath/test.c")
         ->parent()
         ->join("build")
         ->join("release")
         ->with_name("libsnakepath.so")
-        ->str();
+        ->path();
 
-    printf("  %s\n", result);
+    printf("  %s\n", sp_str(&result));
 
     printf("\n=== ITERATE PATH PARTS ===\n\n");
 

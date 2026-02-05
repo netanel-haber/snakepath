@@ -528,7 +528,6 @@ struct sp_fluent_ {
     SpTerm (*anchor)(void);
     SpTerm (*owner)(void);
     SpTerm (*group)(void);
-    const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
     bool (*is_file)(void);
@@ -3341,7 +3340,6 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
 #define SP_FLUENT_TERM_VOID(X)                                                                                         \
     X(path, SpPath, sp_priv_f_ctx)                                                                                     \
     X(suffixes, SpSuffixes, sp_suffixes(&sp_priv_f_ctx))                                                               \
-    X(str, const char *, sp_str(&sp_priv_f_ctx))                                                                       \
     X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
     X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
     X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))                                                                         \
@@ -3400,7 +3398,6 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_anchor_,
     sp_priv_f_owner_,
     sp_priv_f_group_,
-    sp_priv_f_str_,
     sp_priv_f_is_absolute_,
     sp_priv_f_is_relative_to_,
     sp_priv_f_is_file_,
