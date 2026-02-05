@@ -7,7 +7,7 @@ snakepath is a C99 STB-style header-only library implementing Python's pathlib A
 
 ### Code Philosophy
 - **First-class implementations**: All logic belongs in `snakepath.h`, not in wrappers. The Python bindings should be thin FFI adapters only.
-- **Minimize API surface**: Consolidate related functions, share internal implementations (e.g., `sp_priv_join_len` used by `sp_join_one`, `sp_join_sv`, `sp_joinpath`).
+- **Minimize API surface**: Consolidate related functions, share internal implementations (e.g., `sp_priv_join_len` used by `sp_join_one`, `sp_join_n`, `sp_joinpath`).
 - **No special-casing in wrappers**: If a wrapper needs logic, that logic should be upstreamed to the core library.
 
 ### Development Process
@@ -111,8 +111,8 @@ Parent iteration (`sp_parents_begin/next`, `sp_parents_count`) terminates at the
 
 ### Embedded Null Handling
 Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
-- Uses `SpStr` (data + length) to preserve full content
-- `sp_join_sv()` joins with length-aware string views
+- Uses `p->buf` + `p->len` to preserve full content
+- `sp_join_n(p, data, len)` joins with length-aware strings
 - `sp_is_file()`/`sp_is_dir()` scan `p->buf[0..p->len]` for nulls and return false
 
 ### Python Bindings Architecture
@@ -128,10 +128,10 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 - `sp_stat_eq()` compares two stat results (mode, ino, dev, nlink, uid, gid, size)
 
 ### API Patterns
-| Pattern | C string | String view | SpPath |
+| Pattern | C string | With length | SpPath |
 |---------|----------|-------------|--------|
-| Create | `sp_path_new()` | `sp_path_from_sv()` | `sp_path_copy()` |
-| Join | `sp_join_one()` | `sp_join_sv()` | `sp_joinpath()` |
+| Create | `sp_path_new()` | `sp_path_from_n()` | `sp_path_copy()` |
+| Join | `sp_join_one()` | `sp_join_n()` | `sp_joinpath()` |
 
 ### Glob Implementation
 - `sp_glob_begin()` / `sp_glob_next()` / `sp_glob_end()` - iterator-based API with internal stack

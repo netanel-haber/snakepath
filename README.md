@@ -162,7 +162,7 @@ Enable with `#define SNAKEPATH_FLUENT` before including.
 #include "snakepath.h"
 
 // Path('a/b/c').parent.name -> "b"
-SpStr name = SPF("a/b/c")->parent()->name();
+SpTerm name = SPF("a/b/c")->parent()->name();
 
 // PurePosixPath('/etc').joinpath('init.d').name -> "init.d"
 const char *s = SPF_P("/etc")->join("init.d")->join("apache2")->str();
@@ -404,7 +404,7 @@ When adding a new method, you need to update multiple files. The library provide
 
 | Macro | Signature | Use For |
 |-------|-----------|---------|
-| `WRAP_STR(fn)` | `Path → SpStr` | String view getters (name, stem, suffix, etc.) |
+| `WRAP_TERM(fn)` | `Path → SpTerm` | Component getters (name, stem, suffix, drive, root, anchor, owner, group) |
 | `WRAP_PATH_UNARY(fn)` | `Path → Path` | Unary path transforms (parent, absolute) |
 | `WRAP_PATH_CSTR(fn)` | `Path + cstr → Path` | Methods taking a string arg (with_name, join_one) |
 | `WRAP_PATH_PATH(fn)` | `Path + Path → Path` | Methods taking another path (joinpath, relative_to) |
