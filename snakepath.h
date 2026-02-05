@@ -198,12 +198,11 @@ typedef struct {
 /* ============ Core Functions ============ */
 
 SpPath sp_path_new(const char *s, SpPathOpts opts);
-SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor);
+SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor);
 SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor);
 SpPath sp_path_copy(const SpPath *p);
 
 const char *sp_str(const SpPath *p);
-SpStr sp_as_sv(const SpPath *p);
 void sp_as_posix(const SpPath *p, char *out, size_t out_size);
 
 SpTerm sp_drive(const SpPath *p);
@@ -223,7 +222,7 @@ SpParentsIter sp_parents_begin(const SpPath *p);
 bool sp_parents_next(SpParentsIter *it, SpPath *out);
 
 SpPath sp_join_one(const SpPath *base, const char *other);
-SpPath sp_join_sv(const SpPath *base, SpStr other);
+SpPath sp_join_n(const SpPath *base, const char *s, size_t len);
 SpPath sp_join_impl(const SpPath *base, const char **parts);
 SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
@@ -315,8 +314,8 @@ SpPath sp_home(SpFlavor flavor);  /* get user's home directory */
 SpPath sp_expanduser(const SpPath *p);  /* expand ~ to home directory */
 
 /* User/group info */
-SpStr sp_owner(const SpPath *p);  /* get file owner name */
-SpStr sp_group(const SpPath *p);  /* get file group name */
+SpTerm sp_owner(const SpPath *p);  /* get file owner name */
+SpTerm sp_group(const SpPath *p);  /* get file group name */
 
 /* Directory iteration */
 typedef struct {
@@ -527,8 +526,8 @@ struct sp_fluent_ {
     SpTerm (*drive)(void);
     SpTerm (*root)(void);
     SpTerm (*anchor)(void);
-    SpStr (*owner)(void);
-    SpStr (*group)(void);
+    SpTerm (*owner)(void);
+    SpTerm (*group)(void);
     const char *(*str)(void);
     bool (*is_absolute)(void);
     bool (*is_relative_to)(const SpPath *);
@@ -886,17 +885,17 @@ static inline SpPath sp_priv_error_path(char err_code) {
 }
 
 SpPath sp_path_new(const char *s, SpPathOpts opts) {
-    return sp_path_from_sv(SP_PRIV_STR(s, s ? strlen(s) : 0), opts.flavor);
+    return sp_path_from_n(s, s ? strlen(s) : 0, opts.flavor);
 }
 
-SpPath sp_path_from_sv(SpStr sv, SpFlavor flavor) {
+SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
     SpPath p = SP_PRIV_ZERO;
     p.flavor = flavor;
-    p.len = sv.len;
+    p.len = len;
     if (p.len >= SP_PATH_MAX) p.len = SP_PATH_MAX - 1;
-    if (sv.data && p.len > 0) {
-        memcpy(p.buf, sv.data, p.len);
+    if (s && p.len > 0) {
+        memcpy(p.buf, s, p.len);
     }
     p.buf[p.len] = '\0';
     sp_priv_normalize(p.buf, &p.len, p.flavor);
@@ -938,11 +937,6 @@ SpPath sp_path_copy(const SpPath *p) {
 const char *sp_str(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     return p->len == 0 ? "." : p->buf;
-}
-
-SpStr sp_as_sv(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    return p->len == 0 ? SP_PRIV_STR(".", 1) : SP_PRIV_STR(p->buf, p->len);
 }
 
 void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
@@ -1136,8 +1130,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
     /* Check if other has root */
     if (olen > 0 && sp_priv_is_sep(other[0], flavor)) {
         if (sp_priv_has_drive(other, olen, flavor) || sp_priv_is_unc(other, olen, flavor)) {
-            SpStr sv = {other, olen};
-            return sp_path_from_sv(sv, flavor);
+            return sp_path_from_n(other, olen, flavor);
         }
         /* Root only - keep drive from base */
         size_t dlen = sp_priv_drive_len(base->buf, base->len, flavor);
@@ -1151,8 +1144,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
-        SpStr sv = {other, olen};
-        return sp_path_from_sv(sv, flavor);
+        return sp_path_from_n(other, olen, flavor);
     }
 
     /* Check if other has drive */
@@ -1167,8 +1159,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
         }
         if (same) {
             if (olen > 2 && sp_priv_is_sep(other[2], flavor)) {
-                SpStr sv = {other, olen};
-                return sp_path_from_sv(sv, flavor);
+                return sp_path_from_n(other, olen, flavor);
             }
             SpPath r = SP_PRIV_ZERO;
             r.flavor = flavor;
@@ -1183,8 +1174,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
-        SpStr sv = {other, olen};
-        return sp_path_from_sv(sv, flavor);
+        return sp_path_from_n(other, olen, flavor);
     }
 
     /* Relative path - simple join */
@@ -1208,11 +1198,11 @@ SpPath sp_join_one(const SpPath *base, const char *other) {
     return sp_priv_join_len(base, other, strlen(other));
 }
 
-SpPath sp_join_sv(const SpPath *base, SpStr other) {
+SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
     SP_ASSERT_PATH_INVARIANT(base);
-    if (other.len == 0 || !other.data) return sp_path_copy(base);
-    if (base->len == 0) return sp_path_from_sv(other, base->flavor);
-    return sp_priv_join_len(base, other.data, other.len);
+    if (len == 0 || !s) return sp_path_copy(base);
+    if (base->len == 0) return sp_path_from_n(s, len, base->flavor);
+    return sp_priv_join_len(base, s, len);
 }
 
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
@@ -2856,7 +2846,7 @@ SpPath sp_expanduser(const SpPath *p) {
             return sp_join_one(&home, protected_path);
         }
 
-        return sp_join_sv(&home, SP_PRIV_STR(rest, rest_len));
+        return sp_join_n(&home, rest, rest_len);
     }
 
 #ifndef SP_WINDOWS
@@ -2904,41 +2894,41 @@ SpPath sp_expanduser(const SpPath *p) {
 
 /* ============ User/Group Info Implementation ============ */
 
-SpStr sp_owner(const SpPath *p) {
+SpTerm sp_owner(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
     /* owner() is not implemented on Windows - Python bindings raise NotImplementedError */
     (void)p;
-    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    return sp_priv_term(NULL, 0);
 #else
-    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (sp_priv_has_embedded_null(p)) return sp_priv_term(NULL, 0);
     SpStatResult st = sp_stat(p);
-    if (!st.valid) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (!st.valid) return sp_priv_term(NULL, 0);
 
     struct passwd *pw = getpwuid(st.sp_uid);
-    if (!pw) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (!pw) return sp_priv_term(NULL, 0);
     const char *name = pw->pw_name;
-    if (!name) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(name, strlen(name));
+    if (!name) return sp_priv_term(NULL, 0);
+    return sp_priv_term(name, strlen(name));
 #endif
 }
 
-SpStr sp_group(const SpPath *p) {
+SpTerm sp_group(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
 #ifdef SP_WINDOWS
     /* group() is not implemented on Windows - Python bindings raise NotImplementedError */
     (void)p;
-    return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    return sp_priv_term(NULL, 0);
 #else
-    if (sp_priv_has_embedded_null(p)) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (sp_priv_has_embedded_null(p)) return sp_priv_term(NULL, 0);
     SpStatResult st = sp_stat(p);
-    if (!st.valid) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (!st.valid) return sp_priv_term(NULL, 0);
 
     struct group *gr = getgrgid(st.sp_gid);
-    if (!gr) return SP_PRIV_STR(SP_PRIV_NULL, 0);
+    if (!gr) return sp_priv_term(NULL, 0);
     const char *name = gr->gr_name;
-    if (!name) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(name, strlen(name));
+    if (!name) return sp_priv_term(NULL, 0);
+    return sp_priv_term(name, strlen(name));
 #endif
 }
 
@@ -3365,8 +3355,7 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     X(is_junction, bool, sp_is_junction(&sp_priv_f_ctx))
 #define SP_FLUENT_TERM_TERM(X)                                                                                         \
     X(name, SpTerm, sp_name) X(stem, SpTerm, sp_stem) X(suffix, SpTerm, sp_suffix) X(drive, SpTerm, sp_drive)          \
-        X(root, SpTerm, sp_root) X(anchor, SpTerm, sp_anchor)
-#define SP_FLUENT_TERM_STR(X) X(owner, SpStr, sp_owner) X(group, SpStr, sp_group)
+        X(root, SpTerm, sp_root) X(anchor, SpTerm, sp_anchor) X(owner, SpTerm, sp_owner) X(group, SpTerm, sp_group)
 #define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser)
 #define SP_FLUENT_CHAIN_STR(X)                                                                                         \
     X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
@@ -3387,7 +3376,6 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     }
 SP_FLUENT_TERM_VOID(SP_GEN_TERM_VOID)
 SP_FLUENT_TERM_TERM(SP_GEN_TERM_STR)
-SP_FLUENT_TERM_STR(SP_GEN_TERM_STR)
 static bool sp_priv_f_is_relative_to_(const SpPath *o) {
     sp_priv_f_ctx_active = false;
     return sp_is_relative_to(&sp_priv_f_ctx, o);

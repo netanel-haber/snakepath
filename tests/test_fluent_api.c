@@ -240,11 +240,11 @@ int main(void) {
 
 #ifndef _WIN32
     /* Path(__FILE__).owner() returns non-empty string (POSIX only) */
-    { SpStr o = SPF(__FILE__)->owner();
+    { SpTerm o = SPF(__FILE__)->owner();
       ASSERT(o.len > 0); }
 
     /* Path(__FILE__).group() returns non-empty string (POSIX only) */
-    { SpStr g = SPF(__FILE__)->group();
+    { SpTerm g = SPF(__FILE__)->group();
       ASSERT(g.len > 0); }
 #endif
 

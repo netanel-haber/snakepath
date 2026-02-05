@@ -82,7 +82,7 @@ while (sp_parents_next(&pit, &par)) { /* use par */ }
 
 ```c
 SpPath joined = sp_join_one(&p, "subdir");
-SpPath joined = sp_join_sv(&p, sv);          // Join with SpStr (preserves embedded nulls)
+SpPath joined = sp_join_n(&p, data, len);    // Join with length (preserves embedded nulls)
 SpPath joined = sp_join(&p, "a", "b", "c");  // C only (variadic)
 SpPath joined = sp_joinpath(&p, &other);
 ```
@@ -192,7 +192,7 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->str()` | `const char*` |
 | `->name()` `->stem()` `->suffix()` | `SpTerm` |
 | `->drive()` `->root()` `->anchor()` | `SpTerm` |
-| `->owner()` `->group()` | `SpStr` |
+| `->owner()` `->group()` | `SpTerm` |
 | `->suffixes()` | `SpSuffixes` |
 | `->is_absolute()` | `bool` |
 | `->is_relative_to(&p)` | `bool` |
