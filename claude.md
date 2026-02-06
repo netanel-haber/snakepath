@@ -123,7 +123,7 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 
 ### stat() Implementation
 - `sp_stat()` follows symlinks (like Python's `Path.stat()` with default `follow_symlinks=True`)
-- `sp_lstat()` (no symlink following) is not yet implemented
+- `sp_lstat()` does not follow symlinks (like Python's `Path.lstat()`)
 - Python binding asserts `follow_symlinks=True` and raises AssertionError otherwise
 - `sp_stat_eq()` compares two stat results (mode, ino, dev, nlink, uid, gid, size)
 
@@ -152,59 +152,18 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 The order matters for patterns like `**/dir*/**` - must yield `dirC/dirD`, not just `dirC`.
 
 ### Iterator Patterns
-The library has three iterators:
+The library has four iterators:
 - `SpPartsIter` - string cursor over path components
 - `SpParentsIter` - generates derived parent paths
 - `SpGlobIter` - directory traversal for glob matching
 - `SpIterdirIter` - single-level directory listing
-- `SpWalkIter` - recursive directory traversal
 
 All follow the same API pattern (`begin`/`next`/`end`).
 
-### Walk Implementation (BYOS Pattern)
-The walk API uses "Bring Your Own Storage" (BYOS) pattern for memory-efficient, allocation-free traversal with configurable depth limits.
+### Walk Implementation
+`sp_walk()` uses callback-based recursive traversal. It's allocation-free (uses the program stack) and walks the entire tree without depth limits.
 
-**Problem:** Tree traversal either uses real stack (limited depth, can overflow) or heap allocation (violates no-malloc constraint).
-
-**Solution:** Caller provides storage buffer; library uses it for pending work items.
-
-**Three APIs available:**
-1. `SP_WALK_FOREACH(dir, top_down, cap, it)` - macro with caller-provided buffer
-2. `sp_walk_begin/next/end` - BYOS iterator API (caller controls buffer size)
-3. `sp_walk(callback)` - callback-based (uses real stack for unlimited depth)
-
-**BYOS iterator structure:**
-```c
-typedef struct SpWalkIter {
-    SpPath dirpath;                              // Current directory
-    char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];   // Subdirs (names only)
-    char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];  // Files (names only)
-    size_t dirname_count, filename_count;
-    struct { /* private state, includes pending buffer ptr */ } priv_;
-} SpWalkIter;  // ~17KB fixed size
-```
-
-**Buffer sizing - overflow skips subtrees:**
-```c
-#define SP_WALK_ENTRIES_CAP(n) ((n) * SP_PATH_MAX)  // n pending directories
-SP_WALK_ENTRIES_CAP_64    // 64 dirs  (~64KB)
-SP_WALK_ENTRIES_CAP_256   // 256 dirs (~256KB)
-SP_WALK_ENTRIES_CAP_1024  // 1024 dirs (~1MB)
-```
-
-**Bottom-up traversal:** Uses marker bytes in pending entries:
-- `SP_WALK_MARKER_SCAN` (0) = directory needs scanning
-- `SP_WALK_MARKER_YIELD` (1) = directory ready to yield (subdirs done)
-
-When scanning a directory in bottom-up mode:
-1. Push self with YIELD marker
-2. Push subdirs with SCAN marker
-3. Continue loop (pops first subdir or self-yield)
-
-This ensures children are yielded before parents without recursion.
-
-**Flavor preservation:** Iterator stores `p->flavor` and uses `sp_path_f()` when popping, so returned paths compare equal with `sp_path_eq()`.
-
-**Error callback:** `sp_walk_begin(..., on_error, user_data)` takes optional callback for unreadable directories. Python bindings wrap this with a context struct to convert SpPath to string.
-
-**Pruning support:** In top-down mode, modify `it->dirname_count` before next `sp_walk_next()` call.
+- `sp_walk(dir, top_down, follow_symlinks, callback, on_error, user_data)` - callback receives `SpWalkEntry` with dirpath, dirnames, filenames
+- For top-down pruning, modify `entry->dirname_count` before returning from callback
+- Internal `sp_priv_walk_scan` delegates to `sp_iterdir` for directory reading
+- Python bindings implement `walk()` in pure Python using `iterdir` + `is_dir` (iterative, no recursion limit)

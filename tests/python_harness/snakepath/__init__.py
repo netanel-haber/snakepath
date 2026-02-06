@@ -211,37 +211,7 @@ _sig('sp_iterdir_begin_wrap', [_PP, _PIterdirIter])
 _sig('sp_iterdir_next_wrap', [_PIterdirIter, _PP], c_int)
 _sig('sp_iterdir_end_wrap', [_PIterdirIter])
 _sig('sp_iterdir_done_wrap', [_PIterdirIter], c_int)
-# walk - BYOS iterator API
-_walk_max_entries = _lib.sp_walk_max_entries()
-_walk_name_max = _lib.sp_walk_name_max()
-_walk_iter_size = _lib.sp_walk_iter_size()
-_walk_path_max = _lib.sp_walk_path_max()
-_walk_error_ctx_size = _lib.sp_walk_error_context_size()
-
-class _SpWalkIter(Structure):
-    _fields_ = [('_opaque', ctypes.c_char * _walk_iter_size)]
-_PWalkIter = POINTER(_SpWalkIter)
-
-# Walk error callback type: void (*)(const char *path, int error_code, void *user_data)
-_WalkErrorFn = ctypes.CFUNCTYPE(None, c_char_p, c_int, ctypes.c_void_p)
-
-# Walk error context struct
-class _SpWalkErrorContext(Structure):
-    _fields_ = [
-        ('error_callback', _WalkErrorFn),
-        ('user_data', ctypes.c_void_p),
-    ]
-_PWalkErrorContext = POINTER(_SpWalkErrorContext)
-
-_sig('sp_walk_begin_wrap', [_PWalkIter, _PP, c_int, c_int, ctypes.c_void_p, c_size_t, _PWalkErrorContext], c_int)
-_sig('sp_walk_next_wrap', [_PWalkIter], c_int)
-_sig('sp_walk_end_wrap', [_PWalkIter])
-_sig('sp_walk_dirpath_wrap', [_PWalkIter, _PP])
-_sig('sp_walk_dirname_count_wrap', [_PWalkIter], c_size_t)
-_sig('sp_walk_filename_count_wrap', [_PWalkIter], c_size_t)
-_sig('sp_walk_dirname_wrap', [_PWalkIter, c_size_t], c_char_p)
-_sig('sp_walk_filename_wrap', [_PWalkIter, c_size_t], c_char_p)
-_sig('sp_walk_set_dirname_count_wrap', [_PWalkIter, c_size_t])
+# walk - Python walk() composes iterdir + is_dir (see walk() docstring for why)
 
 
 # ============ Property descriptors ============
@@ -943,63 +913,58 @@ class Path(PurePath):
             _lib.sp_iterdir_end_wrap(byref(it))
 
     def walk(self, top_down=True, on_error=None, follow_symlinks=False):
-        """Walk directory tree, yielding (dirpath, dirnames, filenames) tuples."""
+        """Walk directory tree, yielding (dirpath, dirnames, filenames) tuples.
+        Uses iterdir + is_dir rather than sp_walk because Python's walk API
+        requires generator semantics with in-place dirnames pruning between yields,
+        which can't be expressed through a C callback that runs to completion."""
         if not self.is_dir():
             return
 
-        path_cls = self.__class__
+        def _scan(dirpath):
+            try:
+                entries = sorted(dirpath.iterdir(), key=lambda e: str(e))
+            except OSError as e:
+                if on_error is not None:
+                    on_error(e)
+                return None, None
+            dirs, files = [], []
+            for entry in entries:
+                if follow_symlinks:
+                    is_dir = entry.is_dir()
+                else:
+                    is_dir = entry.is_dir() and not entry.is_symlink()
+                if is_dir:
+                    dirs.append(entry.name)
+                else:
+                    files.append(entry.name)
+            return dirs, files
 
-        # Error callback and context
-        error_ctx = None
-        c_error_callback = None  # Keep reference to prevent GC
-        if on_error:
-            def error_callback(path_bytes, error_code, user_data):
-                path_str = path_bytes.decode('utf-8') if path_bytes else ''
-                os_err = OSError(error_code, os.strerror(error_code), path_str)
-                on_error(os_err)
-            c_error_callback = _WalkErrorFn(error_callback)
-            error_ctx = _SpWalkErrorContext()
-            error_ctx.error_callback = c_error_callback
-            error_ctx.user_data = None
-
-        # Allocate iterator and pending buffer (256 pending dirs = 256KB for SP_PATH_MAX=1024)
-        it = _SpWalkIter()
-        pending_count = 256
-        pending_buf = (ctypes.c_char * (pending_count * _walk_path_max))()
-
-        # Begin walk
-        if not _lib.sp_walk_begin_wrap(byref(it), byref(self._sp),
-                                       1 if top_down else 0, 1 if follow_symlinks else 0,
-                                       pending_buf, len(pending_buf),
-                                       byref(error_ctx) if error_ctx else None):
-            return
-
-        try:
-            while _lib.sp_walk_next_wrap(byref(it)):
-                # Get dirpath
-                dp = path_cls.__new__(path_cls)
-                dp._sp = _SpPath()
-                _lib.sp_walk_dirpath_wrap(byref(it), byref(dp._sp))
-
-                # Get dirnames
-                dirname_count = _lib.sp_walk_dirname_count_wrap(byref(it))
-                dns = []
-                for i in range(dirname_count):
-                    name = _lib.sp_walk_dirname_wrap(byref(it), i)
-                    if name:
-                        dns.append(name.decode('utf-8'))
-
-                # Get filenames
-                filename_count = _lib.sp_walk_filename_count_wrap(byref(it))
-                fns = []
-                for i in range(filename_count):
-                    name = _lib.sp_walk_filename_wrap(byref(it), i)
-                    if name:
-                        fns.append(name.decode('utf-8'))
-
-                yield (dp, dns, fns)
-        finally:
-            _lib.sp_walk_end_wrap(byref(it))
+        if top_down:
+            stack = [self]
+            while stack:
+                dirpath = stack.pop()
+                dirs, files = _scan(dirpath)
+                if dirs is None:
+                    continue
+                yield (dirpath, dirs, files)
+                stack.extend(reversed([dirpath / d for d in dirs]))
+        else:
+            stack = [(self, False)]
+            while stack:
+                dirpath, visited = stack[-1]
+                if visited:
+                    stack.pop()
+                    dirs, files = _scan(dirpath)
+                    if dirs is not None:
+                        yield (dirpath, dirs, files)
+                else:
+                    stack[-1] = (dirpath, True)
+                    dirs, files = _scan(dirpath)
+                    if dirs is None:
+                        stack.pop()
+                        continue
+                    for d in reversed(dirs):
+                        stack.append((dirpath / d, False))
 
 
 class PosixPath(Path, PurePosixPath):

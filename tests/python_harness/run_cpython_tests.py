@@ -191,8 +191,6 @@ EXPECTED_FAILURES = {
         ("PosixPathTest", "test_absolute_common"),
         ("WindowsPathTest", "test_absolute"),
         ("WindowsPathTest", "test_absolute_common"),
-        ("WalkTests", "test_walk_prune"),
-        ("WalkTests", "test_file_like_path"),
     ],
 
     # =========================================================================
