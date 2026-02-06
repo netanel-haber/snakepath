@@ -333,9 +333,11 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | `.group()` | `sp_group()` | - |
 | `.expanduser()` | `sp_expanduser()` | - |
 | `Path.home()` | `sp_home()` | - |
+| `.read_bytes()` | `sp_read_file()` | - |
+| `.read_text()` | `sp_read_file()` | Python adds `.decode()` |
+| `.write_bytes()` | `sp_write_file()` | - |
+| `.write_text()` | `sp_write_file()` | Python adds `.encode()` |
 | `.open()` | - | - |
-
-**Not implemented:** `read_bytes`, `read_text`, `write_bytes`, `write_text`
 
 ## Adding New Methods to the Library
 

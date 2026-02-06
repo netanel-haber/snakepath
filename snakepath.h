@@ -330,6 +330,17 @@ SpPath sp_rename(const SpPath *p, const SpPath *target);  /* rename file/directo
 SpPath sp_replace(const SpPath *p, const SpPath *target);  /* replace target with this file, returns new path */
 bool sp_chmod(const SpPath *p, unsigned int mode);  /* change file permissions */
 
+/* File I/O (bring your own buffer, no malloc) */
+typedef struct { size_t bytes; int error; } SpIOResult;
+#define SP_IO_OK            0  /* success */
+#define SP_IO_ERR_OPEN      1  /* could not open (not found, permission, is_dir, etc.) */
+#define SP_IO_ERR_READ      2  /* read failed mid-stream */
+#define SP_IO_ERR_WRITE     3  /* write failed mid-stream */
+#define SP_IO_ERR_TOO_LARGE 4  /* file larger than buf_size (result.bytes = actual size) */
+
+SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size);
+SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len);
+
 /* Home directory and user expansion */
 SpPath sp_home(SpFlavor flavor);  /* get user's home directory */
 SpPath sp_expanduser(const SpPath *p);  /* expand ~ to home directory */
@@ -439,6 +450,8 @@ struct sp_fluent_ {
     bool (*is_socket)(void);
     bool (*is_mount)(void);
     bool (*is_junction)(void);
+    SpIOResult (*read_file)(char *buf, size_t buf_size);
+    SpIOResult (*write_file)(const char *data, size_t data_len);
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
@@ -2314,6 +2327,85 @@ bool sp_chmod(const SpPath *p, unsigned int mode) {
 #endif
 }
 
+/* ============ File I/O Implementation ============ */
+
+SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
+    SpIOResult r;
+    memset(&r, 0, sizeof(r));
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) { r.error = SP_IO_ERR_OPEN; return r; }
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    WIN32_FILE_ATTRIBUTE_DATA fdata;
+    if (!GetFileAttributesExA(path_str, GetFileExInfoStandard, &fdata)) { r.error = SP_IO_ERR_OPEN; return r; }
+    LARGE_INTEGER file_size;
+    file_size.HighPart = fdata.nFileSizeHigh;
+    file_size.LowPart = fdata.nFileSizeLow;
+    size_t sz = SP_PRIV_CAST(size_t, file_size.QuadPart);
+    if (sz > buf_size) { r.bytes = sz; r.error = SP_IO_ERR_TOO_LARGE; return r; }
+    HANDLE h = CreateFileA(path_str, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) { r.error = SP_IO_ERR_OPEN; return r; }
+    size_t total = 0;
+    while (total < sz) {
+        DWORD to_read = (sz - total > 0xFFFFFFFF) ? 0xFFFFFFFF : SP_PRIV_CAST(DWORD, sz - total);
+        DWORD got = 0;
+        if (!ReadFile(h, buf + total, to_read, &got, NULL) || got == 0) { CloseHandle(h); r.bytes = total; r.error = SP_IO_ERR_READ; return r; }
+        total += got;
+    }
+    CloseHandle(h);
+#else
+    struct stat st;
+    if (stat(path_str, &st) != 0) { r.error = SP_IO_ERR_OPEN; return r; }
+    size_t sz = SP_PRIV_CAST(size_t, st.st_size);
+    if (sz > buf_size) { r.bytes = sz; r.error = SP_IO_ERR_TOO_LARGE; return r; }
+    int fd = open(path_str, O_RDONLY);
+    if (fd < 0) { r.error = SP_IO_ERR_OPEN; return r; }
+    size_t total = 0;
+    while (total < sz) {
+        ssize_t got = read(fd, buf + total, sz - total);
+        if (got <= 0) { close(fd); r.bytes = total; r.error = SP_IO_ERR_READ; return r; }
+        total += SP_PRIV_CAST(size_t, got);
+    }
+    close(fd);
+#endif
+    r.bytes = total;
+    return r;
+}
+
+SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
+    SpIOResult r;
+    memset(&r, 0, sizeof(r));
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) { r.error = SP_IO_ERR_OPEN; return r; }
+    const char *path_str = sp_str(p);
+
+#ifdef SP_WINDOWS
+    HANDLE h = CreateFileA(path_str, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) { r.error = SP_IO_ERR_OPEN; return r; }
+    size_t total = 0;
+    while (total < data_len) {
+        DWORD to_write = (data_len - total > 0xFFFFFFFF) ? 0xFFFFFFFF : SP_PRIV_CAST(DWORD, data_len - total);
+        DWORD written = 0;
+        if (!WriteFile(h, data + total, to_write, &written, NULL) || written == 0) { CloseHandle(h); r.bytes = total; r.error = SP_IO_ERR_WRITE; return r; }
+        total += written;
+    }
+    CloseHandle(h);
+#else
+    int fd = open(path_str, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) { r.error = SP_IO_ERR_OPEN; return r; }
+    size_t total = 0;
+    while (total < data_len) {
+        ssize_t written = write(fd, data + total, data_len - total);
+        if (written <= 0) { close(fd); r.bytes = total; r.error = SP_IO_ERR_WRITE; return r; }
+        total += SP_PRIV_CAST(size_t, written);
+    }
+    close(fd);
+#endif
+    r.bytes = total;
+    return r;
+}
+
 /* ============ Glob Implementation ============ */
 
 /* Include dirent for POSIX or use Windows APIs */
@@ -3010,6 +3102,14 @@ static bool sp_priv_f_is_relative_to_(const SpPath *o) {
     sp_priv_f_ctx_active = false;
     return sp_is_relative_to(&sp_priv_f_ctx, o);
 }
+static SpIOResult sp_priv_f_read_file_(char *buf, size_t buf_size) {
+    sp_priv_f_ctx_active = false;
+    return sp_read_file(&sp_priv_f_ctx, buf, buf_size);
+}
+static SpIOResult sp_priv_f_write_file_(const char *data, size_t data_len) {
+    sp_priv_f_ctx_active = false;
+    return sp_write_file(&sp_priv_f_ctx, data, data_len);
+}
 
 /* Chainable: declare, then instance, then define (instance must exist for return) */
 #define SP_DECL_CHAIN_VOID(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(void);
@@ -3042,6 +3142,8 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_is_socket_,
     sp_priv_f_is_mount_,
     sp_priv_f_is_junction_,
+    sp_priv_f_read_file_,
+    sp_priv_f_write_file_,
     sp_priv_f_parent_,
     sp_priv_f_join_,
     sp_priv_f_with_name_,

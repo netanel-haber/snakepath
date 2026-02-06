@@ -232,6 +232,23 @@ SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
     return sp_chmod(p, mode) ? 1 : 0;
 }
 
+/* File I/O */
+SP_EXPORT void sp_read_file_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *bytes_out, int *error_out) {
+    SpIOResult r = sp_read_file(p, buf, buf_size);
+    *bytes_out = r.bytes;
+    *error_out = r.error;
+}
+SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data_len, size_t *bytes_out, int *error_out) {
+    SpIOResult r = sp_write_file(p, data, data_len);
+    *bytes_out = r.bytes;
+    *error_out = r.error;
+}
+SP_EXPORT int sp_io_ok(void) { return SP_IO_OK; }
+SP_EXPORT int sp_io_err_open(void) { return SP_IO_ERR_OPEN; }
+SP_EXPORT int sp_io_err_read(void) { return SP_IO_ERR_READ; }
+SP_EXPORT int sp_io_err_write(void) { return SP_IO_ERR_WRITE; }
+SP_EXPORT int sp_io_err_too_large(void) { return SP_IO_ERR_TOO_LARGE; }
+
 /* Home directory and user expansion */
 SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) {
     *out = sp_home((SpFlavor)flavor);
