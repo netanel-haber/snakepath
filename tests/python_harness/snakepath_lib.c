@@ -261,7 +261,7 @@ SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
 /* User/group info - returns: -1 = not implemented, 0 = success, 1 = error/not found */
 SP_EXPORT int sp_owner_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
 #ifdef SP_WINDOWS
-    (void)p;
+    (void)p; (void)buf_size;
     buf[0] = '\0';
     *len = 0;
     return -1;  /* Not implemented on Windows */
@@ -277,7 +277,7 @@ SP_EXPORT int sp_owner_wrap(const SpPath *p, char *buf, size_t buf_size, size_t 
 
 SP_EXPORT int sp_group_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
 #ifdef SP_WINDOWS
-    (void)p;
+    (void)p; (void)buf_size;
     buf[0] = '\0';
     *len = 0;
     return -1;  /* Not implemented on Windows */

@@ -9,6 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <process.h>
+#define test_getpid _getpid
+#else
+#include <unistd.h>
+#define test_getpid getpid
+#endif
 
 static int tests_run = 0;
 
@@ -304,7 +311,7 @@ int main(void) {
     /* ============ read_file / write_file (fluent) ============ */
 
     {
-        long fpid = (long)getpid();
+        long fpid = (long)test_getpid();
         char fluent_rw_path[128];
         snprintf(fluent_rw_path, sizeof(fluent_rw_path), "./test_fluent_rw_%ld.tmp", fpid);
 
