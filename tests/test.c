@@ -747,20 +747,6 @@ int main(void) {
     sp_walk(&walk_base, true, false, walk_test_callback, NULL, NULL);
     ASSERT(walk_test_dir_count == 2);  /* walk_base and walk_sub */
 
-    /* Test walk top-down (BYOS iterator) */
-    {
-        SpWalkIter walk_it;
-        char walk_cap[SP_WALK_ENTRIES_CAP(64)];
-        int iter_count = 0;
-
-        ASSERT(sp_walk_begin(&walk_it, &walk_base, true, false, walk_cap, sizeof(walk_cap), NULL, NULL));
-        while (sp_walk_next(&walk_it)) {
-            iter_count++;
-        }
-        sp_walk_end(&walk_it);
-        ASSERT(iter_count == 2);
-    }
-
     /* Cleanup */
     remove(walk_f1);
     remove(walk_f2);
