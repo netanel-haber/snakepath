@@ -2,7 +2,11 @@
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
 #endif
-#define SP_PATH_MAX 1024  /* Use SP_PATH_MAX_WINDOWS for CI compatibility */
+#ifdef _WIN32
+#define SP_PATH_MAX SP_PATH_MAX_WINDOWS
+#else
+#define SP_PATH_MAX SP_PATH_MAX_LINUX
+#endif
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 #include <stdio.h>
@@ -40,6 +44,8 @@ static int term_eq(SpTerm a, const char *b) {
 }
 
 #define ARRAY_LEN(a) (sizeof(a)/sizeof((a)[0]))
+/* ASSERT_SIZE: like ASSERT but suppresses MSVC C4127 (constant conditional) for sizeof checks */
+#define ASSERT_SIZE(actual, expected) do { size_t a_ = (actual), e_ = (expected); ASSERT(a_ == e_); } while(0)
 
 #define ASSERT(cond) do { tests_run++; if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); } } while(0)
 #define ASSERT_SV(sv, exp) ASSERT(sv_eq(sv, exp))
@@ -755,6 +761,40 @@ int main(void) {
     test_rmdir(walk_path);
 
     printf("  walk tests OK\n");
+
+    /* ============ Struct Size Tests ============ */
+    printf("\nStruct Size Tests:\n");
+
+    /* Print sizes for informational purposes */
+    printf("  SpPath:          %4zu bytes\n", sizeof(SpPath));
+    printf("  SpTerm:          %4zu bytes\n", sizeof(SpTerm));
+    printf("  SpGlobIter:      %4zu bytes\n", sizeof(SpGlobIter));
+    printf("  SpParentsIter:   %4zu bytes\n", sizeof(SpParentsIter));
+    printf("  SpIterdirIter:   %4zu bytes\n", sizeof(SpIterdirIter));
+    printf("  SpPartsIter:     %4zu bytes\n", sizeof(SpPartsIter));
+    printf("  SpSuffixes:      %4zu bytes\n", sizeof(SpSuffixes));
+    printf("  SpStatResult:    %4zu bytes\n", sizeof(SpStatResult));
+    printf("  SpWalkEntry:     %4zu bytes\n", sizeof(SpWalkEntry));
+    printf("  SpStr:           %4zu bytes\n", sizeof(SpStr));
+
+    /* Struct sizes expressed relative to SP_PATH_MAX / sizeof(SpPath) so they
+     * work across configurations (SP_PATH_MAX=1024 for Windows, 4096 for Linux).
+     * Must be updated explicitly when struct layouts change. */
+#if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__) || (defined(_WIN32) && defined(_WIN64))
+    /* 64-bit (POSIX and Windows) */
+    ASSERT_SIZE(sizeof(SpPath), SP_PATH_MAX + 16);
+    ASSERT_SIZE(sizeof(SpTerm), SP_TERM_MAX + 8);
+    ASSERT_SIZE(sizeof(SpStr), 16);
+    ASSERT_SIZE(sizeof(SpPartsIter), 24);
+    ASSERT_SIZE(sizeof(SpParentsIter), 24);
+    ASSERT_SIZE(sizeof(SpSuffixes), 264);
+    ASSERT_SIZE(sizeof(SpStatResult), 104);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 16);
+    ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 1816);
+#endif
+
+    printf("  struct size tests OK\n");
 
     printf("\n%d assertions passed\n", tests_run);
     return 0;
