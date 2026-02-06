@@ -570,12 +570,6 @@ static inline bool sp_priv_sv_eq_flavor(SpStr a, SpStr b, SpFlavor flavor) {
 static inline void sp_priv_append_sep(SpPath *r) {
     if (r->len > 0 && r->len + 1 < SP_PATH_MAX) r->buf[r->len++] = sp_priv_sep(r->flavor);
 }
-static inline void sp_priv_append_sv(SpPath *r, SpStr sv) {
-    if (r->len + sv.len < SP_PATH_MAX) {
-        memcpy(r->buf + r->len, sv.data, sv.len);
-        r->len += sv.len;
-    }
-}
 static inline void sp_priv_append_cstr(SpPath *r, const char *s, size_t len) {
     if (r->len + len < SP_PATH_MAX) {
         memcpy(r->buf + r->len, s, len);
@@ -799,22 +793,11 @@ SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor)
     SpPath src = sp_path_new(s, SP_PRIV_OPTS(src_flavor));
     if (src_flavor == dest_flavor) return src;
 
-    SpPath dest = SP_PRIV_ZERO;
+    SpPath dest = src;
     dest.flavor = dest_flavor;
-    char dsep = sp_priv_sep(dest_flavor);
-    SpPartsIter it = sp_parts_begin(&src);
-    SpStr part;
-    bool first = true;
-    while (sp_parts_next(&it, &part)) {
-        if (!first && dest.len > 0 && !sp_priv_is_sep(dest.buf[dest.len - 1], dest_flavor)) {
-            if (dest.len + 1 < SP_PATH_MAX) dest.buf[dest.len++] = dsep;
-        }
-        for (size_t i = 0; i < part.len && dest.len < SP_PATH_MAX - 1; i++) {
-            dest.buf[dest.len++] = sp_priv_is_sep(part.data[i], src_flavor) ? dsep : part.data[i];
-        }
-        first = false;
-    }
-    dest.buf[dest.len] = '\0';
+    char ssep = sp_priv_sep(src_flavor), dsep = sp_priv_sep(dest_flavor);
+    for (size_t i = 0; i < dest.len; i++)
+        if (dest.buf[i] == ssep) dest.buf[i] = dsep;
     sp_priv_normalize(dest.buf, &dest.len, dest_flavor);
     return dest;
 }
@@ -1226,46 +1209,6 @@ SpPath sp_absolute(const SpPath *p) {
     return sp_joinpath(&cwd, p);
 }
 
-bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-    if (other->len == 0) {
-        return sp_priv_anchor_len(p->buf, p->len, p->flavor) == 0;
-    }
-    SpPartsIter it_p = sp_parts_begin(p);
-    SpPartsIter it_o = sp_parts_begin(other);
-    SpStr part_p, part_o;
-    while (sp_parts_next(&it_o, &part_o)) {
-        if (!sp_parts_next(&it_p, &part_p)) return false;
-        if (!sp_priv_sv_eq_flavor(part_p, part_o, p->flavor)) return false;
-    }
-    return true;
-}
-
-SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-    if (!sp_is_relative_to(p, other)) return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
-
-    SpPartsIter it_p = sp_parts_begin(p);
-    SpPartsIter it_o = sp_parts_begin(other);
-    SpStr part;
-    while (sp_parts_next(&it_o, &part)) {
-        sp_parts_next(&it_p, &part);
-    }
-
-    SpPath r = SP_PRIV_ZERO;
-    r.flavor = p->flavor;
-    bool first = true;
-    while (sp_parts_next(&it_p, &part)) {
-        if (!first) sp_priv_append_sep(&r);
-        sp_priv_append_sv(&r, part);
-        first = false;
-    }
-    r.buf[r.len] = '\0';
-    return r;
-}
-
 /* Collect path parts into array, returns count */
 static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     SpPartsIter it = sp_parts_begin(p);
@@ -1277,28 +1220,17 @@ static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     return n;
 }
 
-/* Error sentinel for sp_relative_to_walk_up */
-static inline SpPath sp_priv_relative_to_error(SpFlavor flavor) {
-    SpPath r = SP_PRIV_ZERO;
-    r.flavor = flavor;
-    r.buf[0] = SP_ERR_NOT_RELATIVE;
-    return r;
-}
-
-SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-
-    SpStr p_parts[SP_PATH_MAX / 2];
-    SpStr o_parts[SP_PATH_MAX / 2];
+/* Shared implementation for sp_relative_to, sp_relative_to_walk_up, sp_is_relative_to */
+static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, bool walk_up) {
+    SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
     size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2);
     size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
 
-    /* Check if other contains '..' - not allowed with walk_up */
-    for (size_t i = 0; i < o_count; i++) {
-        if (o_parts[i].len == 2 && o_parts[i].data[0] == '.' && o_parts[i].data[1] == '.') {
-            return sp_priv_relative_to_error(p->flavor);
-        }
+    if (walk_up) {
+        /* Reject '..' in other */
+        for (size_t i = 0; i < o_count; i++)
+            if (o_parts[i].len == 2 && o_parts[i].data[0] == '.' && o_parts[i].data[1] == '.')
+                return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
     }
 
     /* Check anchor compatibility */
@@ -1306,45 +1238,58 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     size_t o_anchor = sp_priv_anchor_len(other->buf, other->len, other->flavor);
     if (p_anchor > 0 || o_anchor > 0) {
         if (p_anchor > 0 && o_anchor > 0) {
-            SpStr pa = SP_PRIV_STR(p->buf, p_anchor);
-            SpStr oa = SP_PRIV_STR(other->buf, o_anchor);
-            if (!sp_priv_sv_eq_flavor(pa, oa, p->flavor)) {
-                return sp_priv_relative_to_error(p->flavor);
-            }
-        } else if ((o_anchor > 0) != (p_anchor > 0)) {
-            return sp_priv_relative_to_error(p->flavor);
+            if (!sp_priv_sv_eq_flavor(SP_PRIV_STR(p->buf, p_anchor), SP_PRIV_STR(other->buf, o_anchor), p->flavor))
+                return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
+        } else {
+            return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
         }
     }
 
     /* Find common prefix length */
     size_t common = 0;
-    while (common < p_count && common < o_count && sp_priv_sv_eq_flavor(p_parts[common], o_parts[common], p->flavor)) {
+    while (common < p_count && common < o_count && sp_priv_sv_eq_flavor(p_parts[common], o_parts[common], p->flavor))
         common++;
-    }
+
+    /* Without walk_up, all of other's parts must match */
+    if (!walk_up && common < o_count) return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
 
     /* Build result */
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
     bool first = true;
-
-    /* Add ".." for each remaining part in other */
     for (size_t i = common; i < o_count; i++) {
         if (i == 0 && o_anchor > 0) continue;
         if (!first) sp_priv_append_sep(&r);
         sp_priv_append_cstr(&r, "..", 2);
         first = false;
     }
-
-    /* Add remaining parts from p */
     for (size_t i = common; i < p_count; i++) {
         if (i == 0 && p_anchor > 0) continue;
         if (!first) sp_priv_append_sep(&r);
-        sp_priv_append_sv(&r, p_parts[i]);
+        sp_priv_append_cstr(&r, p_parts[i].data, p_parts[i].len);
         first = false;
     }
-
     r.buf[r.len] = '\0';
     return r;
+}
+
+bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
+    SpPath r = sp_priv_relative_to_impl(p, other, false);
+    return !sp_path_is_error(&r);
+}
+
+SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
+    return sp_priv_relative_to_impl(p, other, false);
+}
+
+SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
+    return sp_priv_relative_to_impl(p, other, true);
 }
 
 static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char **parts) {
