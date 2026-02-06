@@ -339,31 +339,6 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | [`.write_text()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_text) | `sp_write_file()` | `.write_file()` + encode |
 | [`.open()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.open) | - | - |
 
-## Adding New Methods to the Library
-
-When adding a new method, you need to update multiple files. The library provides wrapper macros in `tests/python_harness/snakepath_lib.c` to simplify Python bindings.
-
-### Wrapper Macros
-
-| Macro | Signature | Use For |
-|-------|-----------|---------|
-| `WRAP_TERM(fn)` | `Path → SpTerm` | Component getters (name, stem, suffix, drive, root, anchor, owner, group) |
-| `WRAP_PATH_UNARY(fn)` | `Path → Path` | Unary path transforms (parent, absolute) |
-| `WRAP_PATH_CSTR(fn)` | `Path + cstr → Path` | Methods taking a string arg (with_name, join_one) |
-| `WRAP_PATH_PATH(fn)` | `Path + Path → Path` | Methods taking another path (joinpath, relative_to) |
-| `WRAP_BOOL_UNARY(fn)` | `Path → bool` | Boolean queries (is_absolute, is_file) |
-| `WRAP_BOOL_BINARY(fn)` | `Path + Path → bool` | Binary predicates (path_eq, is_relative_to) |
-
-### Checklist for New Methods
-
-1. **`snakepath.h`**: Add function declaration and implementation
-2. **`snakepath.h` (fluent)**: Add to struct and X-macro lists if fluent API needed
-3. **`tests/test.c`**: Add boring API tests
-4. **`tests/test_fluent_api.c`**: Add fluent API tests (if applicable)
-5. **`snakepath_lib.c`**: Add wrapper using appropriate macro
-6. **`snakepath/__init__.py`**: Add ctypes signature and Python method
-7. **`run_cpython_tests.py`**: Remove method from `EXPECTED_FAILURES` if previously listed
-8. **`README.md`**: Update Pathlib Mapping table
 </details>
 
 <details>
