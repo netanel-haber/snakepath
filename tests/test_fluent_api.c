@@ -209,6 +209,34 @@ int main(void) {
     { SpPath p = SPF_P("/etc/passwd")->path(); SpPath base = sp_path_f("/usr", SP_FLAVOR_POSIX);
       ASSERT(sp_is_relative_to(&p, &base) == false); }
 
+    /* ============ eq / ne (fluent terminators) ============ */
+
+    /* Equal POSIX paths */
+    { SpPath other = sp_path_f("/etc/passwd", SP_FLAVOR_POSIX);
+      ASSERT(SPF_P("/etc/passwd")->eq(&other) == true);
+      ASSERT(SPF_P("/etc/passwd")->ne(&other) == false); }
+
+    /* Unequal POSIX paths */
+    { SpPath other = sp_path_f("/etc/shadow", SP_FLAVOR_POSIX);
+      ASSERT(SPF_P("/etc/passwd")->eq(&other) == false);
+      ASSERT(SPF_P("/etc/passwd")->ne(&other) == true); }
+
+    /* Windows case-insensitive equality */
+    { SpPath other = sp_path_f("C:\\Users\\FOO", SP_FLAVOR_WINDOWS);
+      ASSERT(SPF_W("C:\\Users\\foo")->eq(&other) == true);
+      ASSERT(SPF_W("C:\\Users\\foo")->ne(&other) == false); }
+
+    /* eq/ne after chaining */
+    { SpPath expected = sp_path_f("/a/b", SP_FLAVOR_POSIX);
+      ASSERT(SPF_P("/a/b/c")->parent()->eq(&expected) == true);
+      ASSERT(SPF_P("/a/b/c")->parent()->ne(&expected) == false); }
+
+    /* ============ samefile (fluent terminator) ============ */
+
+    /* Same file via same path */
+    { SpPath self = sp_path(__FILE__);
+      ASSERT(SPF(__FILE__)->samefile(&self) == true); }
+
     /* ============ relative_to (fluent chainable) ============ */
 
     /* >>> PurePosixPath('/etc/passwd').relative_to('/') -> PurePosixPath('etc/passwd') */

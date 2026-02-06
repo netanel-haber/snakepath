@@ -101,6 +101,8 @@ bool abs = sp_is_absolute(&p);
 bool rel = sp_is_relative_to(&p, &base);
 SpPath relative = sp_relative_to(&p, &base);
 bool eq = sp_path_eq(&a, &b);
+bool ne = sp_path_ne(&a, &b);
+bool same = sp_samefile(&a, &b);
 ```
 
 ### Glob / Directory Traversal
@@ -135,7 +137,7 @@ sp_walk(&dir, true, false, my_callback, NULL, NULL);
 
 ## Fluent API
 
-Enable with `#define SNAKEPATH_FLUENT` before including.
+Enable with `#define SNAKEPATH_FLUENT` before including. All non-iterator, non-mutator methods are available as fluent calls.
 
 ```c
 #define SP_PATH_MAX 4096
@@ -153,36 +155,12 @@ SpPath w = SPF_W("C:/Users")->join("docs")->path();
 SpPath child = sp_join_one(&p, "file.txt");
 ```
 
-### Macros
-
 | Macro | Python |
 |-------|--------|
 | `SPF("path")` | `Path('path')` |
 | `SPF_P("path")` | `PurePosixPath('path')` |
 | `SPF_W("path")` | `PureWindowsPath('path')` |
 | `SPF_PATH(p)` | Start fluent chain from existing `SpPath` |
-
-### Chainable
-
-`->parent()` `->join("x")` `->with_name("x")` `->with_stem("x")` `->with_suffix(".x")` `->absolute()` `->expanduser()` `->relative_to(&p)` `->relative_to_walk_up(&p)`
-
-### Terminators
-
-| Method | Returns |
-|--------|---------|
-| `->path()` | `SpPath` |
-| `->name()` `->stem()` `->suffix()` | `SpTerm` |
-| `->drive()` `->root()` `->anchor()` | `SpTerm` |
-| `->owner()` `->group()` | `SpTerm` |
-| `->suffixes()` | `SpSuffixes` |
-| `->is_absolute()` | `bool` |
-| `->is_relative_to(&p)` | `bool` |
-| `->is_file()` `->is_dir()` `->exists()` | `bool` |
-| `->is_symlink()` `->is_mount()` `->is_junction()` | `bool` |
-| `->is_block_device()` `->is_char_device()` | `bool` |
-| `->is_fifo()` `->is_socket()` | `bool` |
-| `->read_file(buf, size)` | `SpIOResult` |
-| `->write_file(data, len)` | `SpIOResult` |
 
 ## Core Types
 
@@ -298,6 +276,8 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | [`.with_name()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name) | `sp_with_name()` | `.with_name()` |
 | [`.with_stem()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem) | `sp_with_stem()` | `.with_stem()` |
 | [`.with_suffix()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix) | `sp_with_suffix()` | `.with_suffix()` |
+| `__eq__` | `sp_path_eq()` | `.eq()` |
+| `__ne__` | `sp_path_ne()` | `.ne()` |
 | [`.absolute()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute) | `sp_absolute()` | `.absolute()` |
 | [`.as_uri()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri) | `sp_as_uri()` | - |
 | [`Path.cwd()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd) | `sp_cwd()` | - |
@@ -315,7 +295,7 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 | [`.is_socket()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_socket) | `sp_is_socket()` | `.is_socket()` |
 | [`.is_mount()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_mount) | `sp_is_mount()` | `.is_mount()` |
 | [`.is_junction()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_junction) | `sp_is_junction()` | `.is_junction()` |
-| [`.samefile()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile) | `sp_samefile()` | - |
+| [`.samefile()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile) | `sp_samefile()` | `.samefile()` |
 | [`.readlink()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink) | `sp_readlink()` | - |
 | [`.resolve()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve) | `sp_resolve()` | - |
 | [`.glob()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob) | `sp_glob_begin/next/end()` | - |

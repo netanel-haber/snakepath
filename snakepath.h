@@ -263,6 +263,7 @@ SpPath sp_cwd(SpFlavor flavor);
 SpPath sp_absolute(const SpPath *p);
 size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size);
 bool sp_path_eq(const SpPath *a, const SpPath *b);
+static inline bool sp_path_ne(const SpPath *a, const SpPath *b) { return !sp_path_eq(a, b); }
 int sp_path_cmp(const SpPath *a, const SpPath *b);
 unsigned long sp_path_hash(const SpPath *p);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
@@ -450,6 +451,9 @@ struct sp_fluent_ {
     bool (*is_socket)(void);
     bool (*is_mount)(void);
     bool (*is_junction)(void);
+    bool (*eq)(const SpPath *);
+    bool (*ne)(const SpPath *);
+    bool (*samefile)(const SpPath *);
     SpIOResult (*read_file)(char *buf, size_t buf_size);
     SpIOResult (*write_file)(const char *data, size_t data_len);
     /* Chainable - return pointer to avoid stack copies */
@@ -3084,6 +3088,11 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
 #define SP_FLUENT_CHAIN_PATH(X)                                                                                        \
     X(relative_to, sp_relative_to)                                                                                     \
     X(relative_to_walk_up, sp_relative_to_walk_up)
+#define SP_FLUENT_TERM_PATH(X)                                                                                         \
+    X(is_relative_to, sp_is_relative_to)                                                                               \
+    X(eq, sp_path_eq)                                                                                                  \
+    X(ne, sp_path_ne)                                                                                                  \
+    X(samefile, sp_samefile)
 
 /* Generate terminator functions */
 #define SP_GEN_TERM_VOID(n, ret, expr)                                                                                 \
@@ -3098,10 +3107,12 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
     }
 SP_FLUENT_TERM_VOID(SP_GEN_TERM_VOID)
 SP_FLUENT_TERM_TERM(SP_GEN_TERM_STR)
-static bool sp_priv_f_is_relative_to_(const SpPath *o) {
-    sp_priv_f_ctx_active = false;
-    return sp_is_relative_to(&sp_priv_f_ctx, o);
-}
+#define SP_GEN_TERM_PATH(n, fn)                                                                                        \
+    static bool sp_priv_f_##n##_(const SpPath *o) {                                                                    \
+        sp_priv_f_ctx_active = false;                                                                                  \
+        return fn(&sp_priv_f_ctx, o);                                                                                  \
+    }
+SP_FLUENT_TERM_PATH(SP_GEN_TERM_PATH)
 static SpIOResult sp_priv_f_read_file_(char *buf, size_t buf_size) {
     sp_priv_f_ctx_active = false;
     return sp_read_file(&sp_priv_f_ctx, buf, buf_size);
@@ -3142,6 +3153,9 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_is_socket_,
     sp_priv_f_is_mount_,
     sp_priv_f_is_junction_,
+    sp_priv_f_eq_,
+    sp_priv_f_ne_,
+    sp_priv_f_samefile_,
     sp_priv_f_read_file_,
     sp_priv_f_write_file_,
     sp_priv_f_parent_,
