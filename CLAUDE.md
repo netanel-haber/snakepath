@@ -6,6 +6,7 @@ C99 STB-style header-only pathlib port. No malloc, POSIX + Windows. All code in 
 - All logic in `snakepath.h`, Python bindings are thin FFI only
 - Minimize API surface, share `sp_priv_*` internals
 - No special-casing in wrappers
+- Fluent API has near-parity with boring API — only iterators/mutators missing
 
 ## Refactoring Rules
 Good: extract helpers, delegate to primitives, early return, remove dead code.

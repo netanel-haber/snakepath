@@ -276,7 +276,9 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
               class="highlight"><code><span class="n">bool</span> <span class="n">abs</span> <span class="o">=</span> <span class="n">sp_is_absolute</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
 <span class="n">bool</span> <span class="n">rel</span> <span class="o">=</span> <span class="n">sp_is_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
 <span class="n">SpPath</span> <span class="n">relative</span> <span class="o">=</span> <span class="n">sp_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
-<span class="n">bool</span> <span class="n">eq</span> <span class="o">=</span> <span class="n">sp_path_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span></code></pre>
+<span class="n">bool</span> <span class="n">eq</span> <span class="o">=</span> <span class="n">sp_path_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span>
+<span class="n">bool</span> <span class="n">ne</span> <span class="o">=</span> <span class="n">sp_path_ne</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span>
+<span class="n">bool</span> <span class="n">same</span> <span class="o">=</span> <span class="n">sp_samefile</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span></code></pre>
           </div>
         </div>
         <h3 id="glob">Glob / Directory Traversal</h3>
@@ -308,7 +310,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         </div>
         <h2 id="fluent-api">Fluent API</h2>
         <p>Enable with <code class="language-plaintext highlighter-rouge">#define SNAKEPATH_FLUENT</code> before
-          including.</p>
+          including. All non-iterator, non-mutator methods are available as fluent calls.</p>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
             <pre
@@ -327,7 +329,6 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 <span class="n">SpPath</span> <span class="n">child</span> <span class="o">=</span> <span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"file.txt"</span><span class="p">);</span></code></pre>
           </div>
         </div>
-        <h3 id="macros">Macros</h3>
         <table>
           <thead>
             <tr>
@@ -365,137 +366,6 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">SPF_PATH(p)</code>
               </td>
               <td>Start fluent chain from existing <code class="language-plaintext highlighter-rouge">SpPath</code></td>
-            </tr>
-          </tbody>
-        </table>
-        <h3 id="chainable">Chainable</h3>
-        <p>
-          <code class="language-plaintext highlighter-rouge">-&gt;parent()</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;join("x")</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;with_name("x")</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;with_stem("x")</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;with_suffix(".x")</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;absolute()</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;expanduser()</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;relative_to(&amp;p)</code>
-          <code class="language-plaintext highlighter-rouge">-&gt;relative_to_walk_up(&amp;p)</code>
-        </p>
-        <h3 id="terminators">Terminators</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Method</th>
-              <th>Returns</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;path()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpPath</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;name()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;stem()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;suffix()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpTerm</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;drive()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;root()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;anchor()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpTerm</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;owner()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;group()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpTerm</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;suffixes()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpSuffixes</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_absolute()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_relative_to(&amp;p)</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_file()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_dir()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;exists()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_symlink()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_mount()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_junction()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_block_device()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_char_device()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_fifo()</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;is_socket()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">bool</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">-&gt;read_file(buf, size)</code>
-                <code class="language-plaintext highlighter-rouge">-&gt;write_file(data, len)</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SpIOResult</code>
-              </td>
             </tr>
           </tbody>
         </table>
@@ -644,6 +514,8 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name"><code>.with_name()</code></a></td><td><code>sp_with_name()</code></td><td><code>.with_name()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem"><code>.with_stem()</code></a></td><td><code>sp_with_stem()</code></td><td><code>.with_stem()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix"><code>.with_suffix()</code></a></td><td><code>sp_with_suffix()</code></td><td><code>.with_suffix()</code></td></tr>
+            <tr><td><code>__eq__</code></td><td><code>sp_path_eq()</code></td><td><code>.eq()</code></td></tr>
+            <tr><td><code>__ne__</code></td><td><code>sp_path_ne()</code></td><td><code>.ne()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute"><code>.absolute()</code></a></td><td><code>sp_absolute()</code></td><td><code>.absolute()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri"><code>.as_uri()</code></a></td><td><code>sp_as_uri()</code></td><td>-</td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd"><code>Path.cwd()</code></a></td><td><code>sp_cwd()</code></td><td>-</td></tr>
@@ -661,7 +533,7 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_socket"><code>.is_socket()</code></a></td><td><code>sp_is_socket()</code></td><td><code>.is_socket()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_mount"><code>.is_mount()</code></a></td><td><code>sp_is_mount()</code></td><td><code>.is_mount()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_junction"><code>.is_junction()</code></a></td><td><code>sp_is_junction()</code></td><td><code>.is_junction()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile"><code>.samefile()</code></a></td><td><code>sp_samefile()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile"><code>.samefile()</code></a></td><td><code>sp_samefile()</code></td><td><code>.samefile()</code></td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink"><code>.readlink()</code></a></td><td><code>sp_readlink()</code></td><td>-</td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve"><code>.resolve()</code></a></td><td><code>sp_resolve()</code></td><td>-</td></tr>
             <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob"><code>.glob()</code></a></td><td><code>sp_glob_begin/next/end()</code></td><td>-</td></tr>
