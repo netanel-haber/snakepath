@@ -1,5 +1,5 @@
 Snakepath:
-C99 STB-style header-only based on [python's pathlib library](https://docs.python.org/3/library/pathlib.html), because I love pathlib.
+C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes [CPython's own test suite](tests/python_harness/).
 POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
 Vibe-coded with Claude Code + Cursor.
 
