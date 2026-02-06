@@ -1,5 +1,6 @@
 /* snakepath.h - C99 pathlib port, STB-style header-only library
  * No mallocs. POSIX and Windows compatible.
+ * Note: OS functions (opendir/closedir, stat, getcwd, etc.) may allocate internally.
  *
  * Usage:
  *   #define SNAKEPATH_IMPLEMENTATION

@@ -1,7 +1,7 @@
 # Claude Code Guidelines for snakepath
 
 ## Project Overview
-snakepath is a C99 STB-style header-only library implementing Python's pathlib API. No malloc, POSIX + Windows support.
+snakepath is a C99 STB-style header-only library implementing Python's pathlib API. No malloc (OS functions like `opendir`/`stat` may allocate internally), POSIX + Windows support.
 
 ## User Preferences
 
@@ -138,7 +138,7 @@ Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
 - `sp_glob_begin()` / `sp_glob_next()` / `sp_glob_end()` - iterator-based API with internal stack
 - `sp_rglob_begin()` just prepends `**/` and delegates to glob - good code reuse
 - Uses `SpCaseSensitivity` enum: `SP_CASE_PLATFORM_DEFAULT`, `SP_CASE_SENSITIVE`, `SP_CASE_INSENSITIVE`
-- `SpGlobIter` contains an internal stack of `SpIterdirIter iters[]` — all directory I/O delegates to `sp_iterdir` (no parallel directory-reading infrastructure)
+- `SpGlobIter` uses one shared `SpPath current_dir` + lightweight `{handle, path_len}` stack instead of per-level `SpIterdirIter` copies. OS directory handles (`opendir`/`closedir`) are managed directly; `sp_priv_glob_push` restores `current_dir` on `opendir` failure to prevent path corruption
 - Configurable limits: `SP_GLOB_MAX_DEPTH` (32), `SP_GLOB_MAX_SEGMENTS` (32), `SP_GLOB_PATTERN_MAX` (256)
 - Foreach macros: `SP_GLOB_FOREACH(base, pattern, match)` and `SP_RGLOB_FOREACH(base, pattern, match)`
 - Iterator exposes `depth` field for current recursion level
