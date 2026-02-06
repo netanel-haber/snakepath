@@ -620,6 +620,102 @@ int main(void) {
 
     printf("  rmdir tests OK\n");
 
+    /* read_file / write_file tests */
+    printf("\nread_file/write_file Tests:\n");
+
+    char rw_path[128];
+    snprintf(rw_path, sizeof(rw_path), "./test_rw_%ld.tmp", pid);
+    SpPath rw_file = sp_path_f(rw_path, SP_FLAVOR_NATIVE);
+
+    /* Write then read back */
+    {
+        SpIOResult wr = sp_write_file(&rw_file, "hello world", 11);
+        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.bytes == 11);
+
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&rw_file, rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.bytes == 11);
+        ASSERT(memcmp(rbuf, "hello world", 11) == 0);
+    }
+
+    /* Overwrite (truncate) */
+    {
+        SpIOResult wr = sp_write_file(&rw_file, "hi", 2);
+        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.bytes == 2);
+
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&rw_file, rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.bytes == 2);
+        ASSERT(memcmp(rbuf, "hi", 2) == 0);
+    }
+
+    /* Buffer too small */
+    {
+        char tiny[1];
+        SpIOResult rd = sp_read_file(&rw_file, tiny, sizeof(tiny));
+        ASSERT(rd.error == SP_IO_ERR_TOO_LARGE);
+        ASSERT(rd.bytes == 2);  /* reports actual file size */
+    }
+
+    /* Read nonexistent file */
+    {
+        SpPath nofile = sp_path_f("/nonexistent/file.txt", P);
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&nofile, rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_ERR_OPEN);
+    }
+
+    /* Write to nonexistent directory */
+    {
+        SpPath nodir = sp_path_f("/nonexistent/dir/file.txt", P);
+        SpIOResult wr = sp_write_file(&nodir, "x", 1);
+        ASSERT(wr.error == SP_IO_ERR_OPEN);
+    }
+
+    /* Read directory (should fail with OPEN error) */
+    {
+        SpPath rw_dir = sp_path_f(".", P);
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&rw_dir, rbuf, sizeof(rbuf));
+        /* Reading a directory may fail at open or read depending on OS, but should not succeed */
+        ASSERT(rd.error != SP_IO_OK || rd.bytes == 0);
+    }
+
+    /* Empty file */
+    {
+        char empty_path[128];
+        snprintf(empty_path, sizeof(empty_path), "./test_rw_empty_%ld.tmp", pid);
+        SpPath empty_file = sp_path_f(empty_path, SP_FLAVOR_NATIVE);
+        SpIOResult wr = sp_write_file(&empty_file, "", 0);
+        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.bytes == 0);
+
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&empty_file, rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.bytes == 0);
+        sp_unlink(&empty_file, false);
+    }
+
+    /* Embedded null in path -> OPEN error */
+    {
+        SpPath null_path = sp_path_from_n("file\0hidden", 11, SP_FLAVOR_NATIVE);
+        char rbuf[64];
+        SpIOResult rd = sp_read_file(&null_path, rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_ERR_OPEN);
+        SpIOResult wr = sp_write_file(&null_path, "x", 1);
+        ASSERT(wr.error == SP_IO_ERR_OPEN);
+    }
+
+    /* Cleanup */
+    sp_unlink(&rw_file, true);
+
+    printf("  read_file/write_file tests OK\n");
+
     /* expanduser/home tests */
     printf("\nexpanduser/home Tests:\n");
 

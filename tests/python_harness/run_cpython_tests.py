@@ -163,24 +163,6 @@ EXPECTED_FAILURES = {
         ("WindowsPathTest", "test_with"),
     ],
 
-    "has no attribute 'write_bytes'": [
-        ("PathSubclassTest", "test_read_write_bytes"),
-        ("PathTest", "test_read_write_bytes"),
-        ("PosixPathTest", "test_read_write_bytes"),
-        ("WindowsPathTest", "test_read_write_bytes"),
-    ],
-
-    "has no attribute 'write_text'": [
-        ("PathSubclassTest", "test_read_write_text"),
-        ("PathSubclassTest", "test_write_text_with_newlines"),
-        ("PathTest", "test_read_write_text"),
-        ("PathTest", "test_write_text_with_newlines"),
-        ("PosixPathTest", "test_read_write_text"),
-        ("PosixPathTest", "test_write_text_with_newlines"),
-        ("WindowsPathTest", "test_read_write_text"),
-        ("WindowsPathTest", "test_write_text_with_newlines"),
-    ],
-
     # =========================================================================
     # walk prune test modifies dirnames list, which Python bindings don't support
     # (pruning works in C but Python bindings are read-only)

@@ -9,6 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <process.h>
+#define test_getpid _getpid
+#else
+#include <unistd.h>
+#define test_getpid getpid
+#endif
 
 static int tests_run = 0;
 
@@ -300,6 +307,27 @@ int main(void) {
 
     /* Non-existent path should return false */
     ASSERT(SPF("/nonexistent/path")->exists() == false);
+
+    /* ============ read_file / write_file (fluent) ============ */
+
+    {
+        long fpid = (long)test_getpid();
+        char fluent_rw_path[128];
+        snprintf(fluent_rw_path, sizeof(fluent_rw_path), "./test_fluent_rw_%ld.tmp", fpid);
+
+        SpIOResult wr = SPF(fluent_rw_path)->write_file("fluent io", 9);
+        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.bytes == 9);
+
+        char rbuf[64];
+        SpIOResult rd = SPF(fluent_rw_path)->read_file(rbuf, sizeof(rbuf));
+        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.bytes == 9);
+        ASSERT(memcmp(rbuf, "fluent io", 9) == 0);
+
+        SpPath cleanup = sp_path(fluent_rw_path);
+        sp_unlink(&cleanup, true);
+    }
 
     printf("  All fluent API tests OK\n");
     printf("\n%d assertions passed\n", tests_run);

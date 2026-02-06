@@ -1,170 +1,43 @@
 # Claude Code Guidelines for snakepath
 
-## Project Overview
-snakepath is a C99 STB-style header-only library implementing Python's pathlib API. No malloc (OS functions like `opendir`/`stat` may allocate internally), POSIX + Windows support.
+C99 STB-style header-only pathlib port. No malloc, POSIX + Windows. All code in `snakepath.h`.
 
-## User Preferences
+## Code Philosophy
+- All logic in `snakepath.h`, Python bindings are thin FFI only
+- Minimize API surface, share `sp_priv_*` internals
+- No special-casing in wrappers
 
-### Code Philosophy
-- **First-class implementations**: All logic belongs in `snakepath.h`, not in wrappers. The Python bindings should be thin FFI adapters only.
-- **Minimize API surface**: Consolidate related functions, share internal implementations (e.g., `sp_priv_join_len` used by `sp_join_one`, `sp_join_n`, `sp_joinpath`).
-- **No special-casing in wrappers**: If a wrapper needs logic, that logic should be upstreamed to the core library.
+## Refactoring Rules
+Good: extract helpers, delegate to primitives, early return, remove dead code.
+Bad: shorten names, define convenience macros, remove whitespace/braces.
 
-### Development Process
-- **Implement in C first**: Add function to `snakepath.h`, then expose via wrapper
-- **Test thoroughly**: Run C tests, fluent API tests, and Python CPython test suite
-- **Python tests are authoritative**: The CPython pathlib test suite is the gold standard for correctness
+## Testing
 
-### Code Style
-- Follow existing patterns in the codebase
-- Use wrapper macros (`WRAP_STR`, `WRAP_BOOL_UNARY`, etc.) for consistent FFI bindings
-- Keep implementations DRY - extract common code into `sp_priv_*` functions
-
-### Refactoring Guidelines
-**Semantic compression** means simplifying logic, NOT:
-- Shortening variable names (`segment` → `s`, `depth` → `d`) - BAD
-- Defining convenience macros (`#define G_ it->priv_`) - BAD
-- Removing whitespace or braces - BAD
-
-Good semantic compression:
-- Extract repeated patterns into helper functions (`sp_priv_glob_push`, `sp_priv_glob_pop`)
-- Delegate to existing primitives instead of parallel implementations (e.g., glob uses `sp_iterdir` for all directory I/O)
-- Use early `continue`/`return` to flatten nesting
-- Consolidate duplicated logic branches
-- Remove dead code paths
-
-### Testing Commands
-
-**ALWAYS run all three test suites before any git commit:**
+**Run all three before committing:**
 
 ```bash
-# 1. C tests (gcc)
 gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath tests/test.c && ./test_snakepath
-
-# 2. C++ tests (g++) - CI runs both gcc and g++, catches different issues
 g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp tests/test.c && ./test_cpp
-
-# 3. Python/CPython tests
 cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakepath_lib.c -I../.. && python run_cpython_tests.py
 ```
 
-**Why g++ matters:** CI runs C++ builds with strict warnings. Issues that compile fine in C99 will fail in C++:
-- `{0}` struct initializer → use `memset(&it, 0, sizeof(it))` instead
-- `void*` implicit conversion → use `SP_PRIV_CAST(DIR *, ptr)`
-- C-style casts like `(size_t)x` → use `SP_PRIV_CAST(size_t, x)`
+**g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
 
-### Python Tests: EXPECTED_FAILURES
-`EXPECTED_FAILURES` is a dict mapping expected error substrings to lists of `(class_name, test_name)` tuples. The test runner:
-- Runs test classes in parallel (each class in its own process with unique temp dir)
-- Verifies each failure contains the expected error message (reason verification)
-- Reports "unexpected success" if an expected failure passes
-- Reports "wrong reason" if a test fails but with a different error message
+**Termux:** `cc -DSNAKEPATH_QUIET -o nob nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob`
+Termux `/tmp` symlink failures are expected locally. CI is authoritative.
 
-**When implementing new I/O methods** (like `stat()`), cascading updates are needed:
-- Tests that previously failed with `"has no attribute 'stat'"` will now fail for different reasons
-- Example: `test_group` changes from `"has no attribute 'stat'"` to `"has no attribute 'group'"`
-- Run tests locally and move tests between reason groups accordingly
+## EXPECTED_FAILURES
 
-### Adding New Methods Checklist
-1. `snakepath.h`: Add declaration and implementation
-2. `snakepath.h` (fluent): Add to struct and X-macro lists if needed
-3. `tests/test.c`: Add boring API tests
-4. `tests/test_fluent_api.c`: Add fluent API tests
-5. `snakepath_lib.c`: Add wrapper using appropriate macro
-6. `snakepath/__init__.py`: Add ctypes signature and Python method
-7. `run_cpython_tests.py`: Remove from `EXPECTED_FAILURES` if applicable
-8. `README.md`: Update Pathlib Mapping table
+Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verifies failure reasons, reports wrong-reason and unexpected-success. When adding methods, tests cascade between reason groups — run locally and update.
 
-### Git Workflow
-- Create feature branches for changes
-- CI requires a PR to run (doesn't trigger on branch push alone)
-- Use `gh` CLI to monitor CI: `gh pr checks --watch`, `gh run view <id> --log-failed`
-- When grepping CI logs, always use `-C10` or more for context (e.g., `grep -C10 "error:"`)
-- Expected failures must only be for **unimplemented functionality**, never for bugs
+## Git & CI
 
-### CI Output Preferences
-- Keep "Starting build/test" log messages in nob - they help track parallel job progress
-- Python test runner uses `verbosity=1` (dots) for compact output
-- Expected test failures are grouped by reason with counts, not listed individually
-- The Windows MSVC environment dump in CI is collapsed by default (inside `##[group]`)
+- Feature branches, CI requires PR
+- `gh pr checks --watch`, `gh run view <id> --log-failed`, grep with `-C10`
+- Expected failures = unimplemented functionality only, never bugs
 
-### Known Issues
-- Windows CI has race condition with parallel MSVC builds (pre-existing)
-- Clang `-Wnrvo` warning in `sp_path_convert` (pre-existing, disabled via SNAKEPATH_NO_NRVO)
-- Windows console encoding: Turkish İ (U+0130) can't print on cp1252, fixed with UTF-8 wrapper in run_cpython_tests.py
+## Known Issues
 
-### Running nob on Termux
-
-```bash
-cc -DSNAKEPATH_QUIET -o nob nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
-```
-
-Termux-specific test failures (e.g., `/tmp` symlink breaking resolve tests) are acceptable locally - CI is authoritative. Never add Termux workarounds to EXPECTED_FAILURES.
-
-## Technical Details
-
-### Parent Iteration
-Parent iteration (`sp_parents_begin/next`, `sp_parents_count`) terminates at the path's anchor:
-- Absolute paths terminate at `/` (root has 0 parents)
-- Relative paths terminate at `.` (current dir has 0 parents)
-- `/a/b/c/d` has 4 parents: `/a/b/c`, `/a/b`, `/a`, `/`
-- `a/b/c` has 3 parents: `a/b`, `a`, `.`
-
-### Embedded Null Handling
-Paths can contain embedded null bytes (e.g., `fileA\x00suffix`). The library:
-- Uses `p->buf` + `p->len` to preserve full content
-- `sp_join_n(p, data, len)` joins with length-aware strings
-- `sp_is_file()`/`sp_is_dir()` scan `p->buf[0..p->len]` for nulls and return false
-
-### Python Bindings Architecture
-- `snakepath_lib.c`: Thin C wrappers for FFI (output params, bool→int)
-- `snakepath/__init__.py`: ctypes bindings, handles Unicode encoding
-- Use `create_string_buffer()` + explicit length for embedded nulls
-- Use `surrogatepass` encoding for invalid Unicode in paths
-
-### stat() Implementation
-- `sp_stat()` follows symlinks (like Python's `Path.stat()` with default `follow_symlinks=True`)
-- `sp_lstat()` does not follow symlinks (like Python's `Path.lstat()`)
-- Python binding asserts `follow_symlinks=True` and raises AssertionError otherwise
-- `sp_stat_eq()` compares two stat results (mode, ino, dev, nlink, uid, gid, size)
-
-### API Patterns
-| Pattern | C string | With length | SpPath |
-|---------|----------|-------------|--------|
-| Create | `sp_path_new()` | `sp_path_from_n()` | `sp_path_copy()` |
-| Join | `sp_join_one()` | `sp_join_n()` | `sp_joinpath()` |
-
-### Glob Implementation
-- `sp_glob_begin()` / `sp_glob_next()` / `sp_glob_end()` - iterator-based API with internal stack
-- `sp_rglob_begin()` just prepends `**/` and delegates to glob - good code reuse
-- Uses `SpCaseSensitivity` enum: `SP_CASE_PLATFORM_DEFAULT`, `SP_CASE_SENSITIVE`, `SP_CASE_INSENSITIVE`
-- `SpGlobIter` uses one shared `SpPath current_dir` + lightweight `{handle, path_len}` stack instead of per-level `SpIterdirIter` copies. OS directory handles (`opendir`/`closedir`) are managed directly; `sp_priv_glob_push` restores `current_dir` on `opendir` failure to prevent path corruption
-- Configurable limits: `SP_GLOB_MAX_DEPTH` (32), `SP_GLOB_MAX_SEGMENTS` (32), `SP_GLOB_PATTERN_MAX` (256)
-- Foreach macros: `SP_GLOB_FOREACH(base, pattern, match)` and `SP_RGLOB_FOREACH(base, pattern, match)`
-- Iterator exposes `depth` field for current recursion level
-
-**DOUBLESTAR (`**`) handling order is critical:**
-1. First try matching the NEXT segment (if exists)
-2. If match: maybe yield, maybe push with seg_idx+2
-3. Special case: if pushing to a trailing `**`, yield immediately (`next_ds` check)
-4. THEN push for recursion with current seg_idx
-5. Finally, if `**` is last segment and entry is dir, yield
-
-The order matters for patterns like `**/dir*/**` - must yield `dirC/dirD`, not just `dirC`.
-
-### Iterator Patterns
-The library has four iterators:
-- `SpPartsIter` - string cursor over path components
-- `SpParentsIter` - generates derived parent paths
-- `SpGlobIter` - directory traversal for glob matching
-- `SpIterdirIter` - single-level directory listing
-
-All follow the same API pattern (`begin`/`next`/`end`).
-
-### Walk Implementation
-`sp_walk()` uses callback-based recursive traversal. It's allocation-free (uses the program stack) and walks the entire tree without depth limits.
-
-- `sp_walk(dir, top_down, follow_symlinks, callback, on_error, user_data)` - callback receives `SpWalkEntry` with dirpath, dirnames, filenames
-- For top-down pruning, modify `entry->dirname_count` before returning from callback
-- Internal `sp_priv_walk_scan` delegates to `sp_iterdir` for directory reading
-- Python bindings implement `walk()` in pure Python using `iterdir` + `is_dir` (iterative, no recursion limit)
+- Windows CI: race condition with parallel MSVC builds
+- Clang `-Wnrvo` in `sp_path_convert` (disabled via SNAKEPATH_NO_NRVO)
+- Windows console: Turkish İ (U+0130) needs UTF-8 wrapper

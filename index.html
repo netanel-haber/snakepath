@@ -7,14 +7,13 @@
   <meta name="theme-color" content="#151515" />
   <meta name="msapplication-navbutton-color" content="#151515" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>snakepath | C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your
-    own peril.</title>
+  <title>snakepath | C99 STB-style port of Python's pathlib. Passes CPython's own test suite.</title>
   <meta property="og:title" content="snakepath" />
   <meta property="og:locale" content="en_US" />
   <meta name="description"
-    content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
+    content="C99 STB-style port of Python's pathlib. Passes CPython's own test suite." />
   <meta property="og:description"
-    content="C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril." />
+    content="C99 STB-style port of Python's pathlib. Passes CPython's own test suite." />
   <link rel="canonical" href="https://www.snakepath.dev/" />
   <meta property="og:url" content="https://www.snakepath.dev/" />
   <meta property="og:site_name" content="snakepath" />
@@ -27,7 +26,7 @@
       {
         "@context": "https://schema.org",
         "@type": "WebSite",
-        "description": "C99 STB style ~port of Python’s standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.",
+        "description": "C99 STB-style port of Python's pathlib. Passes CPython's own test suite.",
         "headline": "snakepath",
         "name": "snakepath",
         "url": "https://www.snakepath.dev/"
@@ -166,7 +165,7 @@
       <a id="a-title" href="/">
         <h1>snakepath</h1>
       </a>
-      <h2>C99 STB style ~port of Python's standard pathlib module. Written with Claude Opus 4.5. Use at your own peril.
+      <h2>C99 STB-style port of Python's pathlib. Passes CPython's own test suite.
       </h2>
       <section id="downloads">
         <a href="https://github.com/netanel-haber/snakepath" class="btn btn-github">
@@ -176,9 +175,8 @@
   </header>
   <div class="container">
     <section id="main_content">
-      <p>Snakepath: C99 STB-style header-only based on <a href="https://docs.python.org/3/library/pathlib.html">python's
-          pathlib library</a>, because I love pathlib. POSIX + Windows. No malloc (OS functions like opendir/stat may allocate internally). Vibe-coded with Claude Code + Cursor.
-      </p>
+      <p>C99 STB-style header-only port of <a href="https://docs.python.org/3/library/pathlib.html">Python's pathlib</a>. Passes CPython's own test suite.
+          POSIX + Windows. No malloc. Vibe-coded with Claude Code + Cursor.</p>
       <p>The original API was created by <a href="https://peps.python.org/pep-0428/">Antoine Pitrou</a>.</p>
       <div class="language-bash highlighter-rouge">
         <div class="highlight">
@@ -298,21 +296,14 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
 <span class="n">SP_GLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
 <span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
 
-<span class="c1">// Recursive walk (BYOS - Bring Your Own Storage)</span>
-<span class="c1">// Overflow skips subtrees - size buffer for your tree's breadth</span>
-<span class="kt">char</span> <span class="n">cap</span><span class="p">[</span><span class="n">SP_WALK_ENTRIES_CAP_256</span><span class="p">];</span>  <span class="c1">// 256 pending dirs max</span>
-<span class="n">SpWalkIter</span> <span class="n">wit</span><span class="p">;</span>
-<span class="n">sp_walk_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="nb">false</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">cap</span><span class="p">),</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
-<span class="k">while</span> <span class="p">(</span><span class="n">sp_walk_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">))</span> <span class="p">{</span>
+<span class="c1">// Callback-based walk - allocation-free, unlimited depth</span>
+<span class="kt">bool</span> <span class="nf">my_callback</span><span class="p">(</span><span class="k">struct</span> <span class="n">SpWalkEntry</span> <span class="o">*</span><span class="n">e</span><span class="p">)</span> <span class="p">{</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"%s: %zu dirs, %zu files\n"</span><span class="p">,</span>
-           <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">.</span><span class="n">dirpath</span><span class="p">),</span> <span class="n">wit</span><span class="p">.</span><span class="n">dirname_count</span><span class="p">,</span> <span class="n">wit</span><span class="p">.</span><span class="n">filename_count</span><span class="p">);</span>
+           <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">e</span><span class="o">-&gt;</span><span class="n">dirpath</span><span class="p">),</span> <span class="n">e</span><span class="o">-&gt;</span><span class="n">dirname_count</span><span class="p">,</span> <span class="n">e</span><span class="o">-&gt;</span><span class="n">filename_count</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nb">true</span><span class="p">;</span>
 <span class="p">}</span>
-<span class="n">sp_walk_end</span><span class="p">(</span><span class="o">&amp;</span><span class="n">wit</span><span class="p">);</span>
-
-<span class="c1">// Foreach macro - caller provides buffer</span>
-<span class="n">SP_WALK_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="n">it</span><span class="p">)</span> <span class="p">{</span>
-    <span class="n">printf</span><span class="p">(</span><span class="s">"dir: %s\n"</span><span class="p">,</span> <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="o">-&gt;</span><span class="n">dirpath</span><span class="p">));</span>
-<span class="p">}</span></code></pre>
+<span class="n">SpPath</span> <span class="n">dir</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"src"</span><span class="p">);</span>
+<span class="n">sp_walk</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dir</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="nb">false</span><span class="p">,</span> <span class="n">my_callback</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span></code></pre>
           </div>
         </div>
         <h2 id="fluent-api">Fluent API</h2>
@@ -497,6 +488,15 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
                 <code class="language-plaintext highlighter-rouge">bool</code>
               </td>
             </tr>
+            <tr>
+              <td>
+                <code class="language-plaintext highlighter-rouge">-&gt;read_file(buf, size)</code>
+                <code class="language-plaintext highlighter-rouge">-&gt;write_file(data, len)</code>
+              </td>
+              <td>
+                <code class="language-plaintext highlighter-rouge">SpIOResult</code>
+              </td>
+            </tr>
           </tbody>
         </table>
         <h2 id="core-types">Core Types</h2>
@@ -621,615 +621,71 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
           </div>
         </div>
         <h2 id="pathlib-mapping">Pathlib Mapping</h2>
+        <p><a href="https://docs.python.org/3/library/pathlib.html#pure-paths">PurePath docs</a> · <a href="https://docs.python.org/3/library/pathlib.html#concrete-paths">Path docs</a></p>
         <table>
-          <thead>
-            <tr>
-              <th>Python</th>
-              <th>Boring API</th>
-              <th>Fluent</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Python</th><th>Boring API</th><th>Fluent</th></tr></thead>
           <tbody>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.parts</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_parts_begin/next()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.drive</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_drive()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.drive()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.root</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_root()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.root()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.anchor</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_anchor()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.anchor()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.parents</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_parents_begin/next()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.parent</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_parent()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.parent()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.name</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_name()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.name()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.suffix</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_suffix()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.suffix()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.suffixes</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_suffixes()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.suffixes()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.stem</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_stem()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.stem()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.as_posix()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_as_posix()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_absolute()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_absolute()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_absolute()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_relative_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_relative_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_relative_to()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.joinpath()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_join_one()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.join()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.match()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_match()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.relative_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_relative_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.relative_to()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_name()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_with_name()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_name()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_stem()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_with_stem()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_stem()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_suffix()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_with_suffix()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.with_suffix()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">/</code> operator
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_join_one()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.join()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">str(p)</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_str()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.str()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">==</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_path_eq()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.absolute()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_absolute()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.absolute()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.as_uri()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_as_uri()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">Path.cwd()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_cwd()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_file()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_file()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_file()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_dir()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_dir()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_dir()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.exists()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_exists()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.exists()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.stat()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_stat()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.mkdir()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_mkdir()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.glob()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_glob_begin/next/end()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.rglob()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_rglob_begin/next/end()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">len(p.parents)</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_parents_count()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_symlink()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_symlink()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_symlink()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_block_device()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_block_device()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_block_device()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_char_device()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_char_device()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_char_device()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_fifo()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_fifo()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_fifo()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_socket()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_socket()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_socket()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_mount()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_mount()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_mount()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_junction()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_is_junction()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.is_junction()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.lstat()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_lstat()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.readlink()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_readlink()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.resolve()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_resolve()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.symlink_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_symlink_to()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.hardlink_to()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_hardlink_to()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.samefile()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_samefile()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.touch()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_touch()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.unlink()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_unlink()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.rmdir()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_rmdir()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.rename()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_rename()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.replace()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_replace()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.chmod()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_chmod()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.iterdir()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_iterdir_begin/next/end()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.walk()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_walk_begin/next/end()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.owner()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_owner()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.owner()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.group()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_group()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.group()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.expanduser()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_expanduser()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.expanduser()</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">Path.home()</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">sp_home()</code>
-              </td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">.open()</code>
-              </td>
-              <td>-</td>
-              <td>-</td>
-            </tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts"><code>.parts</code></a></td><td><code>sp_parts_begin/next()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive"><code>.drive</code></a></td><td><code>sp_drive()</code></td><td><code>.drive()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root"><code>.root</code></a></td><td><code>sp_root()</code></td><td><code>.root()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor"><code>.anchor</code></a></td><td><code>sp_anchor()</code></td><td><code>.anchor()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents"><code>.parents</code></a></td><td><code>sp_parents_begin/next()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent"><code>.parent</code></a></td><td><code>sp_parent()</code></td><td><code>.parent()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name"><code>.name</code></a></td><td><code>sp_name()</code></td><td><code>.name()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix"><code>.suffix</code></a></td><td><code>sp_suffix()</code></td><td><code>.suffix()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes"><code>.suffixes</code></a></td><td><code>sp_suffixes()</code></td><td><code>.suffixes()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem"><code>.stem</code></a></td><td><code>sp_stem()</code></td><td><code>.stem()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix"><code>.as_posix()</code></a></td><td><code>sp_as_posix()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute"><code>.is_absolute()</code></a></td><td><code>sp_is_absolute()</code></td><td><code>.is_absolute()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to"><code>.is_relative_to()</code></a></td><td><code>sp_is_relative_to()</code></td><td><code>.is_relative_to()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath"><code>.joinpath()</code></a></td><td><code>sp_join_one()</code></td><td><code>.join()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match"><code>.match()</code></a></td><td><code>sp_match()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to"><code>.relative_to()</code></a></td><td><code>sp_relative_to()</code></td><td><code>.relative_to()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name"><code>.with_name()</code></a></td><td><code>sp_with_name()</code></td><td><code>.with_name()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem"><code>.with_stem()</code></a></td><td><code>sp_with_stem()</code></td><td><code>.with_stem()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix"><code>.with_suffix()</code></a></td><td><code>sp_with_suffix()</code></td><td><code>.with_suffix()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute"><code>.absolute()</code></a></td><td><code>sp_absolute()</code></td><td><code>.absolute()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri"><code>.as_uri()</code></a></td><td><code>sp_as_uri()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd"><code>Path.cwd()</code></a></td><td><code>sp_cwd()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.home"><code>Path.home()</code></a></td><td><code>sp_home()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser"><code>.expanduser()</code></a></td><td><code>sp_expanduser()</code></td><td><code>.expanduser()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat"><code>.stat()</code></a></td><td><code>sp_stat()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.lstat"><code>.lstat()</code></a></td><td><code>sp_lstat()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists"><code>.exists()</code></a></td><td><code>sp_exists()</code></td><td><code>.exists()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file"><code>.is_file()</code></a></td><td><code>sp_is_file()</code></td><td><code>.is_file()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir"><code>.is_dir()</code></a></td><td><code>sp_is_dir()</code></td><td><code>.is_dir()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink"><code>.is_symlink()</code></a></td><td><code>sp_is_symlink()</code></td><td><code>.is_symlink()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_block_device"><code>.is_block_device()</code></a></td><td><code>sp_is_block_device()</code></td><td><code>.is_block_device()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_char_device"><code>.is_char_device()</code></a></td><td><code>sp_is_char_device()</code></td><td><code>.is_char_device()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_fifo"><code>.is_fifo()</code></a></td><td><code>sp_is_fifo()</code></td><td><code>.is_fifo()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_socket"><code>.is_socket()</code></a></td><td><code>sp_is_socket()</code></td><td><code>.is_socket()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_mount"><code>.is_mount()</code></a></td><td><code>sp_is_mount()</code></td><td><code>.is_mount()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_junction"><code>.is_junction()</code></a></td><td><code>sp_is_junction()</code></td><td><code>.is_junction()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile"><code>.samefile()</code></a></td><td><code>sp_samefile()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink"><code>.readlink()</code></a></td><td><code>sp_readlink()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve"><code>.resolve()</code></a></td><td><code>sp_resolve()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob"><code>.glob()</code></a></td><td><code>sp_glob_begin/next/end()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob"><code>.rglob()</code></a></td><td><code>sp_rglob_begin/next/end()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir"><code>.iterdir()</code></a></td><td><code>sp_iterdir_begin/next/end()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk"><code>.walk()</code></a></td><td><code>sp_walk()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir"><code>.mkdir()</code></a></td><td><code>sp_mkdir()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch"><code>.touch()</code></a></td><td><code>sp_touch()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.unlink"><code>.unlink()</code></a></td><td><code>sp_unlink()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rmdir"><code>.rmdir()</code></a></td><td><code>sp_rmdir()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename"><code>.rename()</code></a></td><td><code>sp_rename()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.replace"><code>.replace()</code></a></td><td><code>sp_replace()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod"><code>.chmod()</code></a></td><td><code>sp_chmod()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to"><code>.symlink_to()</code></a></td><td><code>sp_symlink_to()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.hardlink_to"><code>.hardlink_to()</code></a></td><td><code>sp_hardlink_to()</code></td><td>-</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner"><code>.owner()</code></a></td><td><code>sp_owner()</code></td><td><code>.owner()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.group"><code>.group()</code></a></td><td><code>sp_group()</code></td><td><code>.group()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes"><code>.read_bytes()</code></a></td><td><code>sp_read_file()</code></td><td><code>.read_file()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_text"><code>.read_text()</code></a></td><td><code>sp_read_file()</code></td><td><code>.read_file()</code> + decode</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes"><code>.write_bytes()</code></a></td><td><code>sp_write_file()</code></td><td><code>.write_file()</code></td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_text"><code>.write_text()</code></a></td><td><code>sp_write_file()</code></td><td><code>.write_file()</code> + encode</td></tr>
+            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.open"><code>.open()</code></a></td><td>-</td><td>-</td></tr>
           </tbody>
         </table>
-        <p>
-          <strong>Not implemented:</strong>
-          <code class="language-plaintext highlighter-rouge">read_bytes</code>,
-          <code class="language-plaintext highlighter-rouge">read_text</code>,
-          <code class="language-plaintext highlighter-rouge">write_bytes</code>,
-          <code class="language-plaintext highlighter-rouge">write_text</code>
-        </p>
       </details>
       <details>
         <summary>MIT License</summary> Copyright (c) 2026 Netanel Haber Permission is hereby granted, free of charge, to

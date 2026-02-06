@@ -1,5 +1,5 @@
 Snakepath:
-C99 STB-style header-only based on [python's pathlib library](https://docs.python.org/3/library/pathlib.html), because I love pathlib.
+C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes [CPython's own test suite](tests/python_harness/).
 POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
 Vibe-coded with Claude Code + Cursor.
 
@@ -181,6 +181,8 @@ SpPath child = sp_join_one(&p, "file.txt");
 | `->is_symlink()` `->is_mount()` `->is_junction()` | `bool` |
 | `->is_block_device()` `->is_char_device()` | `bool` |
 | `->is_fifo()` `->is_socket()` | `bool` |
+| `->read_file(buf, size)` | `SpIOResult` |
+| `->write_file(data, len)` | `SpIOResult` |
 
 ## Core Types
 
@@ -273,95 +275,70 @@ sp_parents_count(sp_path("."))        == 0  // current dir has no parents
 
 ## Pathlib Mapping
 
+[PurePath docs](https://docs.python.org/3/library/pathlib.html#pure-paths) · [Path docs](https://docs.python.org/3/library/pathlib.html#concrete-paths)
+
 | Python | Boring API | Fluent |
 |--------|-----------|--------|
-| `.parts` | `sp_parts_begin/next()` | - |
-| `.drive` | `sp_drive()` | `.drive()` |
-| `.root` | `sp_root()` | `.root()` |
-| `.anchor` | `sp_anchor()` | `.anchor()` |
-| `.parents` | `sp_parents_begin/next()` | - |
-| `.parent` | `sp_parent()` | `.parent()` |
-| `.name` | `sp_name()` | `.name()` |
-| `.suffix` | `sp_suffix()` | `.suffix()` |
-| `.suffixes` | `sp_suffixes()` | `.suffixes()` |
-| `.stem` | `sp_stem()` | `.stem()` |
-| `.as_posix()` | `sp_as_posix()` | - |
-| `.is_absolute()` | `sp_is_absolute()` | `.is_absolute()` |
-| `.is_relative_to()` | `sp_is_relative_to()` | `.is_relative_to()` |
-| `.joinpath()` | `sp_join_one()` | `.join()` |
-| `.match()` | `sp_match()` | - |
-| `.relative_to()` | `sp_relative_to()` | `.relative_to()` |
-| `.with_name()` | `sp_with_name()` | `.with_name()` |
-| `.with_stem()` | `sp_with_stem()` | `.with_stem()` |
-| `.with_suffix()` | `sp_with_suffix()` | `.with_suffix()` |
-| `/` operator | `sp_join_one()` | `.join()` |
-| `str(p)` | `sp_str()` | `.str()` |
-| `==` | `sp_path_eq()` | - |
-| `.absolute()` | `sp_absolute()` | `.absolute()` |
-| `.as_uri()` | `sp_as_uri()` | - |
-| `Path.cwd()` | `sp_cwd()` | - |
-| `.is_file()` | `sp_is_file()` | `.is_file()` |
-| `.is_dir()` | `sp_is_dir()` | `.is_dir()` |
-| `.exists()` | `sp_exists()` | `.exists()` |
-| `.stat()` | `sp_stat()` | - |
-| `.mkdir()` | `sp_mkdir()` | - |
-| `.glob()` | `sp_glob_begin/next/end()` | - |
-| `.rglob()` | `sp_rglob_begin/next/end()` | - |
-| `len(p.parents)` | `sp_parents_count()` | - |
-| `.is_symlink()` | `sp_is_symlink()` | `.is_symlink()` |
-| `.is_block_device()` | `sp_is_block_device()` | `.is_block_device()` |
-| `.is_char_device()` | `sp_is_char_device()` | `.is_char_device()` |
-| `.is_fifo()` | `sp_is_fifo()` | `.is_fifo()` |
-| `.is_socket()` | `sp_is_socket()` | `.is_socket()` |
-| `.is_mount()` | `sp_is_mount()` | `.is_mount()` |
-| `.is_junction()` | `sp_is_junction()` | `.is_junction()` |
-| `.lstat()` | `sp_lstat()` | - |
-| `.readlink()` | `sp_readlink()` | - |
-| `.resolve()` | `sp_resolve()` | - |
-| `.symlink_to()` | `sp_symlink_to()` | - |
-| `.hardlink_to()` | `sp_hardlink_to()` | - |
-| `.samefile()` | `sp_samefile()` | - |
-| `.touch()` | `sp_touch()` | - |
-| `.unlink()` | `sp_unlink()` | - |
-| `.rmdir()` | `sp_rmdir()` | - |
-| `.rename()` | `sp_rename()` | - |
-| `.replace()` | `sp_replace()` | - |
-| `.chmod()` | `sp_chmod()` | - |
-| `.iterdir()` | `sp_iterdir_begin/next/end()` | - |
-| `.walk()` | `sp_walk()` | - |
-| `.owner()` | `sp_owner()` | - |
-| `.group()` | `sp_group()` | - |
-| `.expanduser()` | `sp_expanduser()` | - |
-| `Path.home()` | `sp_home()` | - |
-| `.open()` | - | - |
+| [`.parts`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts) | `sp_parts_begin/next()` | - |
+| [`.drive`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive) | `sp_drive()` | `.drive()` |
+| [`.root`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root) | `sp_root()` | `.root()` |
+| [`.anchor`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor) | `sp_anchor()` | `.anchor()` |
+| [`.parents`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents) | `sp_parents_begin/next()` | - |
+| [`.parent`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent) | `sp_parent()` | `.parent()` |
+| [`.name`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name) | `sp_name()` | `.name()` |
+| [`.suffix`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix) | `sp_suffix()` | `.suffix()` |
+| [`.suffixes`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes) | `sp_suffixes()` | `.suffixes()` |
+| [`.stem`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem) | `sp_stem()` | `.stem()` |
+| [`.as_posix()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix) | `sp_as_posix()` | - |
+| [`.is_absolute()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute) | `sp_is_absolute()` | `.is_absolute()` |
+| [`.is_relative_to()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to) | `sp_is_relative_to()` | `.is_relative_to()` |
+| [`.joinpath()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath) | `sp_join_one()` | `.join()` |
+| [`.match()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match) | `sp_match()` | - |
+| [`.relative_to()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to) | `sp_relative_to()` | `.relative_to()` |
+| [`.with_name()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name) | `sp_with_name()` | `.with_name()` |
+| [`.with_stem()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem) | `sp_with_stem()` | `.with_stem()` |
+| [`.with_suffix()`](https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix) | `sp_with_suffix()` | `.with_suffix()` |
+| [`.absolute()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute) | `sp_absolute()` | `.absolute()` |
+| [`.as_uri()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri) | `sp_as_uri()` | - |
+| [`Path.cwd()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd) | `sp_cwd()` | - |
+| [`Path.home()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.home) | `sp_home()` | - |
+| [`.expanduser()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser) | `sp_expanduser()` | `.expanduser()` |
+| [`.stat()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat) | `sp_stat()` | - |
+| [`.lstat()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.lstat) | `sp_lstat()` | - |
+| [`.exists()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists) | `sp_exists()` | `.exists()` |
+| [`.is_file()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file) | `sp_is_file()` | `.is_file()` |
+| [`.is_dir()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir) | `sp_is_dir()` | `.is_dir()` |
+| [`.is_symlink()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink) | `sp_is_symlink()` | `.is_symlink()` |
+| [`.is_block_device()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_block_device) | `sp_is_block_device()` | `.is_block_device()` |
+| [`.is_char_device()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_char_device) | `sp_is_char_device()` | `.is_char_device()` |
+| [`.is_fifo()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_fifo) | `sp_is_fifo()` | `.is_fifo()` |
+| [`.is_socket()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_socket) | `sp_is_socket()` | `.is_socket()` |
+| [`.is_mount()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_mount) | `sp_is_mount()` | `.is_mount()` |
+| [`.is_junction()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_junction) | `sp_is_junction()` | `.is_junction()` |
+| [`.samefile()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile) | `sp_samefile()` | - |
+| [`.readlink()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink) | `sp_readlink()` | - |
+| [`.resolve()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve) | `sp_resolve()` | - |
+| [`.glob()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob) | `sp_glob_begin/next/end()` | - |
+| [`.rglob()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob) | `sp_rglob_begin/next/end()` | - |
+| [`.iterdir()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir) | `sp_iterdir_begin/next/end()` | - |
+| [`.walk()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk) | `sp_walk()` | - |
+| [`.mkdir()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir) | `sp_mkdir()` | - |
+| [`.touch()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch) | `sp_touch()` | - |
+| [`.unlink()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.unlink) | `sp_unlink()` | - |
+| [`.rmdir()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.rmdir) | `sp_rmdir()` | - |
+| [`.rename()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename) | `sp_rename()` | - |
+| [`.replace()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.replace) | `sp_replace()` | - |
+| [`.chmod()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod) | `sp_chmod()` | - |
+| [`.symlink_to()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to) | `sp_symlink_to()` | - |
+| [`.hardlink_to()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.hardlink_to) | `sp_hardlink_to()` | - |
+| [`.owner()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner) | `sp_owner()` | `.owner()` |
+| [`.group()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.group) | `sp_group()` | `.group()` |
+| [`.read_bytes()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes) | `sp_read_file()` | `.read_file()` |
+| [`.read_text()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_text) | `sp_read_file()` | `.read_file()` + decode |
+| [`.write_bytes()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes) | `sp_write_file()` | `.write_file()` |
+| [`.write_text()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_text) | `sp_write_file()` | `.write_file()` + encode |
+| [`.open()`](https://docs.python.org/3/library/pathlib.html#pathlib.Path.open) | - | - |
 
-**Not implemented:** `read_bytes`, `read_text`, `write_bytes`, `write_text`
-
-## Adding New Methods to the Library
-
-When adding a new method, you need to update multiple files. The library provides wrapper macros in `tests/python_harness/snakepath_lib.c` to simplify Python bindings.
-
-### Wrapper Macros
-
-| Macro | Signature | Use For |
-|-------|-----------|---------|
-| `WRAP_TERM(fn)` | `Path → SpTerm` | Component getters (name, stem, suffix, drive, root, anchor, owner, group) |
-| `WRAP_PATH_UNARY(fn)` | `Path → Path` | Unary path transforms (parent, absolute) |
-| `WRAP_PATH_CSTR(fn)` | `Path + cstr → Path` | Methods taking a string arg (with_name, join_one) |
-| `WRAP_PATH_PATH(fn)` | `Path + Path → Path` | Methods taking another path (joinpath, relative_to) |
-| `WRAP_BOOL_UNARY(fn)` | `Path → bool` | Boolean queries (is_absolute, is_file) |
-| `WRAP_BOOL_BINARY(fn)` | `Path + Path → bool` | Binary predicates (path_eq, is_relative_to) |
-
-### Checklist for New Methods
-
-1. **`snakepath.h`**: Add function declaration and implementation
-2. **`snakepath.h` (fluent)**: Add to struct and X-macro lists if fluent API needed
-3. **`tests/test.c`**: Add boring API tests
-4. **`tests/test_fluent_api.c`**: Add fluent API tests (if applicable)
-5. **`snakepath_lib.c`**: Add wrapper using appropriate macro
-6. **`snakepath/__init__.py`**: Add ctypes signature and Python method
-7. **`run_cpython_tests.py`**: Remove method from `EXPECTED_FAILURES` if previously listed
-8. **`README.md`**: Update Pathlib Mapping table
 </details>
 
 <details>

@@ -56,6 +56,13 @@ SP_MKDIR_ERR_PERMISSION = _lib.sp_mkdir_err_permission()
 SP_MKDIR_ERR_OTHER = _lib.sp_mkdir_err_other()
 SP_MKDIR_ERR_EXISTS_NOT_DIR = _lib.sp_mkdir_err_exists_not_dir()
 
+# I/O result codes
+SP_IO_OK = _lib.sp_io_ok()
+SP_IO_ERR_OPEN = _lib.sp_io_err_open()
+SP_IO_ERR_READ = _lib.sp_io_err_read()
+SP_IO_ERR_WRITE = _lib.sp_io_err_write()
+SP_IO_ERR_TOO_LARGE = _lib.sp_io_err_too_large()
+
 # Case sensitivity options for glob/match
 SP_CASE_PLATFORM_DEFAULT = _lib.sp_case_platform_default()
 SP_CASE_SENSITIVE = _lib.sp_case_sensitive()
@@ -196,6 +203,9 @@ _sig('sp_rmdir_wrap', [_PP], c_int)
 _sig('sp_rename_wrap', [_PP, _PP, _PP])
 _sig('sp_replace_wrap', [_PP, _PP, _PP])
 _sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
+# File I/O
+_sig('sp_read_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(c_int)])
+_sig('sp_write_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(c_int)])
 # Home directory and user expansion
 _sig('sp_home_wrap', [c_int, _PP])
 _sig('sp_expanduser_wrap', [_PP, _PP])
@@ -847,6 +857,57 @@ class Path(PurePath):
         """Change the file mode (permissions)."""
         if not _lib.sp_chmod_wrap(byref(self._sp), mode):
             raise OSError(1, "Operation not permitted", str(self))
+
+    def read_bytes(self):
+        """Read the file contents as bytes."""
+        st = self.stat()
+        size = st.st_size
+        if size == 0:
+            return b''
+        buf = create_string_buffer(size)
+        bytes_out = c_size_t()
+        error_out = c_int()
+        _lib.sp_read_file_wrap(byref(self._sp), buf, size, byref(bytes_out), byref(error_out))
+        err = error_out.value
+        if err == SP_IO_ERR_OPEN:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        if err != SP_IO_OK:
+            raise OSError(5, "I/O error", str(self))
+        return buf.raw[:bytes_out.value]
+
+    def write_bytes(self, data):
+        """Write bytes to the file."""
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError(f"expected bytes-like object, not {type(data).__name__}")
+        data = bytes(data)
+        bytes_out = c_size_t()
+        error_out = c_int()
+        _lib.sp_write_file_wrap(byref(self._sp), data, len(data), byref(bytes_out), byref(error_out))
+        err = error_out.value
+        if err == SP_IO_ERR_OPEN:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        if err != SP_IO_OK:
+            raise OSError(5, "I/O error", str(self))
+        return bytes_out.value
+
+    def read_text(self, encoding=None, errors=None):
+        """Read the file contents as text."""
+        return self.read_bytes().decode(encoding or 'utf-8', errors or 'strict')
+
+    def write_text(self, data, encoding=None, errors=None, newline=None):
+        """Write text to the file."""
+        if not isinstance(data, str):
+            raise TypeError('data must be str, not %s' % type(data).__name__)
+        if newline is not None and newline not in ('', '\n', '\r', '\r\n'):
+            raise ValueError('illegal newline value: %r' % (newline,))
+        if newline is not None:
+            if newline != '':
+                data = data.replace('\n', newline)
+        else:
+            import os as _os
+            data = data.replace('\n', _os.linesep)
+        encoded = data.encode(encoding or 'utf-8', errors or 'strict')
+        return self.write_bytes(encoded)
 
     def open(self, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
         """Open the file pointed to by this path."""
