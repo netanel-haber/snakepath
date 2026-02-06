@@ -145,6 +145,25 @@ typedef struct {
     bool done;
 } SpParentsIter;
 
+/* Directory iteration */
+typedef struct {
+    SpPath dir;           /* Directory being iterated */
+    int done;             /* -1 = error, 0 = in progress, 1 = done */
+    struct {
+        void *handle;     /* DIR* (POSIX) or HANDLE (Windows, NULL until first next()) */
+    } priv_;
+} SpIterdirIter;
+
+SpIterdirIter sp_iterdir_begin(const SpPath *p);
+bool sp_iterdir_next(SpIterdirIter *it, SpPath *out);  /* returns child path */
+void sp_iterdir_end(SpIterdirIter *it);
+
+/* Iterdir foreach macro */
+#define SP_ITERDIR_FOREACH(dir, entry_var) \
+    for (struct { SpIterdirIter it; int done; } sp_ictx_ = { sp_iterdir_begin(dir), 0 }; \
+         !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
+    for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
+
 /* Glob iterator limits */
 #ifndef SP_GLOB_MAX_DEPTH
 #define SP_GLOB_MAX_DEPTH 32
@@ -168,9 +187,8 @@ typedef struct {
         bool case_insensitive;
         bool yield_base_pending;  /* When pattern starts with **, yield base dir first */
         SpFlavor flavor;
-        SpPath dirs[SP_GLOB_MAX_DEPTH];
+        SpIterdirIter iters[SP_GLOB_MAX_DEPTH];
         size_t seg_idxs[SP_GLOB_MAX_DEPTH];
-        void *handles[SP_GLOB_MAX_DEPTH];
     } priv_;
 } SpGlobIter;
 
@@ -316,31 +334,6 @@ SpPath sp_expanduser(const SpPath *p);  /* expand ~ to home directory */
 /* User/group info */
 SpTerm sp_owner(const SpPath *p);  /* get file owner name */
 SpTerm sp_group(const SpPath *p);  /* get file group name */
-
-/* Directory iteration */
-typedef struct {
-    SpPath dir;           /* Directory being iterated */
-    int done;             /* -1 = error, 0 = in progress, 1 = done */
-    struct {
-#ifdef SP_WINDOWS
-        void *handle;     /* HANDLE from FindFirstFileA */
-        char find_data[320]; /* WIN32_FIND_DATAA */
-        bool first;
-#else
-        void *handle;     /* DIR* from opendir */
-#endif
-    } priv_;
-} SpIterdirIter;
-
-SpIterdirIter sp_iterdir_begin(const SpPath *p);
-bool sp_iterdir_next(SpIterdirIter *it, SpPath *out);  /* returns child path */
-void sp_iterdir_end(SpIterdirIter *it);
-
-/* Iterdir foreach macro */
-#define SP_ITERDIR_FOREACH(dir, entry_var) \
-    for (struct { SpIterdirIter it; int done; } sp_ictx_ = { sp_iterdir_begin(dir), 0 }; \
-         !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
-    for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
 
 /* Walk limits */
 #ifndef SP_WALK_MAX_ENTRIES
@@ -2381,15 +2374,6 @@ static bool sp_priv_glob_match(const char *name, const char *pattern, int seg_ty
         && sp_priv_fnmatch(pattern, strlen(pattern), name, strlen(name), case_insensitive);
 }
 
-static void sp_priv_glob_close_handle(void *handle) {
-    if (!handle) return;
-#ifdef SP_WINDOWS
-    FindClose(SP_PRIV_CAST(HANDLE, handle));
-#else
-    closedir(SP_PRIV_CAST(DIR *, handle));
-#endif
-}
-
 #ifdef SP_WINDOWS
 /* Build Windows FindFirstFile search pattern "dir\*" into buf. Returns pattern length. */
 static size_t sp_priv_win_search_pattern(const SpPath *dir, char *buf) {
@@ -2411,31 +2395,17 @@ static size_t sp_priv_win_search_pattern(const SpPath *dir, char *buf) {
 }
 #endif
 
-static void *sp_priv_glob_open_dir(const SpPath *dir) {
-#ifdef SP_WINDOWS
-    char search[SP_PATH_MAX + 3];
-    sp_priv_win_search_pattern(dir, search);
-    WIN32_FIND_DATAA fd;
-    HANDLE handle = FindFirstFileA(search, &fd);
-    return (handle == INVALID_HANDLE_VALUE) ? NULL : handle;
-#else
-    return opendir(dir->len ? dir->buf : ".");
-#endif
-}
-
 static void sp_priv_glob_pop(SpGlobIter *it) {
-    sp_priv_glob_close_handle(it->priv_.handles[it->depth]);
-    it->priv_.handles[it->depth--] = NULL;
+    sp_iterdir_end(&it->priv_.iters[it->depth--]);
 }
 
 static bool sp_priv_glob_push(SpGlobIter *it, const SpPath *path, size_t seg_idx) {
     if (it->depth + 1 >= SP_GLOB_MAX_DEPTH) return false;
-    void *handle = sp_priv_glob_open_dir(path);
-    if (!handle) return false;
-    int depth = ++it->depth;
-    it->priv_.dirs[depth] = *path;
+    int depth = it->depth + 1;
+    it->priv_.iters[depth] = sp_iterdir_begin(path);
+    if (it->priv_.iters[depth].done != 0) return false;
+    it->depth = depth;
     it->priv_.seg_idxs[depth] = seg_idx;
-    it->priv_.handles[depth] = handle;
     return true;
 }
 
@@ -2485,8 +2455,8 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
     if (!it || it->depth < 0) return false;
     if (it->priv_.yield_base_pending) {
         it->priv_.yield_base_pending = false;
-        if (!it->priv_.dir_only || sp_is_dir(&it->priv_.dirs[0])) {
-            *out = it->priv_.dirs[0];
+        if (!it->priv_.dir_only || sp_is_dir(&it->priv_.iters[0].dir)) {
+            *out = it->priv_.iters[0].dir;
             return true;
         }
     }
@@ -2502,36 +2472,26 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
 
         /* Literal . or .. : synthesize without readdir (opendir fails on some systems) */
         if (seg_type == SP_GLOB_SEG_LITERAL && SP_GLOB_IS_DOT_OR_DOTDOT(pattern)) {
-            SpPath full = sp_join_one(&it->priv_.dirs[depth], pattern);
+            SpPath full = sp_join_one(&it->priv_.iters[depth].dir, pattern);
             if (!sp_is_dir(&full)) { sp_priv_glob_pop(it); continue; }
             if (is_last) { it->priv_.seg_idxs[depth]++; *out = full; return true; }
             /* Advance; reopen only if next segment needs readdir */
             it->priv_.seg_idxs[depth]++;
-            it->priv_.dirs[depth] = full;
+            it->priv_.iters[depth].dir = full;
             const char *next_pattern = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
             if (it->priv_.seg_types[seg_idx + 1] == SP_GLOB_SEG_LITERAL && SP_GLOB_IS_DOT_OR_DOTDOT(next_pattern))
                 continue;
-            sp_priv_glob_close_handle(it->priv_.handles[depth]);
-            it->priv_.handles[depth] = sp_priv_glob_open_dir(&full);
-            if (!it->priv_.handles[depth]) it->depth--;
+            sp_iterdir_end(&it->priv_.iters[depth]);
+            it->priv_.iters[depth] = sp_iterdir_begin(&full);
+            if (it->priv_.iters[depth].done != 0) it->depth--;
             continue;
         }
 
-        const char *name;
-#ifdef SP_WINDOWS
-        WIN32_FIND_DATAA fd;
-        if (!FindNextFileA(it->priv_.handles[depth], &fd)) { sp_priv_glob_pop(it); continue; }
-        name = fd.cFileName;
-#else
-        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, it->priv_.handles[depth]));
-        if (!de) { sp_priv_glob_pop(it); continue; }
-        name = de->d_name;
-#endif
-        if (name[0] == '.' && name[1] == '\0') continue;
-        if (SP_GLOB_IS_DOT_OR_DOTDOT(name) && !SP_GLOB_IS_DOT_OR_DOTDOT(pattern)) continue;
+        SpPath full;
+        if (!sp_iterdir_next(&it->priv_.iters[depth], &full)) { sp_priv_glob_pop(it); continue; }
+        SpTerm name_term = sp_name(&full);
+        const char *name = name_term.buf;
         if (name[0] == '.' && pattern[0] != '.' && seg_type != SP_GLOB_SEG_DOUBLESTAR) continue;
-
-        SpPath full = sp_join_one(&it->priv_.dirs[depth], name);
         bool isdir = sp_is_dir(&full);
         bool matches_dir_constraint = !it->priv_.dir_only || isdir;
 
@@ -2760,16 +2720,11 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     it.dir = sp_path_copy(p);
 
 #ifdef SP_WINDOWS
-    char search[SP_PATH_MAX + 3];
-    sp_priv_win_search_pattern(&it.dir, search);
-    WIN32_FIND_DATAA *fd = (WIN32_FIND_DATAA *)it.priv_.find_data;
-    it.priv_.handle = FindFirstFileA(search, fd);
-    if (it.priv_.handle == INVALID_HANDLE_VALUE) {
-        it.priv_.handle = NULL;
-        return it;
+    {
+        DWORD attr = GetFileAttributesA(it.dir.len ? it.dir.buf : ".");
+        if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return it;
     }
-    it.priv_.first = true;
-    it.done = 0;
+    it.done = 0;  /* handle opened lazily in sp_iterdir_next */
 #else
     it.priv_.handle = opendir(sp_str(&it.dir));
     if (!it.priv_.handle) return it;
@@ -2779,21 +2734,29 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 }
 
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
-    if (!it || it->done != 0 || !it->priv_.handle) return false;
+    if (!it || it->done != 0) return false;
 
 #ifdef SP_WINDOWS
-    WIN32_FIND_DATAA *fd = (WIN32_FIND_DATAA *)it->priv_.find_data;
+    WIN32_FIND_DATAA fd;
     while (true) {
         const char *name;
-        if (it->priv_.first) {
-            it->priv_.first = false;
-            name = fd->cFileName;
+        if (!it->priv_.handle) {
+            /* First call — open directory lazily */
+            char search[SP_PATH_MAX + 3];
+            sp_priv_win_search_pattern(&it->dir, search);
+            it->priv_.handle = FindFirstFileA(search, &fd);
+            if (it->priv_.handle == INVALID_HANDLE_VALUE) {
+                it->priv_.handle = NULL;
+                it->done = -1;
+                return false;
+            }
+            name = fd.cFileName;
         } else {
-            if (!FindNextFileA(it->priv_.handle, fd)) {
+            if (!FindNextFileA(it->priv_.handle, &fd)) {
                 it->done = 1;
                 return false;
             }
-            name = fd->cFileName;
+            name = fd.cFileName;
         }
         /* Skip . and .. */
         if (name[0] == '.') {
@@ -2804,6 +2767,7 @@ bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
         return true;
     }
 #else
+    if (!it->priv_.handle) return false;
     while (true) {
         struct dirent *de = readdir(SP_PRIV_CAST(DIR *, it->priv_.handle));
         if (!de) {
