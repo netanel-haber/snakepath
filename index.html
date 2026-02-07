@@ -209,355 +209,352 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         </div>
       </div>
       <details>
-        <summary>Snakepath API Reference</summary>
-        <h2 id="boring-api">Boring API</h2>
-        <h3 id="path-creation">Path Creation</h3>
+        <summary>Snakepath API Reference (<a href="https://github.com/netanel-haber/snakepath/blob/main/api_demo.c">api_demo.c</a>)</summary>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">);</span>           <span class="c1">// Native flavor</span>
-<span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">sp_path_f</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">,</span> <span class="n">SP_FLAVOR_POSIX</span><span class="p">);</span>   <span class="c1">// Explicit POSIX</span>
-<span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">sp_path_f</span><span class="p">(</span><span class="s">"C:/x"</span><span class="p">,</span> <span class="n">SP_FLAVOR_WINDOWS</span><span class="p">);</span> <span class="c1">// Explicit Windows</span></code></pre>
-          </div>
-        </div>
-        <h3 id="path-components">Path Components</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpTerm</span> <span class="n">name</span>   <span class="o">=</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Final component: "file.txt"</span>
-<span class="n">SpTerm</span> <span class="n">stem</span>   <span class="o">=</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Name without suffix: "file"</span>
-<span class="n">SpTerm</span> <span class="n">suffix</span> <span class="o">=</span> <span class="n">sp_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Extension: ".txt"</span>
-<span class="n">SpTerm</span> <span class="n">drive</span>  <span class="o">=</span> <span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>  <span class="c1">// Drive letter: "C:" (Windows)</span>
-<span class="n">SpTerm</span> <span class="n">root</span>   <span class="o">=</span> <span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>   <span class="c1">// Root: "/" or "\"</span>
-<span class="n">SpTerm</span> <span class="n">anchor</span> <span class="o">=</span> <span class="n">sp_anchor</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span> <span class="c1">// Drive + root: "C:\"</span>
-<span class="c1">// SpTerm has .buf (null-terminated) and .len fields</span>
-<span class="n">printf</span><span class="p">(</span><span class="s">"%s\n"</span><span class="p">,</span> <span class="n">name</span><span class="p">.</span><span class="n">buf</span><span class="p">);</span>        <span class="c1">// Direct %s usage works!</span></code></pre>
-          </div>
-        </div>
-        <h3 id="navigation">Navigation</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">parent</span> <span class="o">=</span> <span class="n">sp_parent</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>  <span class="c1">// Parent directory</span>
+            <pre class="highlight"><code>/* compile: cc api_demo.c -o api_demo &amp;&amp; ./api_demo
+ * Creates a demo_tmp/ directory in cwd, cleans up on exit. */
+#define SP_PATH_MAX 4096
+#define SNAKEPATH_FLUENT
+#define SNAKEPATH_IMPLEMENTATION
+#include &quot;snakepath.h&quot;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
 
-<span class="c1">// Iterate parts</span>
-<span class="n">SpPartsIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sp_parts_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
-<span class="n">SpStr</span> <span class="n">part</span><span class="p">;</span>
-<span class="k">while</span> <span class="p">(</span><span class="n">sp_parts_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">part</span><span class="p">))</span> <span class="p">{</span> <span class="cm">/* use part */</span> <span class="p">}</span>
+static void section(const char *s) { printf(&quot;\n--- %s ---\n\n&quot;, s); }
 
-<span class="c1">// Iterate parents</span>
-<span class="n">SpParentsIter</span> <span class="n">pit</span> <span class="o">=</span> <span class="n">sp_parents_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">par</span><span class="p">;</span>
-<span class="k">while</span> <span class="p">(</span><span class="n">sp_parents_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pit</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">par</span><span class="p">))</span> <span class="p">{</span> <span class="cm">/* use par */</span> <span class="p">}</span></code></pre>
-          </div>
-        </div>
-        <h3 id="joining">Joining</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">joined</span> <span class="o">=</span> <span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"subdir"</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">joined</span> <span class="o">=</span> <span class="n">sp_join</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"a"</span><span class="p">,</span> <span class="s">"b"</span><span class="p">,</span> <span class="s">"c"</span><span class="p">);</span>  <span class="c1">// C only (variadic)</span>
-<span class="n">SpPath</span> <span class="n">joined</span> <span class="o">=</span> <span class="n">sp_joinpath</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">other</span><span class="p">);</span></code></pre>
-          </div>
-        </div>
-        <h3 id="modification">Modification</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">new_p</span> <span class="o">=</span> <span class="n">sp_with_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"newfile.txt"</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">new_p</span> <span class="o">=</span> <span class="n">sp_with_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"newname"</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">new_p</span> <span class="o">=</span> <span class="n">sp_with_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">".md"</span><span class="p">);</span></code></pre>
-          </div>
-        </div>
-        <h3 id="queries">Queries</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">bool</span> <span class="n">abs</span> <span class="o">=</span> <span class="n">sp_is_absolute</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
-<span class="n">bool</span> <span class="n">rel</span> <span class="o">=</span> <span class="n">sp_is_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">relative</span> <span class="o">=</span> <span class="n">sp_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
-<span class="n">bool</span> <span class="n">eq</span> <span class="o">=</span> <span class="n">sp_path_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span>
-<span class="n">bool</span> <span class="n">ne</span> <span class="o">=</span> <span class="n">sp_path_ne</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span>
-<span class="n">bool</span> <span class="n">same</span> <span class="o">=</span> <span class="n">sp_samefile</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">);</span></code></pre>
-          </div>
-        </div>
-        <h3 id="glob">Glob / Directory Traversal</h3>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="c1">// Iterator-based API</span>
-<span class="n">SpGlobIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sp_glob_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">SP_CASE_PLATFORM_DEFAULT</span><span class="p">);</span>
-<span class="n">SpPath</span> <span class="n">match</span><span class="p">;</span>
-<span class="k">while</span> <span class="p">(</span><span class="n">sp_glob_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">match</span><span class="p">))</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
-<span class="n">sp_glob_end</span><span class="p">(</span><span class="o">&amp;</span><span class="n">it</span><span class="p">);</span>
+static bool on_walk(struct SpWalkEntry *e) {
+    printf(&quot;  %s/ (%zu dirs, %zu files)\n&quot;,
+           sp_str(&amp;e-&gt;dirpath), e-&gt;dirname_count, e-&gt;filename_count);
+    return true;
+}
 
-<span class="c1">// Recursive glob (prepends **/)</span>
-<span class="n">SpGlobIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sp_rglob_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">SP_CASE_PLATFORM_DEFAULT</span><span class="p">);</span>
+int main(void) {
+    SpPath tmp;
 
-<span class="c1">// Convenient foreach macros</span>
-<span class="n">SP_GLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.txt"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
-<span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span> <span class="s">"*.c"</span><span class="p">,</span> <span class="n">match</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* use match */</span> <span class="p">}</span>
+    SpPath p     = sp_path(&quot;/home/user/docs/report.tar.gz&quot;);
+    SpPath posix = sp_path_f(&quot;/etc/nginx/nginx.conf&quot;, SP_FLAVOR_POSIX);
+    SpPath win   = sp_path_f(&quot;C:\\Users\\dev\\file.txt&quot;, SP_FLAVOR_WINDOWS);
+    SpPath base  = sp_path(&quot;/home/user&quot;);
 
-<span class="c1">// Callback-based walk - allocation-free, unlimited depth</span>
-<span class="kt">bool</span> <span class="nf">my_callback</span><span class="p">(</span><span class="k">struct</span> <span class="n">SpWalkEntry</span> <span class="o">*</span><span class="n">e</span><span class="p">)</span> <span class="p">{</span>
-    <span class="n">printf</span><span class="p">(</span><span class="s">"%s: %zu dirs, %zu files\n"</span><span class="p">,</span>
-           <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">e</span><span class="o">-&gt;</span><span class="n">dirpath</span><span class="p">),</span> <span class="n">e</span><span class="o">-&gt;</span><span class="n">dirname_count</span><span class="p">,</span> <span class="n">e</span><span class="o">-&gt;</span><span class="n">filename_count</span><span class="p">);</span>
-    <span class="k">return</span> <span class="nb">true</span><span class="p">;</span>
-<span class="p">}</span>
-<span class="n">SpPath</span> <span class="n">dir</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"src"</span><span class="p">);</span>
-<span class="n">sp_walk</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dir</span><span class="p">,</span> <span class="nb">true</span><span class="p">,</span> <span class="nb">false</span><span class="p">,</span> <span class="n">my_callback</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span></code></pre>
-          </div>
-        </div>
-        <h2 id="fluent-api">Fluent API</h2>
-        <p>Enable with <code class="language-plaintext highlighter-rouge">#define SNAKEPATH_FLUENT</code> before
-          including. All non-iterator, non-mutator methods are available as fluent calls.</p>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="cp">#define SP_PATH_MAX 4096</span>
-<span class="cp">#define SNAKEPATH_FLUENT</span>
-<span class="cp">#define SNAKEPATH_IMPLEMENTATION</span>
-<span class="cp">#include</span> <span class="cpf">"snakepath.h"</span>
+    /* Fluent entry: SPF(&quot;path&quot;), SPF_P(&quot;path&quot;), SPF_W(&quot;path&quot;), SPF_PATH(var) */
 
-<span class="c1">// Path('a/b/c').parent.name -&gt; "b"</span>
-<span class="n">SpTerm</span> <span class="n">name</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">();</span>
+    /* ── Components ────────────────────────────────────────────── */
+    section(&quot;Components&quot;);
 
-<span class="c1">// PurePosixPath('/etc').joinpath('init.d', 'apache2')</span>
-<span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">SPF_P</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"init.d"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"apache2"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+    /* .drive https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive */
+    printf(&quot;  drive:   \&quot;%s\&quot;\n&quot;, sp_drive(&amp;p).buf);
+    printf(&quot;  (fluent) \&quot;%s\&quot;\n&quot;, SPF_PATH(p)-&gt;drive().buf);
 
-<span class="n">SpPath</span> <span class="n">w</span> <span class="o">=</span> <span class="n">SPF_W</span><span class="p">(</span><span class="s">"C:/Users"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"docs"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
-<span class="n">SpPath</span> <span class="n">child</span> <span class="o">=</span> <span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span> <span class="s">"file.txt"</span><span class="p">);</span></code></pre>
-          </div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Macro</th>
-              <th>Python</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SPF("path")</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">Path('path')</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SPF_P("path")</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">PurePosixPath('path')</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SPF_W("path")</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">PureWindowsPath('path')</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code class="language-plaintext highlighter-rouge">SPF_PATH(p)</code>
-              </td>
-              <td>Start fluent chain from existing <code class="language-plaintext highlighter-rouge">SpPath</code></td>
-            </tr>
-          </tbody>
-        </table>
-        <h2 id="core-types">Core Types</h2>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpStr</span>   <span class="p">{</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">data</span><span class="p">;</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="p">}</span>  <span class="c1">// String view (non-owning)</span>
-<span class="n">SpTerm</span>  <span class="p">{</span> <span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="p">}</span>           <span class="c1">// Terminated string (owning, null-terminated)</span>
-<span class="n">SpPath</span>  <span class="p">{</span> <span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="mi">4096</span><span class="p">];</span> <span class="kt">size_t</span> <span class="n">len</span><span class="p">;</span> <span class="n">SpFlavor</span> <span class="n">flavor</span><span class="p">;</span> <span class="p">}</span>
-<span class="n">SpFlavor</span> <span class="p">{</span> <span class="n">SP_FLAVOR_NATIVE</span><span class="p">,</span> <span class="n">SP_FLAVOR_POSIX</span><span class="p">,</span> <span class="n">SP_FLAVOR_WINDOWS</span> <span class="p">}</span></code></pre>
-          </div>
-        </div>
-        <p><strong>SpTerm vs SpStr:</strong> Component functions (<code class="language-plaintext highlighter-rouge">name</code>, <code class="language-plaintext highlighter-rouge">stem</code>, <code class="language-plaintext highlighter-rouge">suffix</code>, <code class="language-plaintext highlighter-rouge">drive</code>, <code class="language-plaintext highlighter-rouge">root</code>, <code class="language-plaintext highlighter-rouge">anchor</code>) return <code class="language-plaintext highlighter-rouge">SpTerm</code> which owns its data and is null-terminated, allowing direct <code class="language-plaintext highlighter-rouge">%s</code> usage. <code class="language-plaintext highlighter-rouge">SpStr</code> is a view into existing memory (used internally and for iteration).</p>
-        <h2 id="configuration">Configuration</h2>
-        <p>Define before including:</p>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre class="highlight"><code><span class="cp">#define SP_PATH_MAX 4096      </span><span class="c1">// Max path length (REQUIRED)</span>
-<span class="cp">#define SP_MAX_SUFFIXES 16    </span><span class="c1">// Max file extensions (optional)</span></code></pre>
-          </div>
-        </div>
-        <p><strong>Note:</strong> <code class="language-plaintext highlighter-rouge">SP_PATH_MAX</code> must be defined before including the header. Use <code class="language-plaintext highlighter-rouge">SP_PATH_MAX_LINUX</code> (4096) or <code class="language-plaintext highlighter-rouge">SP_PATH_MAX_WINDOWS</code> (1024) as guidance.</p>
-        <h2 id="platform-behavior">Platform Behavior</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>&nbsp;</th>
-              <th>POSIX</th>
-              <th>Windows</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Separator</td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">/</code>
-              </td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">\</code> (normalizes <code
-                  class="language-plaintext highlighter-rouge">/</code>)
-              </td>
-            </tr>
-            <tr>
-              <td>Drive</td>
-              <td>None</td>
-              <td>
-                <code class="language-plaintext highlighter-rouge">C:</code> or UNC <code
-                  class="language-plaintext highlighter-rouge">\\server\share</code>
-              </td>
-            </tr>
-            <tr>
-              <td>Absolute</td>
-              <td>Has root <code class="language-plaintext highlighter-rouge">/</code>
-              </td>
-              <td>Has drive + root <code class="language-plaintext highlighter-rouge">C:\</code>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <h2 id="python-bindings">Python Bindings</h2>
-        <p>Thin ctypes wrapper providing <code class="language-plaintext highlighter-rouge">PurePath</code>, <code
-            class="language-plaintext highlighter-rouge">PurePosixPath</code>, and <code
-            class="language-plaintext highlighter-rouge">PureWindowsPath</code> classes compatible with Python's pathlib
-          interface.</p>
-        <div class="language-python highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="kn">from</span> <span class="nn">snakepath</span> <span class="kn">import</span> <span class="n">PurePosixPath</span><span class="p">,</span> <span class="n">PureWindowsPath</span>
+    /* .root https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root */
+    printf(&quot;  root:    %s\n&quot;, sp_root(&amp;p).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;root().buf);
 
-<span class="n">p</span> <span class="o">=</span> <span class="n">PurePosixPath</span><span class="p">(</span><span class="s">'/usr/local/bin'</span><span class="p">)</span>
-<span class="k">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">)</span>    <span class="c1"># 'bin'</span>
-<span class="k">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="n">parent</span><span class="p">)</span>  <span class="c1"># PurePosixPath('/usr/local')</span>
-<span class="k">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="n">suffix</span><span class="p">)</span>  <span class="c1"># ''</span>
+    /* .anchor https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor */
+    printf(&quot;  anchor:  %s\n&quot;, sp_anchor(&amp;p).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;anchor().buf);
 
-<span class="n">w</span> <span class="o">=</span> <span class="n">PureWindowsPath</span><span class="p">(</span><span class="s">'C:/Users/test.txt'</span><span class="p">)</span>
-<span class="k">print</span><span class="p">(</span><span class="n">w</span><span class="p">.</span><span class="n">drive</span><span class="p">)</span>   <span class="c1"># 'C:'</span>
-<span class="k">print</span><span class="p">(</span><span class="n">w</span><span class="p">.</span><span class="n">stem</span><span class="p">)</span>    <span class="c1"># 'test'</span></code></pre>
+    /* .name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name */
+    printf(&quot;  name:    %s\n&quot;, sp_name(&amp;p).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;name().buf);
+
+    /* .stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem */
+    printf(&quot;  stem:    %s\n&quot;, sp_stem(&amp;p).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;stem().buf);
+
+    /* .suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix */
+    printf(&quot;  suffix:  %s\n&quot;, sp_suffix(&amp;p).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;suffix().buf);
+
+    /* .suffixes https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes
+     * Returns ALL dot-separated segments, not just &quot;real&quot; extensions. */
+    SpSuffixes sfx = sp_suffixes(&amp;p);
+    printf(&quot;  suffixes (%zu):&quot;, sfx.count);
+    for (size_t i = 0; i &lt; sfx.count; i++)
+        printf(&quot; %.*s&quot;, (int)sfx.items[i].len, sfx.items[i].data);
+    printf(&quot;\n&quot;);
+
+    /* Windows / POSIX flavor differences */
+    printf(&quot;  win drive: %s, root: %s\n&quot;, sp_drive(&amp;win).buf, sp_root(&amp;win).buf);
+    printf(&quot;  posix drive: \&quot;%s\&quot;, root: %s\n&quot;, sp_drive(&amp;posix).buf, sp_root(&amp;posix).buf);
+
+    /* ── Navigation ────────────────────────────────────────────── */
+    section(&quot;Navigation&quot;);
+
+    /* .parent https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent */
+    tmp = sp_parent(&amp;p);
+    printf(&quot;  parent:  %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(p)-&gt;parent()-&gt;path();
+    printf(&quot;  (fluent) %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .parents https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents
+     * Terminates at &quot;/&quot; for absolute, &quot;.&quot; for relative. */
+    SpParentsIter pit = sp_parents_begin(&amp;p);
+    SpPath par;
+    printf(&quot;  parents (%zu):\n&quot;, sp_parents_count(&amp;p));
+    while (sp_parents_next(&amp;pit, &amp;par))
+        printf(&quot;    %s\n&quot;, sp_str(&amp;par));
+
+    /* .parts https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts */
+    SpPartsIter parts_it = sp_parts_begin(&amp;p);
+    SpStr part;
+    printf(&quot;  parts (%zu):&quot;, sp_parts_count(&amp;p));
+    while (sp_parts_next(&amp;parts_it, &amp;part))
+        printf(&quot; [%.*s]&quot;, (int)part.len, part.data);
+    printf(&quot;\n&quot;);
+
+    /* ── Joining ───────────────────────────────────────────────── */
+    section(&quot;Joining&quot;);
+
+    /* .joinpath https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath */
+    tmp = sp_join_one(&amp;base, &quot;docs&quot;);
+    printf(&quot;  join_one: %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(base)-&gt;join(&quot;docs&quot;)-&gt;path();
+    printf(&quot;  (fluent)  %s\n&quot;, sp_str(&amp;tmp));
+
+    tmp = sp_join(&amp;base, &quot;a&quot;, &quot;b&quot;, &quot;c&quot;); /* variadic, C only */
+    printf(&quot;  join:     %s\n&quot;, sp_str(&amp;tmp));
+
+    SpPath other = sp_path(&quot;extra&quot;);
+    tmp = sp_joinpath(&amp;base, &amp;other);
+    printf(&quot;  joinpath: %s\n&quot;, sp_str(&amp;tmp));
+
+    /* ── Modification ──────────────────────────────────────────── */
+    section(&quot;Modification&quot;);
+
+    /* .with_name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name */
+    tmp = sp_with_name(&amp;p, &quot;README.md&quot;);
+    printf(&quot;  with_name:   %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(p)-&gt;with_name(&quot;README.md&quot;)-&gt;path();
+    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .with_stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem */
+    tmp = sp_with_stem(&amp;p, &quot;archive&quot;);
+    printf(&quot;  with_stem:   %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(p)-&gt;with_stem(&quot;archive&quot;)-&gt;path();
+    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .with_suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix */
+    tmp = sp_with_suffix(&amp;p, &quot;.bz2&quot;);
+    printf(&quot;  with_suffix: %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(p)-&gt;with_suffix(&quot;.bz2&quot;)-&gt;path();
+    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
+
+    /* ── Queries ───────────────────────────────────────────────── */
+    section(&quot;Queries&quot;);
+
+    /* .is_absolute https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute */
+    printf(&quot;  is_absolute:    %d\n&quot;, sp_is_absolute(&amp;p));
+    printf(&quot;  (fluent)        %d\n&quot;, SPF_PATH(p)-&gt;is_absolute());
+
+    /* .is_relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to */
+    printf(&quot;  is_relative_to: %d\n&quot;, sp_is_relative_to(&amp;p, &amp;base));
+    printf(&quot;  (fluent)        %d\n&quot;, SPF_PATH(p)-&gt;is_relative_to(&amp;base));
+
+    /* .relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to */
+    tmp = sp_relative_to(&amp;p, &amp;base);
+    printf(&quot;  relative_to:    %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(p)-&gt;relative_to(&amp;base)-&gt;path();
+    printf(&quot;  (fluent)        %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .relative_to(walk_up=True) */
+    SpPath sibling = sp_path(&quot;/home/other/file.txt&quot;);
+    tmp = sp_relative_to_walk_up(&amp;sibling, &amp;base);
+    printf(&quot;  walk_up:        %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
+    printf(&quot;  match *.gz:     %d\n&quot;, SP_MATCH(&amp;p, &quot;*.gz&quot;));
+
+    printf(&quot;  is_reserved:    %d\n&quot;, sp_is_reserved(&amp;p));
+
+    /* ── Comparison ────────────────────────────────────────────── */
+    section(&quot;Comparison&quot;);
+
+    SpPath a = sp_path(&quot;/foo/bar&quot;), b = sp_path(&quot;/foo/bar&quot;);
+
+    /* __eq__ / __ne__ */
+    printf(&quot;  eq:   %d\n&quot;, sp_path_eq(&amp;a, &amp;b));
+    printf(&quot;  ne:   %d\n&quot;, sp_path_ne(&amp;a, &amp;b));
+    printf(&quot;  (fluent eq) %d\n&quot;, SPF_PATH(a)-&gt;eq(&amp;b));
+    printf(&quot;  (fluent ne) %d\n&quot;, SPF_PATH(a)-&gt;ne(&amp;b));
+
+    printf(&quot;  cmp:  %d\n&quot;, sp_path_cmp(&amp;a, &amp;b));
+    printf(&quot;  hash: %lu\n&quot;, sp_path_hash(&amp;a));
+
+    /* ── String Conversion ─────────────────────────────────────── */
+    section(&quot;String Conversion&quot;);
+
+    /* .as_posix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix */
+    char posix_buf[SP_PATH_MAX];
+    sp_as_posix(&amp;win, posix_buf, sizeof(posix_buf));
+    printf(&quot;  as_posix: %s\n&quot;, posix_buf);
+
+    /* .as_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri */
+    char uri_buf[SP_PATH_MAX];
+    sp_as_uri(&amp;p, uri_buf, sizeof(uri_buf));
+    printf(&quot;  as_uri:   %s\n&quot;, uri_buf);
+
+    SpPath converted = sp_path_convert(&quot;C:\\Users\\dev&quot;, SP_FLAVOR_WINDOWS, SP_FLAVOR_POSIX);
+    printf(&quot;  convert:  %s\n&quot;, sp_str(&amp;converted));
+
+    /* ── Chaining ──────────────────────────────────────────────── */
+    section(&quot;Chaining&quot;);
+
+    SpPath built = SPF_P(&quot;/home/user&quot;)
+        -&gt;join(&quot;projects&quot;)-&gt;join(&quot;snakepath&quot;)
+        -&gt;with_name(&quot;libsnakepath.so&quot;)
+        -&gt;path();
+    printf(&quot;  %s\n&quot;, sp_str(&amp;built));
+
+    SpTerm fname = SPF(&quot;/etc/nginx/nginx.conf&quot;)-&gt;parent()-&gt;name();
+    printf(&quot;  %s\n&quot;, fname.buf);
+
+    /* ── Filesystem ────────────────────────────────────────────── */
+    section(&quot;Filesystem&quot;);
+
+    /* Path.cwd https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd */
+    SpPath cwd = sp_cwd(SP_FLAVOR_NATIVE);
+    printf(&quot;  cwd:        %s\n&quot;, sp_str(&amp;cwd));
+
+    /* Path.home https://docs.python.org/3/library/pathlib.html#pathlib.Path.home */
+    SpPath home = sp_home(SP_FLAVOR_NATIVE);
+    printf(&quot;  home:       %s\n&quot;, sp_str(&amp;home));
+
+    /* .expanduser https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser */
+    SpPath tilde = sp_path(&quot;~/docs&quot;);
+    tmp = sp_expanduser(&amp;tilde);
+    printf(&quot;  expanduser: %s\n&quot;, sp_str(&amp;tmp));
+    tmp = SPF_PATH(tilde)-&gt;expanduser()-&gt;path();
+    printf(&quot;  (fluent)    %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .absolute https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute */
+    SpPath dot = sp_path(&quot;.&quot;);
+    tmp = sp_absolute(&amp;dot);
+    printf(&quot;  absolute:   %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .resolve https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve */
+    tmp = sp_resolve(&amp;dot, false);
+    printf(&quot;  resolve:    %s\n&quot;, sp_str(&amp;tmp));
+
+    /* ── Type Checks ───────────────────────────────────────────── */
+    section(&quot;Type Checks&quot;);
+
+    /* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists */
+    printf(&quot;  exists:     %d\n&quot;, sp_exists(&amp;cwd));
+    printf(&quot;  (fluent)    %d\n&quot;, SPF_PATH(cwd)-&gt;exists());
+
+    /* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir */
+    printf(&quot;  is_dir:     %d\n&quot;, sp_is_dir(&amp;cwd));
+
+    /* .is_file https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file */
+    printf(&quot;  is_file:    %d\n&quot;, sp_is_file(&amp;cwd));
+
+    /* .is_symlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink */
+    printf(&quot;  is_symlink: %d\n&quot;, sp_is_symlink(&amp;cwd));
+    /* Also: sp_is_block_device, sp_is_char_device, sp_is_fifo,
+             sp_is_socket, sp_is_mount, sp_is_junction */
+
+    /* .stat https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat */
+    /* sp_stat follows symlinks; sp_lstat does not */
+    SpStatResult st = sp_stat(&amp;cwd);
+    printf(&quot;  stat size:  %lld\n&quot;, st.sp_size);
+
+    /* ── File I/O ──────────────────────────────────────────────── */
+    section(&quot;File I/O&quot;);
+
+    SpPath tmpdir  = sp_join_one(&amp;cwd, &quot;demo_tmp&quot;);
+    SpPath subdir  = sp_join_one(&amp;tmpdir, &quot;sub&quot;);
+    SpPath tmpfile = sp_join_one(&amp;tmpdir, &quot;hello.txt&quot;);
+
+    /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
+    sp_mkdir(&amp;subdir, 0755, true, true);
+    printf(&quot;  mkdir:   demo_tmp/sub/\n&quot;);
+
+    /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
+    sp_touch(&amp;tmpfile, 0644, true);
+
+    /* .write_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes */
+    const char *msg = &quot;Hello, snakepath!&quot;;
+    SpIOResult wr = sp_write_file(&amp;tmpfile, msg, strlen(msg));
+    printf(&quot;  write:   %zu bytes (err=%d)\n&quot;, wr.bytes, wr.error);
+
+    /* .read_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes */
+    char buf[256];
+    SpIOResult rd = sp_read_file(&amp;tmpfile, buf, sizeof(buf));
+    buf[rd.bytes] = &#x27;\0&#x27;;
+    printf(&quot;  read:    \&quot;%s\&quot;\n&quot;, buf);
+
+    /* .rename https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename */
+    SpPath renamed = sp_join_one(&amp;tmpdir, &quot;renamed.txt&quot;);
+    sp_rename(&amp;tmpfile, &amp;renamed);
+    printf(&quot;  rename:  hello.txt -&gt; renamed.txt\n&quot;);
+
+    /* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */
+    sp_chmod(&amp;renamed, 0600);
+
+    /* .owner https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner */
+    printf(&quot;  owner:   %s\n&quot;, sp_owner(&amp;renamed).buf);
+    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(renamed)-&gt;owner().buf);
+
+    /* .group https://docs.python.org/3/library/pathlib.html#pathlib.Path.group */
+    printf(&quot;  group:   %s\n&quot;, sp_group(&amp;renamed).buf);
+
+    /* ── Symlinks ──────────────────────────────────────────────── */
+    section(&quot;Symlinks&quot;);
+
+    SpPath link = sp_join_one(&amp;tmpdir, &quot;link.txt&quot;);
+
+    /* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to */
+    sp_symlink_to(&amp;link, &amp;renamed, false);
+
+    /* .readlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink */
+    tmp = sp_readlink(&amp;link);
+    printf(&quot;  readlink: %s\n&quot;, sp_str(&amp;tmp));
+
+    /* .samefile https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile */
+    printf(&quot;  samefile: %d\n&quot;, sp_samefile(&amp;link, &amp;renamed));
+    printf(&quot;  (fluent)  %d\n&quot;, SPF_PATH(link)-&gt;samefile(&amp;renamed));
+
+    /* ── Glob &amp; Iterdir ────────────────────────────────────────── */
+    section(&quot;Glob &amp; Iterdir&quot;);
+
+    /* .iterdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir */
+    SP_ITERDIR_FOREACH(&amp;tmpdir, entry)
+        printf(&quot;  iterdir: %s\n&quot;, sp_str(&amp;entry));
+
+    /* .glob https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob */
+    SP_GLOB_FOREACH(&amp;tmpdir, &quot;*.txt&quot;, match)
+        printf(&quot;  glob:    %s\n&quot;, sp_str(&amp;match));
+
+    /* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob */
+    SP_RGLOB_FOREACH(&amp;tmpdir, &quot;*.txt&quot;, match)
+        printf(&quot;  rglob:   %s\n&quot;, sp_str(&amp;match));
+
+    /* ── Walk ──────────────────────────────────────────────────── */
+    section(&quot;Walk&quot;);
+
+    /* .walk https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk
+     * Callback-based, allocation-free, unlimited depth via stack recursion. */
+    sp_walk(&amp;tmpdir, true, false, on_walk, NULL, NULL);
+
+    /* ── Error Handling ────────────────────────────────────────── */
+    section(&quot;Error Handling&quot;);
+
+    /* Operations that fail return SpPath checked with sp_path_is_error(). */
+    SpPath no_name = sp_path(&quot;/&quot;);
+    SpPath err = sp_with_name(&amp;no_name, &quot;x&quot;);
+    if (sp_path_is_error(&amp;err))
+        printf(&quot;  with_name(\&quot;/\&quot;, \&quot;x\&quot;): %s\n&quot;, sp_error_str(sp_path_error_code(&amp;err)));
+
+    sp_unlink(&amp;link, false);
+    sp_unlink(&amp;renamed, false);
+    sp_rmdir(&amp;subdir);
+    sp_rmdir(&amp;tmpdir);
+
+    return 0;
+}</code></pre>
           </div>
         </div>
-        <h3 id="testing">Testing</h3>
-        <p>Tests run CPython’s official pathlib test suite against snakepath:</p>
-        <div class="language-bash highlighter-rouge">
-          <div class="highlight">
-            <pre class="highlight"><code>python tests/python_harness/run_cpython_tests.py</code></pre>
-          </div>
-        </div>
-        <h2 id="gotchas">Gotchas</h2>
-        <h3 id="empty-paths-normalize-to-">Empty paths normalize to <code
-            class="language-plaintext highlighter-rouge">"."</code>
-        </h3>
-        <p>Like Python's pathlib, an empty path string normalizes to <code
-            class="language-plaintext highlighter-rouge">"."</code> (current directory):</p>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">""</span><span class="p">);</span>
-<span class="n">printf</span><span class="p">(</span><span class="s">"%s\n"</span><span class="p">,</span> <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">));</span>  <span class="c1">// prints "."</span></code></pre>
-          </div>
-        </div>
-        <h3 id="spsuffixes-returns-all-dot-separated-segments">
-          <code class="language-plaintext highlighter-rouge">sp_suffixes()</code> returns all dot-separated segments
-        </h3>
-        <p>Like Python's <code class="language-plaintext highlighter-rouge">pathlib.Path.suffixes</code>, this function
-          returns <strong>all</strong> segments after dots in the filename—not just "real" file extensions:</p>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre
-              class="highlight"><code><span class="n">SpPath</span> <span class="n">p</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"snakepath-1.0.0.tar.gz"</span><span class="p">);</span>
-<span class="n">SpSuffixes</span> <span class="n">s</span> <span class="o">=</span> <span class="n">sp_suffixes</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>  <span class="c1">// s.count == 4: ".0", ".0", ".tar", ".gz"</span></code></pre>
-          </div>
-        </div>
-        <p>Use <code class="language-plaintext highlighter-rouge">sp_suffix()</code> if you only want the final
-          extension (<code class="language-plaintext highlighter-rouge">.gz</code>).</p>
-        <h3 id="parent-iteration-terminates-at-anchors">Parent iteration terminates at anchors</h3>
-        <p><code class="language-plaintext highlighter-rouge">sp_parents_count()</code> and parent iteration stop at the path's anchor—<code class="language-plaintext highlighter-rouge">/</code> for absolute paths, <code class="language-plaintext highlighter-rouge">.</code> for relative paths:</p>
-        <div class="language-c highlighter-rouge">
-          <div class="highlight">
-            <pre class="highlight"><code><span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"/a/b/c/d"</span><span class="p">))</span> <span class="o">==</span> <span class="mi">4</span>  <span class="c1">// /a/b/c, /a/b, /a, /</span>
-<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"a/b/c"</span><span class="p">))</span>    <span class="o">==</span> <span class="mi">3</span>  <span class="c1">// a/b, a, .</span>
-<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"/"</span><span class="p">))</span>        <span class="o">==</span> <span class="mi">0</span>  <span class="c1">// root has no parents</span>
-<span class="n">sp_parents_count</span><span class="p">(</span><span class="n">sp_path</span><span class="p">(</span><span class="s">"."</span><span class="p">))</span>        <span class="o">==</span> <span class="mi">0</span>  <span class="c1">// current dir has no parents</span></code></pre>
-          </div>
-        </div>
-        <h2 id="pathlib-mapping">Pathlib Mapping</h2>
-        <p><a href="https://docs.python.org/3/library/pathlib.html#pure-paths">PurePath docs</a> · <a href="https://docs.python.org/3/library/pathlib.html#concrete-paths">Path docs</a></p>
-        <table>
-          <thead><tr><th>Python</th><th>Boring API</th><th>Fluent</th></tr></thead>
-          <tbody>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts"><code>.parts</code></a></td><td><code>sp_parts_begin/next()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive"><code>.drive</code></a></td><td><code>sp_drive()</code></td><td><code>.drive()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root"><code>.root</code></a></td><td><code>sp_root()</code></td><td><code>.root()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor"><code>.anchor</code></a></td><td><code>sp_anchor()</code></td><td><code>.anchor()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents"><code>.parents</code></a></td><td><code>sp_parents_begin/next()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent"><code>.parent</code></a></td><td><code>sp_parent()</code></td><td><code>.parent()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name"><code>.name</code></a></td><td><code>sp_name()</code></td><td><code>.name()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix"><code>.suffix</code></a></td><td><code>sp_suffix()</code></td><td><code>.suffix()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes"><code>.suffixes</code></a></td><td><code>sp_suffixes()</code></td><td><code>.suffixes()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem"><code>.stem</code></a></td><td><code>sp_stem()</code></td><td><code>.stem()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix"><code>.as_posix()</code></a></td><td><code>sp_as_posix()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute"><code>.is_absolute()</code></a></td><td><code>sp_is_absolute()</code></td><td><code>.is_absolute()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to"><code>.is_relative_to()</code></a></td><td><code>sp_is_relative_to()</code></td><td><code>.is_relative_to()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath"><code>.joinpath()</code></a></td><td><code>sp_join_one()</code></td><td><code>.join()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match"><code>.match()</code></a></td><td><code>sp_match()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to"><code>.relative_to()</code></a></td><td><code>sp_relative_to()</code></td><td><code>.relative_to()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name"><code>.with_name()</code></a></td><td><code>sp_with_name()</code></td><td><code>.with_name()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem"><code>.with_stem()</code></a></td><td><code>sp_with_stem()</code></td><td><code>.with_stem()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix"><code>.with_suffix()</code></a></td><td><code>sp_with_suffix()</code></td><td><code>.with_suffix()</code></td></tr>
-            <tr><td><code>__eq__</code></td><td><code>sp_path_eq()</code></td><td><code>.eq()</code></td></tr>
-            <tr><td><code>__ne__</code></td><td><code>sp_path_ne()</code></td><td><code>.ne()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute"><code>.absolute()</code></a></td><td><code>sp_absolute()</code></td><td><code>.absolute()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri"><code>.as_uri()</code></a></td><td><code>sp_as_uri()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd"><code>Path.cwd()</code></a></td><td><code>sp_cwd()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.home"><code>Path.home()</code></a></td><td><code>sp_home()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser"><code>.expanduser()</code></a></td><td><code>sp_expanduser()</code></td><td><code>.expanduser()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat"><code>.stat()</code></a></td><td><code>sp_stat()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.lstat"><code>.lstat()</code></a></td><td><code>sp_lstat()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists"><code>.exists()</code></a></td><td><code>sp_exists()</code></td><td><code>.exists()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file"><code>.is_file()</code></a></td><td><code>sp_is_file()</code></td><td><code>.is_file()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir"><code>.is_dir()</code></a></td><td><code>sp_is_dir()</code></td><td><code>.is_dir()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink"><code>.is_symlink()</code></a></td><td><code>sp_is_symlink()</code></td><td><code>.is_symlink()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_block_device"><code>.is_block_device()</code></a></td><td><code>sp_is_block_device()</code></td><td><code>.is_block_device()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_char_device"><code>.is_char_device()</code></a></td><td><code>sp_is_char_device()</code></td><td><code>.is_char_device()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_fifo"><code>.is_fifo()</code></a></td><td><code>sp_is_fifo()</code></td><td><code>.is_fifo()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_socket"><code>.is_socket()</code></a></td><td><code>sp_is_socket()</code></td><td><code>.is_socket()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_mount"><code>.is_mount()</code></a></td><td><code>sp_is_mount()</code></td><td><code>.is_mount()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_junction"><code>.is_junction()</code></a></td><td><code>sp_is_junction()</code></td><td><code>.is_junction()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile"><code>.samefile()</code></a></td><td><code>sp_samefile()</code></td><td><code>.samefile()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink"><code>.readlink()</code></a></td><td><code>sp_readlink()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve"><code>.resolve()</code></a></td><td><code>sp_resolve()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob"><code>.glob()</code></a></td><td><code>sp_glob_begin/next/end()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob"><code>.rglob()</code></a></td><td><code>sp_rglob_begin/next/end()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir"><code>.iterdir()</code></a></td><td><code>sp_iterdir_begin/next/end()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk"><code>.walk()</code></a></td><td><code>sp_walk()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir"><code>.mkdir()</code></a></td><td><code>sp_mkdir()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch"><code>.touch()</code></a></td><td><code>sp_touch()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.unlink"><code>.unlink()</code></a></td><td><code>sp_unlink()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rmdir"><code>.rmdir()</code></a></td><td><code>sp_rmdir()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename"><code>.rename()</code></a></td><td><code>sp_rename()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.replace"><code>.replace()</code></a></td><td><code>sp_replace()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod"><code>.chmod()</code></a></td><td><code>sp_chmod()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to"><code>.symlink_to()</code></a></td><td><code>sp_symlink_to()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.hardlink_to"><code>.hardlink_to()</code></a></td><td><code>sp_hardlink_to()</code></td><td>-</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner"><code>.owner()</code></a></td><td><code>sp_owner()</code></td><td><code>.owner()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.group"><code>.group()</code></a></td><td><code>sp_group()</code></td><td><code>.group()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes"><code>.read_bytes()</code></a></td><td><code>sp_read_file()</code></td><td><code>.read_file()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_text"><code>.read_text()</code></a></td><td><code>sp_read_file()</code></td><td><code>.read_file()</code> + decode</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes"><code>.write_bytes()</code></a></td><td><code>sp_write_file()</code></td><td><code>.write_file()</code></td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_text"><code>.write_text()</code></a></td><td><code>sp_write_file()</code></td><td><code>.write_file()</code> + encode</td></tr>
-            <tr><td><a href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.open"><code>.open()</code></a></td><td>-</td><td>-</td></tr>
-          </tbody>
-        </table>
       </details>
       <details>
         <summary>MIT License</summary> Copyright (c) 2026 Netanel Haber Permission is hereby granted, free of charge, to

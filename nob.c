@@ -202,14 +202,14 @@ static const char *all_artifacts[] = {
     "tests/test_msvc.exe", "tests/test_msvc_cpp.exe", "tests/test_fluent_msvc.exe", "demo.exe",
     /* PDB and obj files from MSVC (now in tests/ directory to avoid conflicts) */
     "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
-    "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "demo.obj",
+    "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "api_demo.obj",
     /* Legacy obj files in root (clean these up too) */
     "test.obj", "test_fluent_api.obj",
     "tests/python_harness/snakepath.dll",
 #else
     "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",
     "tests/test_gpp", "tests/test_clangpp", "tests/test_fluent_gcc", "tests/test_fluent_clang",
-    "demo",
+    "api_demo",
     "tests/python_harness/libsnakepath.so",
 #endif
     NULL
@@ -344,8 +344,8 @@ int main(int argc, char **argv) {
     BuildConfig fluent_configs[] = {
         {COMPILER_MSVC, false, "MSVC Fluent", "tests/test_fluent_msvc.exe"},
     };
-    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "demo.exe"};
-    const char *demo_output = "demo.exe";
+    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "api_demo.exe"};
+    const char *demo_output = "api_demo.exe";
 #else
     bool use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
     bool skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;  /* For Termux where gcc is clang */
@@ -396,9 +396,9 @@ int main(int argc, char **argv) {
     };
     BuildConfig *fluent_configs = skip_gcc ? fluent_configs_clang : fluent_configs_full;
     BuildConfig demo_config = skip_gcc
-        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "./demo"}
-        : (BuildConfig){COMPILER_GCC, false, "Demo", "./demo"};
-    const char *demo_output = "./demo";
+        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "./api_demo"}
+        : (BuildConfig){COMPILER_GCC, false, "Demo", "./api_demo"};
+    const char *demo_output = "./api_demo";
 #endif
 
 #ifdef _WIN32
@@ -421,7 +421,7 @@ int main(int argc, char **argv) {
     }
 
     LOG_INFO( "  Starting build: %s", demo_config.name);
-    build_source_async(demo_config, "demo.c", NULL, &procs);
+    build_source_async(demo_config, "api_demo.c", NULL, &procs);
 
     /* Build Python shared library */
     LOG_INFO( "  Starting build: Python bindings");
