@@ -210,9 +210,11 @@ _sig('sp_write_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(
 # Home directory and user expansion
 _sig('sp_home_wrap', [c_int, _PP])
 _sig('sp_expanduser_wrap', [_PP, _PP])
-# User/group info (SpTerm-based, buffer API)
-_sig('sp_owner_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
-_sig('sp_group_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
+# User/group info (SpTerm-based, buffer API) - not available on Windows builds
+_HAS_OWNER_GROUP = hasattr(_lib, 'sp_owner_wrap') and hasattr(_lib, 'sp_group_wrap')
+if _HAS_OWNER_GROUP:
+    _sig('sp_owner_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
+    _sig('sp_group_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
 # iterdir iterator
 _sizeof_iterdir_iter = _lib.sp_sizeof_iterdir_iter()
 class _SpIterdirIter(Structure):
@@ -954,6 +956,8 @@ class Path(PurePath):
 
     def owner(self):
         """Return the file owner name."""
+        if not _HAS_OWNER_GROUP:
+            raise NotImplementedError("Path.owner() is unsupported on this system")
         buf = ctypes.create_string_buffer(256)
         length = c_size_t()
         result = _lib.sp_owner_wrap(byref(self._sp), buf, 256, byref(length))
@@ -965,6 +969,8 @@ class Path(PurePath):
 
     def group(self):
         """Return the file group name."""
+        if not _HAS_OWNER_GROUP:
+            raise NotImplementedError("Path.group() is unsupported on this system")
         buf = ctypes.create_string_buffer(256)
         length = c_size_t()
         result = _lib.sp_group_wrap(byref(self._sp), buf, 256, byref(length))
