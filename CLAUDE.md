@@ -25,7 +25,7 @@ cd tests/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 **g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
 
 **Termux:** `cc -DSNAKEPATH_QUIET -o nob nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob`
-Termux `/tmp` symlink failures are expected locally. CI is authoritative.
+Termux `/tmp` symlink failures are expected locally (Python `test_resolve_nonexist_relative_issue38671` and fluent `hardlink_to` test). CI is authoritative.
 
 ## EXPECTED_FAILURES
 
