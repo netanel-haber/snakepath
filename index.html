@@ -212,347 +212,347 @@ rm <span class="nt">-f</span> demo snakepath.h</code></pre>
         <summary>Snakepath API Reference (<a href="https://github.com/netanel-haber/snakepath/blob/main/api_demo.c">api_demo.c</a>)</summary>
         <div class="language-c highlighter-rouge">
           <div class="highlight">
-            <pre class="highlight"><code>/* compile: cc api_demo.c -o api_demo &amp;&amp; ./api_demo
- * Creates a demo_tmp/ directory in cwd, cleans up on exit. */
-#define SP_PATH_MAX 4096
-#define SNAKEPATH_FLUENT
-#define SNAKEPATH_IMPLEMENTATION
-#include &quot;snakepath.h&quot;
-#include &lt;stdio.h&gt;
-#include &lt;string.h&gt;
-
-static void section(const char *s) { printf(&quot;\n--- %s ---\n\n&quot;, s); }
-
-static bool on_walk(struct SpWalkEntry *e) {
-    printf(&quot;  %s/ (%zu dirs, %zu files)\n&quot;,
-           sp_str(&amp;e-&gt;dirpath), e-&gt;dirname_count, e-&gt;filename_count);
-    return true;
-}
-
-int main(void) {
-    SpPath tmp;
-
-    SpPath p     = sp_path(&quot;/home/user/docs/report.tar.gz&quot;);
-    SpPath posix = sp_path_f(&quot;/etc/nginx/nginx.conf&quot;, SP_FLAVOR_POSIX);
-    SpPath win   = sp_path_f(&quot;C:\\Users\\dev\\file.txt&quot;, SP_FLAVOR_WINDOWS);
-    SpPath base  = sp_path(&quot;/home/user&quot;);
-
-    /* Fluent entry: SPF(&quot;path&quot;), SPF_P(&quot;path&quot;), SPF_W(&quot;path&quot;), SPF_PATH(var) */
-
-    /* ── Components ────────────────────────────────────────────── */
-    section(&quot;Components&quot;);
-
-    /* .drive https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive */
-    printf(&quot;  drive:   \&quot;%s\&quot;\n&quot;, sp_drive(&amp;p).buf);
-    printf(&quot;  (fluent) \&quot;%s\&quot;\n&quot;, SPF_PATH(p)-&gt;drive().buf);
-
-    /* .root https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root */
-    printf(&quot;  root:    %s\n&quot;, sp_root(&amp;p).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;root().buf);
-
-    /* .anchor https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor */
-    printf(&quot;  anchor:  %s\n&quot;, sp_anchor(&amp;p).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;anchor().buf);
-
-    /* .name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name */
-    printf(&quot;  name:    %s\n&quot;, sp_name(&amp;p).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;name().buf);
-
-    /* .stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem */
-    printf(&quot;  stem:    %s\n&quot;, sp_stem(&amp;p).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;stem().buf);
-
-    /* .suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix */
-    printf(&quot;  suffix:  %s\n&quot;, sp_suffix(&amp;p).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(p)-&gt;suffix().buf);
-
-    /* .suffixes https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes
-     * Returns ALL dot-separated segments, not just &quot;real&quot; extensions. */
-    SpSuffixes sfx = sp_suffixes(&amp;p);
-    printf(&quot;  suffixes (%zu):&quot;, sfx.count);
-    for (size_t i = 0; i &lt; sfx.count; i++)
-        printf(&quot; %.*s&quot;, (int)sfx.items[i].len, sfx.items[i].data);
-    printf(&quot;\n&quot;);
-
-    /* Windows / POSIX flavor differences */
-    printf(&quot;  win drive: %s, root: %s\n&quot;, sp_drive(&amp;win).buf, sp_root(&amp;win).buf);
-    printf(&quot;  posix drive: \&quot;%s\&quot;, root: %s\n&quot;, sp_drive(&amp;posix).buf, sp_root(&amp;posix).buf);
-
-    /* ── Navigation ────────────────────────────────────────────── */
-    section(&quot;Navigation&quot;);
-
-    /* .parent https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent */
-    tmp = sp_parent(&amp;p);
-    printf(&quot;  parent:  %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(p)-&gt;parent()-&gt;path();
-    printf(&quot;  (fluent) %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .parents https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents
-     * Terminates at &quot;/&quot; for absolute, &quot;.&quot; for relative. */
-    SpParentsIter pit = sp_parents_begin(&amp;p);
-    SpPath par;
-    printf(&quot;  parents (%zu):\n&quot;, sp_parents_count(&amp;p));
-    while (sp_parents_next(&amp;pit, &amp;par))
-        printf(&quot;    %s\n&quot;, sp_str(&amp;par));
-
-    /* .parts https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts */
-    SpPartsIter parts_it = sp_parts_begin(&amp;p);
-    SpStr part;
-    printf(&quot;  parts (%zu):&quot;, sp_parts_count(&amp;p));
-    while (sp_parts_next(&amp;parts_it, &amp;part))
-        printf(&quot; [%.*s]&quot;, (int)part.len, part.data);
-    printf(&quot;\n&quot;);
-
-    /* ── Joining ───────────────────────────────────────────────── */
-    section(&quot;Joining&quot;);
-
-    /* .joinpath https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath */
-    tmp = sp_join_one(&amp;base, &quot;docs&quot;);
-    printf(&quot;  join_one: %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(base)-&gt;join(&quot;docs&quot;)-&gt;path();
-    printf(&quot;  (fluent)  %s\n&quot;, sp_str(&amp;tmp));
-
-    tmp = sp_join(&amp;base, &quot;a&quot;, &quot;b&quot;, &quot;c&quot;); /* variadic, C only */
-    printf(&quot;  join:     %s\n&quot;, sp_str(&amp;tmp));
-
-    SpPath other = sp_path(&quot;extra&quot;);
-    tmp = sp_joinpath(&amp;base, &amp;other);
-    printf(&quot;  joinpath: %s\n&quot;, sp_str(&amp;tmp));
-
-    /* ── Modification ──────────────────────────────────────────── */
-    section(&quot;Modification&quot;);
-
-    /* .with_name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name */
-    tmp = sp_with_name(&amp;p, &quot;README.md&quot;);
-    printf(&quot;  with_name:   %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(p)-&gt;with_name(&quot;README.md&quot;)-&gt;path();
-    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .with_stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem */
-    tmp = sp_with_stem(&amp;p, &quot;archive&quot;);
-    printf(&quot;  with_stem:   %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(p)-&gt;with_stem(&quot;archive&quot;)-&gt;path();
-    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .with_suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix */
-    tmp = sp_with_suffix(&amp;p, &quot;.bz2&quot;);
-    printf(&quot;  with_suffix: %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(p)-&gt;with_suffix(&quot;.bz2&quot;)-&gt;path();
-    printf(&quot;  (fluent)     %s\n&quot;, sp_str(&amp;tmp));
-
-    /* ── Queries ───────────────────────────────────────────────── */
-    section(&quot;Queries&quot;);
-
-    /* .is_absolute https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute */
-    printf(&quot;  is_absolute:    %d\n&quot;, sp_is_absolute(&amp;p));
-    printf(&quot;  (fluent)        %d\n&quot;, SPF_PATH(p)-&gt;is_absolute());
-
-    /* .is_relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to */
-    printf(&quot;  is_relative_to: %d\n&quot;, sp_is_relative_to(&amp;p, &amp;base));
-    printf(&quot;  (fluent)        %d\n&quot;, SPF_PATH(p)-&gt;is_relative_to(&amp;base));
-
-    /* .relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to */
-    tmp = sp_relative_to(&amp;p, &amp;base);
-    printf(&quot;  relative_to:    %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(p)-&gt;relative_to(&amp;base)-&gt;path();
-    printf(&quot;  (fluent)        %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .relative_to(walk_up=True) */
-    SpPath sibling = sp_path(&quot;/home/other/file.txt&quot;);
-    tmp = sp_relative_to_walk_up(&amp;sibling, &amp;base);
-    printf(&quot;  walk_up:        %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
-    printf(&quot;  match *.gz:     %d\n&quot;, SP_MATCH(&amp;p, &quot;*.gz&quot;));
-
-    printf(&quot;  is_reserved:    %d\n&quot;, sp_is_reserved(&amp;p));
-
-    /* ── Comparison ────────────────────────────────────────────── */
-    section(&quot;Comparison&quot;);
-
-    SpPath a = sp_path(&quot;/foo/bar&quot;), b = sp_path(&quot;/foo/bar&quot;);
-
-    /* __eq__ / __ne__ */
-    printf(&quot;  eq:   %d\n&quot;, sp_path_eq(&amp;a, &amp;b));
-    printf(&quot;  ne:   %d\n&quot;, sp_path_ne(&amp;a, &amp;b));
-    printf(&quot;  (fluent eq) %d\n&quot;, SPF_PATH(a)-&gt;eq(&amp;b));
-    printf(&quot;  (fluent ne) %d\n&quot;, SPF_PATH(a)-&gt;ne(&amp;b));
-
-    printf(&quot;  cmp:  %d\n&quot;, sp_path_cmp(&amp;a, &amp;b));
-    printf(&quot;  hash: %lu\n&quot;, sp_path_hash(&amp;a));
-
-    /* ── String Conversion ─────────────────────────────────────── */
-    section(&quot;String Conversion&quot;);
-
-    /* .as_posix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix */
-    char posix_buf[SP_PATH_MAX];
-    sp_as_posix(&amp;win, posix_buf, sizeof(posix_buf));
-    printf(&quot;  as_posix: %s\n&quot;, posix_buf);
-
-    /* .as_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri */
-    char uri_buf[SP_PATH_MAX];
-    sp_as_uri(&amp;p, uri_buf, sizeof(uri_buf));
-    printf(&quot;  as_uri:   %s\n&quot;, uri_buf);
-
-    SpPath converted = sp_path_convert(&quot;C:\\Users\\dev&quot;, SP_FLAVOR_WINDOWS, SP_FLAVOR_POSIX);
-    printf(&quot;  convert:  %s\n&quot;, sp_str(&amp;converted));
-
-    /* ── Chaining ──────────────────────────────────────────────── */
-    section(&quot;Chaining&quot;);
-
-    SpPath built = SPF_P(&quot;/home/user&quot;)
-        -&gt;join(&quot;projects&quot;)-&gt;join(&quot;snakepath&quot;)
-        -&gt;with_name(&quot;libsnakepath.so&quot;)
-        -&gt;path();
-    printf(&quot;  %s\n&quot;, sp_str(&amp;built));
-
-    SpTerm fname = SPF(&quot;/etc/nginx/nginx.conf&quot;)-&gt;parent()-&gt;name();
-    printf(&quot;  %s\n&quot;, fname.buf);
+            <pre class="highlight"><code><span class="cm">/* compile: cc api_demo.c -o api_demo &amp;&amp; ./api_demo</span>
+<span class="cm"> * Creates a demo_tmp/ directory in cwd, cleans up on exit. */</span>
+<span class="cp">#define SP_PATH_MAX 4096</span>
+<span class="cp">#define SNAKEPATH_FLUENT</span>
+<span class="cp">#define SNAKEPATH_IMPLEMENTATION</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;snakepath.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string.h&gt;</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">section</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">--- %s ---</span><span class="se">\n\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="nf">on_walk</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">SpWalkEntry</span><span class="w"> </span><span class="o">*</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  %s/ (%zu dirs, %zu files)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">           </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">e</span><span class="o">-&gt;</span><span class="n">dirpath</span><span class="p">),</span><span class="w"> </span><span class="n">e</span><span class="o">-&gt;</span><span class="n">dirname_count</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="o">-&gt;</span><span class="n">filename_count</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">tmp</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">p</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/home/user/docs/report.tar.gz&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">posix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path_f</span><span class="p">(</span><span class="s">&quot;/etc/nginx/nginx.conf&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SP_FLAVOR_POSIX</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">win</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path_f</span><span class="p">(</span><span class="s">&quot;C:</span><span class="se">\\</span><span class="s">Users</span><span class="se">\\</span><span class="s">dev</span><span class="se">\\</span><span class="s">file.txt&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SP_FLAVOR_WINDOWS</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">base</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/home/user&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* Fluent entry: SPF(&quot;path&quot;), SPF_P(&quot;path&quot;), SPF_W(&quot;path&quot;), SPF_PATH(var) */</span>
+
+<span class="w">    </span><span class="cm">/* ── Components ────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Components&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .drive https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.drive */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  drive:   </span><span class="se">\&quot;</span><span class="s">%s</span><span class="se">\&quot;\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) </span><span class="se">\&quot;</span><span class="s">%s</span><span class="se">\&quot;\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">drive</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .root https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.root */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  root:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">root</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .anchor https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.anchor */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  anchor:  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_anchor</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">anchor</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.name */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  name:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.stem */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  stem:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">stem</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffix */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  suffix:  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">suffix</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .suffixes https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.suffixes</span>
+<span class="cm">     * Returns ALL dot-separated segments, not just &quot;real&quot; extensions. */</span>
+<span class="w">    </span><span class="n">SpSuffixes</span><span class="w"> </span><span class="n">sfx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_suffixes</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  suffixes (%zu):&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sfx</span><span class="p">.</span><span class="n">count</span><span class="p">);</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">sfx</span><span class="p">.</span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot; %.*s&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">sfx</span><span class="p">.</span><span class="n">items</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">len</span><span class="p">,</span><span class="w"> </span><span class="n">sfx</span><span class="p">.</span><span class="n">items</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">data</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* Windows / POSIX flavor differences */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  win drive: %s, root: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">win</span><span class="p">).</span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">win</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  posix drive: </span><span class="se">\&quot;</span><span class="s">%s</span><span class="se">\&quot;</span><span class="s">, root: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_drive</span><span class="p">(</span><span class="o">&amp;</span><span class="n">posix</span><span class="p">).</span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="n">sp_root</span><span class="p">(</span><span class="o">&amp;</span><span class="n">posix</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* ── Navigation ────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Navigation&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .parent https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parent */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_parent</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  parent:  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .parents https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parents</span>
+<span class="cm">     * Terminates at &quot;/&quot; for absolute, &quot;.&quot; for relative. */</span>
+<span class="w">    </span><span class="n">SpParentsIter</span><span class="w"> </span><span class="n">pit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_parents_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">par</span><span class="p">;</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  parents (%zu):</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_parents_count</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">));</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">sp_parents_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pit</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">par</span><span class="p">))</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">par</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .parts https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts */</span>
+<span class="w">    </span><span class="n">SpPartsIter</span><span class="w"> </span><span class="n">parts_it</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_parts_begin</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpStr</span><span class="w"> </span><span class="n">part</span><span class="p">;</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  parts (%zu):&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_parts_count</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">));</span>
+<span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">sp_parts_next</span><span class="p">(</span><span class="o">&amp;</span><span class="n">parts_it</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">part</span><span class="p">))</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot; [%.*s]&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">part</span><span class="p">.</span><span class="n">len</span><span class="p">,</span><span class="w"> </span><span class="n">part</span><span class="p">.</span><span class="n">data</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* ── Joining ───────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Joining&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .joinpath https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.joinpath */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;docs&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  join_one: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">base</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">&quot;docs&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;c&quot;</span><span class="p">);</span><span class="w"> </span><span class="cm">/* variadic, C only */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  join:     %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">other</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;extra&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_joinpath</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">other</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  joinpath: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Modification ──────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Modification&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .with_name https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_name */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_with_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;README.md&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  with_name:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">with_name</span><span class="p">(</span><span class="s">&quot;README.md&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)     %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .with_stem https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_stem */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_with_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;archive&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  with_stem:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">with_stem</span><span class="p">(</span><span class="s">&quot;archive&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)     %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .with_suffix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_suffix */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_with_suffix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;.bz2&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  with_suffix: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">with_suffix</span><span class="p">(</span><span class="s">&quot;.bz2&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)     %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Queries ───────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Queries&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .is_absolute https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_absolute */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_absolute:    %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_absolute</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)        %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">is_absolute</span><span class="p">());</span>
+
+<span class="w">    </span><span class="cm">/* .is_relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.is_relative_to */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_relative_to: %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">base</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)        %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">is_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  relative_to:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">relative_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">base</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)        %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .relative_to(walk_up=True) */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">sibling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/home/other/file.txt&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_relative_to_walk_up</span><span class="p">(</span><span class="o">&amp;</span><span class="n">sibling</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">base</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  walk_up:        %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  match *.gz:     %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SP_MATCH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;*.gz&quot;</span><span class="p">));</span>
+
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_reserved:    %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_reserved</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Comparison ────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Comparison&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/foo/bar&quot;</span><span class="p">),</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/foo/bar&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* __eq__ / __ne__ */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  eq:   %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_path_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">b</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  ne:   %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_path_ne</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">b</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent eq) %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">eq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">b</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent ne) %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">ne</span><span class="p">(</span><span class="o">&amp;</span><span class="n">b</span><span class="p">));</span>
+
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  cmp:  %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_path_cmp</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">b</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  hash: %lu</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_path_hash</span><span class="p">(</span><span class="o">&amp;</span><span class="n">a</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── String Conversion ─────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;String Conversion&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .as_posix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix */</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="n">posix_buf</span><span class="p">[</span><span class="n">SP_PATH_MAX</span><span class="p">];</span>
+<span class="w">    </span><span class="n">sp_as_posix</span><span class="p">(</span><span class="o">&amp;</span><span class="n">win</span><span class="p">,</span><span class="w"> </span><span class="n">posix_buf</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">posix_buf</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  as_posix: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">posix_buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .as_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri */</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="n">uri_buf</span><span class="p">[</span><span class="n">SP_PATH_MAX</span><span class="p">];</span>
+<span class="w">    </span><span class="n">sp_as_uri</span><span class="p">(</span><span class="o">&amp;</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="n">uri_buf</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">uri_buf</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  as_uri:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">uri_buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">converted</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path_convert</span><span class="p">(</span><span class="s">&quot;C:</span><span class="se">\\</span><span class="s">Users</span><span class="se">\\</span><span class="s">dev&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SP_FLAVOR_WINDOWS</span><span class="p">,</span><span class="w"> </span><span class="n">SP_FLAVOR_POSIX</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  convert:  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">converted</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Chaining ──────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Chaining&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">built</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_P</span><span class="p">(</span><span class="s">&quot;/home/user&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">&quot;projects&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">&quot;snakepath&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="o">-&gt;</span><span class="n">with_name</span><span class="p">(</span><span class="s">&quot;libsnakepath.so&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">built</span><span class="p">));</span>
+
+<span class="w">    </span><span class="n">SpTerm</span><span class="w"> </span><span class="n">fname</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF</span><span class="p">(</span><span class="s">&quot;/etc/nginx/nginx.conf&quot;</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">fname</span><span class="p">.</span><span class="n">buf</span><span class="p">);</span>
 
-    /* ── Filesystem ────────────────────────────────────────────── */
-    section(&quot;Filesystem&quot;);
+<span class="w">    </span><span class="cm">/* ── Filesystem ────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Filesystem&quot;</span><span class="p">);</span>
 
-    /* Path.cwd https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd */
-    SpPath cwd = sp_cwd(SP_FLAVOR_NATIVE);
-    printf(&quot;  cwd:        %s\n&quot;, sp_str(&amp;cwd));
+<span class="w">    </span><span class="cm">/* Path.cwd https://docs.python.org/3/library/pathlib.html#pathlib.Path.cwd */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">cwd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_cwd</span><span class="p">(</span><span class="n">SP_FLAVOR_NATIVE</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  cwd:        %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">));</span>
 
-    /* Path.home https://docs.python.org/3/library/pathlib.html#pathlib.Path.home */
-    SpPath home = sp_home(SP_FLAVOR_NATIVE);
-    printf(&quot;  home:       %s\n&quot;, sp_str(&amp;home));
+<span class="w">    </span><span class="cm">/* Path.home https://docs.python.org/3/library/pathlib.html#pathlib.Path.home */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">home</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_home</span><span class="p">(</span><span class="n">SP_FLAVOR_NATIVE</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  home:       %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">home</span><span class="p">));</span>
 
-    /* .expanduser https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser */
-    SpPath tilde = sp_path(&quot;~/docs&quot;);
-    tmp = sp_expanduser(&amp;tilde);
-    printf(&quot;  expanduser: %s\n&quot;, sp_str(&amp;tmp));
-    tmp = SPF_PATH(tilde)-&gt;expanduser()-&gt;path();
-    printf(&quot;  (fluent)    %s\n&quot;, sp_str(&amp;tmp));
+<span class="w">    </span><span class="cm">/* .expanduser https://docs.python.org/3/library/pathlib.html#pathlib.Path.expanduser */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">tilde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;~/docs&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_expanduser</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tilde</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  expanduser: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">tilde</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">expanduser</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
 
-    /* .absolute https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute */
-    SpPath dot = sp_path(&quot;.&quot;);
-    tmp = sp_absolute(&amp;dot);
-    printf(&quot;  absolute:   %s\n&quot;, sp_str(&amp;tmp));
+<span class="w">    </span><span class="cm">/* .absolute https://docs.python.org/3/library/pathlib.html#pathlib.Path.absolute */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">dot</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;.&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_absolute</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dot</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  absolute:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
 
-    /* .resolve https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve */
-    tmp = sp_resolve(&amp;dot, false);
-    printf(&quot;  resolve:    %s\n&quot;, sp_str(&amp;tmp));
+<span class="w">    </span><span class="cm">/* .resolve https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_resolve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dot</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  resolve:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
 
-    /* ── Type Checks ───────────────────────────────────────────── */
-    section(&quot;Type Checks&quot;);
+<span class="w">    </span><span class="cm">/* ── Type Checks ───────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Type Checks&quot;</span><span class="p">);</span>
 
-    /* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists */
-    printf(&quot;  exists:     %d\n&quot;, sp_exists(&amp;cwd));
-    printf(&quot;  (fluent)    %d\n&quot;, SPF_PATH(cwd)-&gt;exists());
+<span class="w">    </span><span class="cm">/* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  exists:     %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_exists</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)    %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">cwd</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">exists</span><span class="p">());</span>
 
-    /* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir */
-    printf(&quot;  is_dir:     %d\n&quot;, sp_is_dir(&amp;cwd));
-
-    /* .is_file https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file */
-    printf(&quot;  is_file:    %d\n&quot;, sp_is_file(&amp;cwd));
+<span class="w">    </span><span class="cm">/* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_dir:     %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_dir</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .is_file https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_file:    %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_file</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">));</span>
 
-    /* .is_symlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink */
-    printf(&quot;  is_symlink: %d\n&quot;, sp_is_symlink(&amp;cwd));
-    /* Also: sp_is_block_device, sp_is_char_device, sp_is_fifo,
-             sp_is_socket, sp_is_mount, sp_is_junction */
-
-    /* .stat https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat */
-    /* sp_stat follows symlinks; sp_lstat does not */
-    SpStatResult st = sp_stat(&amp;cwd);
-    printf(&quot;  stat size:  %lld\n&quot;, st.sp_size);
-
-    /* ── File I/O ──────────────────────────────────────────────── */
-    section(&quot;File I/O&quot;);
-
-    SpPath tmpdir  = sp_join_one(&amp;cwd, &quot;demo_tmp&quot;);
-    SpPath subdir  = sp_join_one(&amp;tmpdir, &quot;sub&quot;);
-    SpPath tmpfile = sp_join_one(&amp;tmpdir, &quot;hello.txt&quot;);
-
-    /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
-    sp_mkdir(&amp;subdir, 0755, true, true);
-    printf(&quot;  mkdir:   demo_tmp/sub/\n&quot;);
-
-    /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
-    sp_touch(&amp;tmpfile, 0644, true);
-
-    /* .write_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes */
-    const char *msg = &quot;Hello, snakepath!&quot;;
-    SpIOResult wr = sp_write_file(&amp;tmpfile, msg, strlen(msg));
-    printf(&quot;  write:   %zu bytes (err=%d)\n&quot;, wr.bytes, wr.error);
-
-    /* .read_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes */
-    char buf[256];
-    SpIOResult rd = sp_read_file(&amp;tmpfile, buf, sizeof(buf));
-    buf[rd.bytes] = &#x27;\0&#x27;;
-    printf(&quot;  read:    \&quot;%s\&quot;\n&quot;, buf);
-
-    /* .rename https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename */
-    SpPath renamed = sp_join_one(&amp;tmpdir, &quot;renamed.txt&quot;);
-    sp_rename(&amp;tmpfile, &amp;renamed);
-    printf(&quot;  rename:  hello.txt -&gt; renamed.txt\n&quot;);
-
-    /* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */
-    sp_chmod(&amp;renamed, 0600);
-
-    /* .owner https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner */
-    printf(&quot;  owner:   %s\n&quot;, sp_owner(&amp;renamed).buf);
-    printf(&quot;  (fluent) %s\n&quot;, SPF_PATH(renamed)-&gt;owner().buf);
-
-    /* .group https://docs.python.org/3/library/pathlib.html#pathlib.Path.group */
-    printf(&quot;  group:   %s\n&quot;, sp_group(&amp;renamed).buf);
-
-    /* ── Symlinks ──────────────────────────────────────────────── */
-    section(&quot;Symlinks&quot;);
-
-    SpPath link = sp_join_one(&amp;tmpdir, &quot;link.txt&quot;);
-
-    /* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to */
-    sp_symlink_to(&amp;link, &amp;renamed, false);
-
-    /* .readlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink */
-    tmp = sp_readlink(&amp;link);
-    printf(&quot;  readlink: %s\n&quot;, sp_str(&amp;tmp));
-
-    /* .samefile https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile */
-    printf(&quot;  samefile: %d\n&quot;, sp_samefile(&amp;link, &amp;renamed));
-    printf(&quot;  (fluent)  %d\n&quot;, SPF_PATH(link)-&gt;samefile(&amp;renamed));
-
-    /* ── Glob &amp; Iterdir ────────────────────────────────────────── */
-    section(&quot;Glob &amp; Iterdir&quot;);
-
-    /* .iterdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir */
-    SP_ITERDIR_FOREACH(&amp;tmpdir, entry)
-        printf(&quot;  iterdir: %s\n&quot;, sp_str(&amp;entry));
-
-    /* .glob https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob */
-    SP_GLOB_FOREACH(&amp;tmpdir, &quot;*.txt&quot;, match)
-        printf(&quot;  glob:    %s\n&quot;, sp_str(&amp;match));
-
-    /* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob */
-    SP_RGLOB_FOREACH(&amp;tmpdir, &quot;*.txt&quot;, match)
-        printf(&quot;  rglob:   %s\n&quot;, sp_str(&amp;match));
-
-    /* ── Walk ──────────────────────────────────────────────────── */
-    section(&quot;Walk&quot;);
-
-    /* .walk https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk
-     * Callback-based, allocation-free, unlimited depth via stack recursion. */
-    sp_walk(&amp;tmpdir, true, false, on_walk, NULL, NULL);
-
-    /* ── Error Handling ────────────────────────────────────────── */
-    section(&quot;Error Handling&quot;);
-
-    /* Operations that fail return SpPath checked with sp_path_is_error(). */
-    SpPath no_name = sp_path(&quot;/&quot;);
-    SpPath err = sp_with_name(&amp;no_name, &quot;x&quot;);
-    if (sp_path_is_error(&amp;err))
-        printf(&quot;  with_name(\&quot;/\&quot;, \&quot;x\&quot;): %s\n&quot;, sp_error_str(sp_path_error_code(&amp;err)));
-
-    sp_unlink(&amp;link, false);
-    sp_unlink(&amp;renamed, false);
-    sp_rmdir(&amp;subdir);
-    sp_rmdir(&amp;tmpdir);
-
-    return 0;
-}</code></pre>
+<span class="w">    </span><span class="cm">/* .is_symlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  is_symlink: %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_is_symlink</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">));</span>
+<span class="w">    </span><span class="cm">/* Also: sp_is_block_device, sp_is_char_device, sp_is_fifo,</span>
+<span class="cm">             sp_is_socket, sp_is_mount, sp_is_junction */</span>
+
+<span class="w">    </span><span class="cm">/* .stat https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat */</span>
+<span class="w">    </span><span class="cm">/* sp_stat follows symlinks; sp_lstat does not */</span>
+<span class="w">    </span><span class="n">SpStatResult</span><span class="w"> </span><span class="n">st</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_stat</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  stat size:  %lld</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">st</span><span class="p">.</span><span class="n">sp_size</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* ── File I/O ──────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;File I/O&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">tmpdir</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">cwd</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;demo_tmp&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">subdir</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;sub&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">tmpfile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;hello.txt&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */</span>
+<span class="w">    </span><span class="n">sp_mkdir</span><span class="p">(</span><span class="o">&amp;</span><span class="n">subdir</span><span class="p">,</span><span class="w"> </span><span class="mo">0755</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  mkdir:   demo_tmp/sub/</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */</span>
+<span class="w">    </span><span class="n">sp_touch</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpfile</span><span class="p">,</span><span class="w"> </span><span class="mo">0644</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .write_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes */</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;Hello, snakepath!&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">SpIOResult</span><span class="w"> </span><span class="n">wr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_write_file</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpfile</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">msg</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  write:   %zu bytes (err=%d)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">bytes</span><span class="p">,</span><span class="w"> </span><span class="n">wr</span><span class="p">.</span><span class="n">error</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .read_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes */</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="n">buf</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span>
+<span class="w">    </span><span class="n">SpIOResult</span><span class="w"> </span><span class="n">rd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_read_file</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpfile</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>
+<span class="w">    </span><span class="n">buf</span><span class="p">[</span><span class="n">rd</span><span class="p">.</span><span class="n">bytes</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sc">&#39;\0&#39;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  read:    </span><span class="se">\&quot;</span><span class="s">%s</span><span class="se">\&quot;\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .rename https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">renamed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;renamed.txt&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">sp_rename</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpfile</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  rename:  hello.txt -&gt; renamed.txt</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */</span>
+<span class="w">    </span><span class="n">sp_chmod</span><span class="p">(</span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">,</span><span class="w"> </span><span class="mo">0600</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .owner https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  owner:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_owner</span><span class="p">(</span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent) %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">renamed</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">owner</span><span class="p">().</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .group https://docs.python.org/3/library/pathlib.html#pathlib.Path.group */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  group:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_group</span><span class="p">(</span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* ── Symlinks ──────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Symlinks&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">link</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_join_one</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;link.txt&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to */</span>
+<span class="w">    </span><span class="n">sp_symlink_to</span><span class="p">(</span><span class="o">&amp;</span><span class="n">link</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .readlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink */</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_readlink</span><span class="p">(</span><span class="o">&amp;</span><span class="n">link</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  readlink: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmp</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .samefile https://docs.python.org/3/library/pathlib.html#pathlib.Path.samefile */</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  samefile: %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_samefile</span><span class="p">(</span><span class="o">&amp;</span><span class="n">link</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">));</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  (fluent)  %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">SPF_PATH</span><span class="p">(</span><span class="n">link</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">samefile</span><span class="p">(</span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Glob &amp; Iterdir ────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Glob &amp; Iterdir&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .iterdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.iterdir */</span>
+<span class="w">    </span><span class="n">SP_ITERDIR_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="n">entry</span><span class="p">)</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  iterdir: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">entry</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .glob https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob */</span>
+<span class="w">    </span><span class="n">SP_GLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;*.txt&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">match</span><span class="p">)</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  glob:    %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">match</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob */</span>
+<span class="w">    </span><span class="n">SP_RGLOB_FOREACH</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;*.txt&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">match</span><span class="p">)</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  rglob:   %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">match</span><span class="p">));</span>
+
+<span class="w">    </span><span class="cm">/* ── Walk ──────────────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Walk&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* .walk https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk</span>
+<span class="cm">     * Callback-based, allocation-free, unlimited depth via stack recursion. */</span>
+<span class="w">    </span><span class="n">sp_walk</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">,</span><span class="w"> </span><span class="nb">true</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="n">on_walk</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* ── Error Handling ────────────────────────────────────────── */</span>
+<span class="w">    </span><span class="n">section</span><span class="p">(</span><span class="s">&quot;Error Handling&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* Operations that fail return SpPath checked with sp_path_is_error(). */</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">no_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_path</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SpPath</span><span class="w"> </span><span class="n">err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sp_with_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">no_name</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;x&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sp_path_is_error</span><span class="p">(</span><span class="o">&amp;</span><span class="n">err</span><span class="p">))</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;  with_name(</span><span class="se">\&quot;</span><span class="s">/</span><span class="se">\&quot;</span><span class="s">, </span><span class="se">\&quot;</span><span class="s">x</span><span class="se">\&quot;</span><span class="s">): %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sp_error_str</span><span class="p">(</span><span class="n">sp_path_error_code</span><span class="p">(</span><span class="o">&amp;</span><span class="n">err</span><span class="p">)));</span>
+
+<span class="w">    </span><span class="n">sp_unlink</span><span class="p">(</span><span class="o">&amp;</span><span class="n">link</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">    </span><span class="n">sp_unlink</span><span class="p">(</span><span class="o">&amp;</span><span class="n">renamed</span><span class="p">,</span><span class="w"> </span><span class="nb">false</span><span class="p">);</span>
+<span class="w">    </span><span class="n">sp_rmdir</span><span class="p">(</span><span class="o">&amp;</span><span class="n">subdir</span><span class="p">);</span>
+<span class="w">    </span><span class="n">sp_rmdir</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tmpdir</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span></code></pre>
           </div>
         </div>
       </details>
