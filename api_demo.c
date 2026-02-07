@@ -1,44 +1,3 @@
-Snakepath:
-C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes [CPython 3.12's own test suite](tests/python_harness/).
-POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
-Vibe-coded with Claude Code + Cursor.
-
-The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
-
-```c
-u=https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &&
-curl -sSLo snakepath.h "$u" &&
-cat <<'EOF' | cc -xc - -o demo &&
-#define SP_PATH_MAX 4096
-#define SNAKEPATH_FLUENT
-#define SNAKEPATH_IMPLEMENTATION
-#include "snakepath.h"
-#include <stdio.h>
-
-int main(void) {
-    SpPath boring = sp_path("/foo/bar.txt");
-    printf("BORING API: %s\n", sp_name(&boring).buf);
-    printf("BORING API: %s\n", sp_stem(&boring).buf);
-
-    SpPath fluent = SPF("/etc")->join("nginx")->join("nginx.conf")->path();
-    printf("FLUENT API: %s\n", sp_str(&fluent));
-}
-EOF
-./demo
-rm -f demo snakepath.h
-```
-
-## Build & Test
-
-```bash
-cc -o nob nob.c && ./nob
-```
-
-
-<details markdown="1">
-<summary>Snakepath API Reference (<a href="api_demo.c">api_demo.c</a>)</summary>
-
-```c
 /* compile: cc api_demo.c -o api_demo && ./api_demo
  * Creates a demo_tmp/ directory in cwd, cleans up on exit. */
 #define SP_PATH_MAX 4096
@@ -380,32 +339,3 @@ int main(void) {
 
     return 0;
 }
-```
-
-</details>
-
-<details>
-<summary>MIT License</summary>
-Copyright (c) 2026 Netanel Haber
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-</details>
-
-
-<img height="200px" src="./assets/snakepath.png" alt="snake ascii art that also looks like a path"/>
