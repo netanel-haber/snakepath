@@ -13,6 +13,9 @@
 #include <process.h>
 #define test_getpid _getpid
 #else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 #define test_getpid getpid
 #endif
@@ -44,6 +47,23 @@ int main(void) {
 
     /* >>> PurePath('setup.py') -> PurePosixPath('setup.py') */
     ASSERT_FLUENT(SPF("setup.py"), "setup.py");
+
+#ifndef _WIN32
+    /* Fluent chain must be terminated before starting another chain */
+    {
+        pid_t pid = fork();
+        ASSERT(pid >= 0);
+        if (pid == 0) {
+            (void)SPF("a"); /* not terminated */
+            (void)SPF("b"); /* should assert() and abort */
+            exit(0);        /* should be unreachable */
+        }
+        int status = 0;
+        ASSERT(waitpid(pid, &status, 0) == pid);
+        ASSERT(WIFSIGNALED(status));
+        ASSERT(WTERMSIG(status) == SIGABRT);
+    }
+#endif
 
     /* >>> PurePath('foo', 'some/path', 'bar') -> PurePosixPath('foo/some/path/bar') */
     ASSERT_FLUENT(SPF_P("foo")->join("some/path")->join("bar"), "foo/some/path/bar");

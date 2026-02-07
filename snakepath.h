@@ -1611,18 +1611,6 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     return SP_MATCH_YES;
 }
 
-/* Helper for POSIX-only file type checks (returns false on Windows) */
-#ifndef SP_WINDOWS
-static bool sp_priv_check_posix_type(const SpPath *p, unsigned int type_mask, bool use_lstat) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
-    struct stat st;
-    if (use_lstat ? lstat(path_str, &st) : stat(path_str, &st)) return false;
-    return (st.st_mode & S_IFMT) == type_mask;
-}
-#endif
-
 bool sp_is_reserved(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     if (!sp_priv_is_windows_flavor(p->flavor) || sp_priv_is_unc(p->buf, p->len, p->flavor)) return false;
@@ -1651,94 +1639,42 @@ bool sp_is_reserved(const SpPath *p) {
     return strcmp(upper, "CONIN$") == 0 || strcmp(upper, "CONOUT$") == 0;
 }
 
+static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
+    SpStatResult st = follow_symlinks ? sp_stat(p) : sp_lstat(p);
+    if (!st.valid) return false;
+    return (st.sp_mode & S_IFMT) == type_mask;
+}
+
 bool sp_is_file(const SpPath *p) {
-#ifdef SP_WINDOWS
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    DWORD attrs = GetFileAttributesA(sp_str(p));
-    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return false;
-    HANDLE h = CreateFileA(sp_str(p), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD type = GetFileType(h);
-    CloseHandle(h);
-    return type == FILE_TYPE_DISK;
-#else
-    return sp_priv_check_posix_type(p, S_IFREG, false);
-#endif
+    return sp_priv_has_type(p, S_IFREG, true);
 }
 
 bool sp_is_dir(const SpPath *p) {
-#ifdef SP_WINDOWS
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    DWORD attrs = GetFileAttributesA(sp_str(p));
-    return (attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY);
-#else
-    return sp_priv_check_posix_type(p, S_IFDIR, false);
-#endif
+    return sp_priv_has_type(p, S_IFDIR, true);
 }
 
 bool sp_exists(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
-#ifdef SP_WINDOWS
-    return GetFileAttributesA(path_str) != INVALID_FILE_ATTRIBUTES;
-#else
-    struct stat st;
-    return stat(path_str, &st) == 0;
-#endif
+    return sp_stat(p).valid;
 }
 
 bool sp_is_symlink(const SpPath *p) {
-#ifdef SP_WINDOWS
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    DWORD attrs = GetFileAttributesA(sp_str(p));
-    return (attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_REPARSE_POINT);
-#else
-    return sp_priv_check_posix_type(p, S_IFLNK, true);
-#endif
+    return sp_priv_has_type(p, S_IFLNK, false);
 }
 
 bool sp_is_block_device(const SpPath *p) {
-#ifdef SP_WINDOWS
-    (void)p; return false;
-#else
-    return sp_priv_check_posix_type(p, S_IFBLK, false);
-#endif
+    return sp_priv_has_type(p, S_IFBLK, true);
 }
 
 bool sp_is_char_device(const SpPath *p) {
-#ifdef SP_WINDOWS
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    DWORD attrs = GetFileAttributesA(sp_str(p));
-    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-    HANDLE h = CreateFileA(sp_str(p), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD type = GetFileType(h);
-    CloseHandle(h);
-    return type == FILE_TYPE_CHAR;
-#else
-    return sp_priv_check_posix_type(p, S_IFCHR, false);
-#endif
+    return sp_priv_has_type(p, S_IFCHR, true);
 }
 
 bool sp_is_fifo(const SpPath *p) {
-#ifdef SP_WINDOWS
-    (void)p; return false;
-#else
-    return sp_priv_check_posix_type(p, S_IFIFO, false);
-#endif
+    return sp_priv_has_type(p, S_IFIFO, true);
 }
 
 bool sp_is_socket(const SpPath *p) {
-#ifdef SP_WINDOWS
-    (void)p; return false;
-#else
-    return sp_priv_check_posix_type(p, S_IFSOCK, false);
-#endif
+    return sp_priv_has_type(p, S_IFSOCK, true);
 }
 
 bool sp_is_mount(const SpPath *p) {
@@ -1836,7 +1772,7 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
 #endif
 
-SpStatResult sp_stat(const SpPath *p) {
+static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpStatResult result = SP_PRIV_ZERO;
     result.valid = false;
@@ -1844,11 +1780,11 @@ SpStatResult sp_stat(const SpPath *p) {
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
+    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS;
+    if (!follow_symlinks) flags |= FILE_FLAG_OPEN_REPARSE_POINT;
     HANDLE hFile = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        return result;
-    }
+                               NULL, OPEN_EXISTING, flags, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return result;
 
     BY_HANDLE_FILE_INFORMATION info;
     if (!GetFileInformationByHandle(hFile, &info)) {
@@ -1856,9 +1792,22 @@ SpStatResult sp_stat(const SpPath *p) {
         return result;
     }
 
-    /* Try GetFileInformationByHandleEx for 64-bit volume serial (Windows 8+) */
-    typedef struct { ULONGLONG VolumeSerialNumber; BYTE FileId[16]; } SP_FILE_ID_INFO;
-    SP_FILE_ID_INFO fii;
+    DWORD file_type = GetFileType(hFile);
+    result.sp_mode = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
+    if (file_type == FILE_TYPE_CHAR) {
+        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFCHR;
+    } else if (file_type != FILE_TYPE_DISK) {
+        result.sp_mode &= ~S_IFMT;
+    }
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+        result.sp_mode &= ~0222;
+    }
+    if (!follow_symlinks && (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFLNK;
+    }
+
+    typedef struct { ULONGLONG VolumeSerialNumber; BYTE FileId[16]; } SpFileIdInfo;
+    SpFileIdInfo fii;
     if (GetFileInformationByHandleEx(hFile, SP_PRIV_CAST(FILE_INFO_BY_HANDLE_CLASS, 18), &fii, sizeof(fii))) {
         result.sp_dev = fii.VolumeSerialNumber;
         memcpy(&result.sp_ino, fii.FileId, sizeof(result.sp_ino));
@@ -1867,13 +1816,8 @@ SpStatResult sp_stat(const SpPath *p) {
         result.sp_ino = (SP_PRIV_CAST(unsigned long long, info.nFileIndexHigh) << 32) |
                         SP_PRIV_CAST(unsigned long long, info.nFileIndexLow);
     }
-    CloseHandle(hFile);
 
     result.sp_nlink = SP_PRIV_CAST(unsigned long long, info.nNumberOfLinks);
-    result.sp_mode = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
-    if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
-        result.sp_mode &= ~0222;
-    }
     result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, info.nFileSizeLow);
 
@@ -1887,11 +1831,18 @@ SpStatResult sp_stat(const SpPath *p) {
     result.sp_uid = 0;
     result.sp_gid = 0;
     result.valid = true;
+    CloseHandle(hFile);
 #else
     struct stat st;
-    if (stat(path_str, &st) == 0) sp_priv_fill_stat_result(&result, &st);
+    if ((follow_symlinks ? stat(path_str, &st) : lstat(path_str, &st)) == 0) {
+        sp_priv_fill_stat_result(&result, &st);
+    }
 #endif
     return result;
+}
+
+SpStatResult sp_stat(const SpPath *p) {
+    return sp_priv_stat_impl(p, true);
 }
 
 bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
@@ -1914,72 +1865,7 @@ size_t sp_parents_count(const SpPath *p) {
 }
 
 SpStatResult sp_lstat(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpStatResult result = SP_PRIV_ZERO;
-    result.valid = false;
-    if (sp_priv_has_embedded_null(p)) return result;
-    const char *path_str = sp_str(p);
-
-#ifdef SP_WINDOWS
-    /* On Windows, lstat uses FindFirstFileA to get attributes without following symlinks */
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(path_str, &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        return result;
-    }
-    FindClose(h);
-
-    result.sp_mode = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
-    if (fd.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
-        result.sp_mode &= ~0222;
-    }
-    if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFLNK;
-    }
-
-    result.sp_size = (SP_PRIV_CAST(long long, fd.nFileSizeHigh) << 32) |
-                     SP_PRIV_CAST(long long, fd.nFileSizeLow);
-
-    result.sp_atime = SP_FILETIME_TO_UNIX(fd.ftLastAccessTime);
-    result.sp_mtime = SP_FILETIME_TO_UNIX(fd.ftLastWriteTime);
-    result.sp_ctime = SP_FILETIME_TO_UNIX(fd.ftCreationTime);
-    result.sp_atime_ns = SP_FILETIME_TO_NS(fd.ftLastAccessTime);
-    result.sp_mtime_ns = SP_FILETIME_TO_NS(fd.ftLastWriteTime);
-    result.sp_ctime_ns = SP_FILETIME_TO_NS(fd.ftCreationTime);
-
-    /* Get inode/dev/nlink via file handle with FILE_FLAG_OPEN_REPARSE_POINT */
-    HANDLE fh = CreateFileA(path_str, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                            NULL, OPEN_EXISTING,
-                            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    if (fh == INVALID_HANDLE_VALUE) {
-        return result;
-    }
-
-    BY_HANDLE_FILE_INFORMATION info;
-    if (!GetFileInformationByHandle(fh, &info)) {
-        CloseHandle(fh);
-        return result;
-    }
-    result.sp_nlink = info.nNumberOfLinks;
-
-    typedef struct { unsigned long long VolumeSerialNumber; unsigned char FileId[16]; } SpFileIdInfo;
-    SpFileIdInfo id_info;
-    if (!GetFileInformationByHandleEx(fh, (FILE_INFO_BY_HANDLE_CLASS)18, &id_info, sizeof(id_info))) {
-        CloseHandle(fh);
-        return result;
-    }
-    result.sp_dev = id_info.VolumeSerialNumber;
-    memcpy(&result.sp_ino, id_info.FileId, sizeof(result.sp_ino));
-    CloseHandle(fh);
-
-    result.sp_uid = 0;
-    result.sp_gid = 0;
-    result.valid = true;
-#else
-    struct stat st;
-    if (lstat(path_str, &st) == 0) sp_priv_fill_stat_result(&result, &st);
-#endif
-    return result;
+    return sp_priv_stat_impl(p, false);
 }
 
 SpPath sp_readlink(const SpPath *p) {
@@ -3081,7 +2967,7 @@ static int sp_priv_f_match_(const char *pattern) {
     sp_priv_f_ctx_active = false;
     return sp_match_ex(&sp_priv_f_ctx, pattern, -1);
 }
-/* SpPathOp mutator terminators - shared helper deactivates context and wraps bool result */
+/* SpPathOp mutator terminators - terminators that return path+error */
 static SpPathOp sp_priv_f_pathop(bool ok) {
     SpPathOp r;
     r.path = sp_priv_f_ctx;
@@ -3091,13 +2977,13 @@ static SpPathOp sp_priv_f_pathop(bool ok) {
 }
 static int sp_priv_mkdir_to_error(int r) {
     switch (r) {
-        case SP_MKDIR_OK:               return SP_OK;
-        case SP_MKDIR_ERR_EXISTS:       return SP_ERR_EXISTS;
-        case SP_MKDIR_ERR_NOT_FOUND:    return SP_ERR_NOT_FOUND;
-        case SP_MKDIR_ERR_NOT_DIR:      return SP_ERR_NOT_DIR;
-        case SP_MKDIR_ERR_PERMISSION:   return SP_ERR_PERMISSION;
-        case SP_MKDIR_ERR_EXISTS_NOT_DIR:return SP_ERR_EXISTS_NOT_DIR;
-        default:                        return SP_ERR_OTHER_OP;
+        case SP_MKDIR_OK:                   return SP_OK;
+        case SP_MKDIR_ERR_EXISTS:           return SP_ERR_EXISTS;
+        case SP_MKDIR_ERR_NOT_FOUND:        return SP_ERR_NOT_FOUND;
+        case SP_MKDIR_ERR_NOT_DIR:          return SP_ERR_NOT_DIR;
+        case SP_MKDIR_ERR_PERMISSION:       return SP_ERR_PERMISSION;
+        case SP_MKDIR_ERR_EXISTS_NOT_DIR:   return SP_ERR_EXISTS_NOT_DIR;
+        default:                            return SP_ERR_OTHER_OP;
     }
 }
 static SpPathOp sp_priv_f_mkdir_(unsigned int mode, bool parents, bool exist_ok) {
@@ -3222,6 +3108,7 @@ static SpPrivDontUseThisDirectly_ *sp_priv_f_resolve_(bool strict) {
 }
 
 SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath p) {
+    assert(!sp_priv_f_ctx_active && "snakepath fluent API: previous chain not terminated");
     sp_priv_f_ctx_active = true;
     sp_priv_f_ctx = p;
     return &sp_priv_f_instance;
