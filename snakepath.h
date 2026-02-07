@@ -2299,9 +2299,14 @@ static bool sp_priv_readdir_open(void **handle, const SpPath *dir) {
     DWORD attr = GetFileAttributesA(dir->len ? dir->buf : ".");
     if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
     *handle = SP_PRIV_NULL;
+    return true;
+#else
+    *handle = opendir(sp_str(dir));
+    return *handle != SP_PRIV_NULL;
 #endif
 }
 
+static void sp_priv_readdir_close(void **handle) {
     if (!*handle) return;
 #ifdef SP_WINDOWS
     FindClose(*handle);
