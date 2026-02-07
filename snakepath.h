@@ -221,7 +221,7 @@ typedef struct {
 SpPath sp_path_new(const char *s, SpPathOpts opts);
 SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor);
 SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor);
-SpPath sp_path_copy(const SpPath *p);
+static inline SpPath sp_path_copy(const SpPath *p) { SP_ASSERT_PATH_INVARIANT(p); return *p; }
 
 const char *sp_str(const SpPath *p);
 void sp_as_posix(const SpPath *p, char *out, size_t out_size);
@@ -862,11 +862,6 @@ SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor)
     return dest;
 }
 
-SpPath sp_path_copy(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    return *p;
-}
-
 const char *sp_str(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     return p->len == 0 ? "." : p->buf;
@@ -1039,44 +1034,23 @@ size_t sp_parts_count(const SpPath *p) {
     return c;
 }
 
-/* Compute parent length from buf[0..len] — same logic as sp_parent but returns length only */
-static size_t sp_priv_parent_len(const char *buf, size_t len, SpFlavor flavor) {
-    if (len == 0) return 0;
-    size_t anchor = sp_priv_anchor_len(buf, len, flavor);
-    if (len <= anchor) return len;  /* at or below anchor: parent == self */
-    size_t i = len;
-    while (i > anchor && !sp_priv_is_sep(buf[i - 1], flavor)) i--;
-    if (i > anchor) i--;
-    if (i <= anchor) i = anchor;
-    return i;
-}
-
 SpParentsIter sp_parents_begin(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpParentsIter it = SP_PRIV_ZERO;
     it.path = p;
-    size_t plen = sp_priv_parent_len(p->buf, p->len, p->flavor);
-    /* done if parent == self (root/anchor paths, or empty→empty) */
-    it.done = (plen == p->len);
-    it.current_len = plen;
+    SpPath par = sp_parent(p);
+    it.done = (par.len == p->len);
+    it.current_len = par.len;
     return it;
 }
 
 bool sp_parents_next(SpParentsIter *it, SpPath *out) {
     if (it->done) return false;
-    /* Reconstruct current parent as SpPath */
     const SpPath *p = it->path;
-    memset(out, 0, sizeof(*out));
-    out->flavor = p->flavor;
-    if (it->current_len > 0) {
-        memcpy(out->buf, p->buf, it->current_len);
-        out->len = it->current_len;
-    }
-    out->buf[out->len] = '\0';
-    /* Advance cursor toward root */
-    size_t next_len = sp_priv_parent_len(p->buf, it->current_len, p->flavor);
-    it->done = (next_len == it->current_len);
-    if (!it->done) it->current_len = next_len;
+    *out = sp_path_from_n(p->buf, it->current_len, p->flavor);
+    SpPath next = sp_parent(out);
+    it->done = (next.len == out->len);
+    if (!it->done) it->current_len = next.len;
     return true;
 }
 
@@ -1200,6 +1174,7 @@ SpPath sp_with_name(const SpPath *p, const char *name) {
     size_t nlen = strlen(name);
     if (!sp_priv_is_valid_name(name, nlen, p->flavor)) return sp_priv_error_path(SP_ERR_INVALID_ARG);
 
+    /* Build parent/name directly (can't use sp_join_one — it would interpret drive letters in the name) */
     SpPath parent = sp_parent(p);
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
@@ -2036,15 +2011,13 @@ SpPath sp_readlink(const SpPath *p) {
         }
     }
 #else
-    char buf[SP_PATH_MAX];
-    ssize_t len = readlink(path_str, buf, SP_PATH_MAX - 1);
+    ssize_t len = readlink(path_str, result.buf, SP_PATH_MAX - 1);
     if (len < 0) {
         result.buf[0] = SP_ERR_OTHER;
         return result;
     }
-    buf[len] = '\0';
-    memcpy(result.buf, buf, SP_PRIV_CAST(size_t, len) + 1);
     result.len = SP_PRIV_CAST(size_t, len);
+    result.buf[result.len] = '\0';
 #endif
 
     return result;
@@ -2745,72 +2718,47 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
 
 /* ============ Home Directory and User Expansion Implementation ============ */
 
-/* Helper: set path from string if valid */
-static bool sp_priv_set_path_str(SpPath *result, const char *s) {
-    if (!s || !*s) return false;
-    size_t len = strlen(s);
-    if (len >= SP_PATH_MAX) return false;
-    memcpy(result->buf, s, len);
-    result->len = len;
-    result->buf[len] = '\0';
-    sp_priv_normalize(result->buf, &result->len, result->flavor);
-    return true;
-}
-
 SpPath sp_home(SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
-    SpPath result = SP_PRIV_ZERO;
-    result.flavor = flavor;
-
+    const char *s = NULL;
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4996)
 #endif
 #ifdef SP_WINDOWS
-    if (sp_priv_set_path_str(&result, getenv("USERPROFILE"))) return result;
+    s = getenv("USERPROFILE");
 #else
-    if (sp_priv_set_path_str(&result, getenv("HOME"))) return result;
-    struct passwd *pw = getpwuid(getuid());
-    if (pw && sp_priv_set_path_str(&result, pw->pw_dir)) return result;
+    s = getenv("HOME");
+    if (!s) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) s = pw->pw_dir;
+    }
 #endif
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    result.buf[0] = SP_ERR_OTHER;
-    return result;
+    if (s && *s) return sp_path_from_n(s, strlen(s), flavor);
+    return sp_priv_error_path(SP_ERR_OTHER);
 }
 
 SpPath sp_expanduser(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpPath result = SP_PRIV_ZERO;
-    result.flavor = p->flavor;
-
-    /* If path doesn't start with ~, return copy */
-    if (p->len == 0 || p->buf[0] != '~') {
-        return sp_path_copy(p);
-    }
+    if (p->len == 0 || p->buf[0] != '~') return sp_path_copy(p);
 
     /* Check for ~ alone or ~/... */
     bool is_current_user = (p->len == 1) ||
                           (p->len > 1 && sp_priv_is_sep(p->buf[1], p->flavor));
 
     if (is_current_user) {
-        /* Expand ~ to current user's home */
         SpPath home = sp_home(p->flavor);
-        if (sp_path_is_error(&home)) {
-            result.buf[0] = SP_ERR_OTHER;
-            return result;
-        }
-        if (p->len == 1) {
-            return home;
-        }
+        if (sp_path_is_error(&home)) return sp_priv_error_path(SP_ERR_OTHER);
+        if (p->len == 1) return home;
         /* Append the rest of the path after ~/ (skip both ~ and separator) */
         const char *rest = p->buf + 2;
         size_t rest_len = p->len - 2;
 
         /* On Windows, if rest looks like a drive letter (e.g., "a:b" from "~/a:b"),
-           prefix with "./" to prevent it from being interpreted as an absolute path.
-           E.g., ~/a:b should become C:/Users/foo/a:b, not just a:b */
+           prefix with "./" to prevent it from being interpreted as an absolute path */
         if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
             char protected_path[SP_PATH_MAX];
             protected_path[0] = '.';
@@ -2820,7 +2768,6 @@ SpPath sp_expanduser(const SpPath *p) {
             protected_path[2 + copy_len] = '\0';
             return sp_join_one(&home, protected_path);
         }
-
         return sp_join_n(&home, rest, rest_len);
     }
 
@@ -2830,39 +2777,17 @@ SpPath sp_expanduser(const SpPath *p) {
     while (end < p->len && !sp_priv_is_sep(p->buf[end], p->flavor)) end++;
     char username[256];
     size_t ulen = end - 1;
-    if (ulen >= sizeof(username)) {
-        return sp_path_copy(p);  /* Username too long, return unchanged */
-    }
+    if (ulen >= sizeof(username)) return sp_path_copy(p);
     memcpy(username, p->buf + 1, ulen);
     username[ulen] = '\0';
 
     struct passwd *pw = getpwnam(username);
-    if (!pw) {
-        return sp_path_copy(p);  /* User not found, return unchanged */
-    }
+    if (!pw || !pw->pw_dir) return sp_path_copy(p);
     const char *pw_dir = pw->pw_dir;
-    if (!pw_dir) {
-        return sp_path_copy(p);  /* No home dir, return unchanged */
-    }
-    size_t home_len = strlen(pw_dir);
-    if (home_len >= SP_PATH_MAX) {
-        return sp_path_copy(p);
-    }
-    memcpy(result.buf, pw_dir, home_len);
-    result.len = home_len;
-
-    /* Append the rest of the path */
-    if (end < p->len) {
-        if (result.len > 0 && !sp_priv_is_sep(result.buf[result.len - 1], p->flavor)) {
-            sp_priv_append_sep(&result);
-        }
-        sp_priv_append_cstr(&result, p->buf + end, p->len - end);
-    }
-    result.buf[result.len] = '\0';
-    sp_priv_normalize(result.buf, &result.len, result.flavor);
-    return result;
+    SpPath home = sp_path_from_n(pw_dir, strlen(pw_dir), p->flavor);
+    if (end >= p->len) return home;
+    return sp_join_n(&home, p->buf + end, p->len - end);
 #else
-    /* On Windows, ~username is not commonly supported, return unchanged */
     return sp_path_copy(p);
 #endif
 }
