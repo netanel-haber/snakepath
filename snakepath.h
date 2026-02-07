@@ -22,7 +22,6 @@
 extern "C" {
 #endif
 
-/* C/C++ compatibility helpers */
 #ifdef __cplusplus
 #define SP_PRIV_STR(d, l)                                                                                              \
     SpStr { (d), (l) }
@@ -41,7 +40,6 @@ extern "C" {
 #define SP_PRIV_CAST(type, val) ((type)(val))
 #endif
 
-/* Recommended SP_PATH_MAX values - define SP_PATH_MAX before including snakepath.h */
 #define SP_PATH_MAX_WINDOWS 1024  /* Windows has 1MB default stack; larger values may cause stack overflow. Use /STACK linker flag to increase. */
 #define SP_PATH_MAX_LINUX 4096    /* Linux PATH_MAX; typical 8MB stack handles this fine */
 
@@ -54,33 +52,27 @@ extern "C" {
 #define SP_MAX_SUFFIXES 16
 #endif
 
-/* Error sentinels for path results (len=0 with special buf[0] values) */
 #define SP_ERR_NONE '\x00'         /* No error (or empty path) */
 #define SP_ERR_NOT_RELATIVE '\x01' /* Not relative to other path */
 #define SP_ERR_NO_NAME '\x02'      /* Path has no usable name */
 #define SP_ERR_INVALID_ARG '\x03'  /* Invalid argument (name/stem/suffix) */
 #define SP_ERR_OTHER '\x04'        /* Other error (I/O, permission, etc.) */
 
-/* Match result codes */
 #define SP_MATCH_YES 1          /* Pattern matched */
 #define SP_MATCH_NO 0           /* Pattern did not match */
 #define SP_MATCH_ERR_EMPTY -1   /* Empty pattern */
 #define SP_MATCH_ERR_INVALID -2 /* Invalid pattern (. or ..) */
 
-/* Platform detection */
 #if defined(_WIN32) || defined(_WIN64)
 #define SP_WINDOWS 1
 #else
 #define SP_POSIX 1
 #endif
 
-/* Flavors for explicit platform behavior */
 typedef enum { SP_FLAVOR_NATIVE = 0, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS } SpFlavor;
 
-/* Case sensitivity options for glob/match */
 typedef enum { SP_CASE_PLATFORM_DEFAULT = 0, SP_CASE_SENSITIVE, SP_CASE_INSENSITIVE } SpCaseSensitivity;
 
-/* Assertion macros for runtime invariant checking */
 #define SP_ASSERT_PATH(p) assert((p) != NULL && "path pointer must not be NULL")
 #define SP_ASSERT_FLAVOR(f)                                                                                            \
     assert(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
@@ -92,13 +84,11 @@ typedef enum { SP_CASE_PLATFORM_DEFAULT = 0, SP_CASE_SENSITIVE, SP_CASE_INSENSIT
         SP_ASSERT_FLAVOR((p)->flavor);                                                                                 \
     } while (0)
 
-/* String view - non-owning slice */
 typedef struct {
     const char *data;
     size_t len;
 } SpStr;
 
-/* Terminated string - owning, null-terminated copy for component strings */
 #ifndef SP_TERM_MAX
 #define SP_TERM_MAX 256
 #endif
@@ -107,7 +97,6 @@ typedef struct {
     size_t len;
 } SpTerm;
 
-/* Helper to create SpTerm from data pointer and length */
 static inline SpTerm sp_priv_term(const char *data, size_t len) {
     SpTerm t = SP_PRIV_ZERO;
     if (data && len > 0) {
@@ -119,14 +108,12 @@ static inline SpTerm sp_priv_term(const char *data, size_t len) {
     return t;
 }
 
-/* Path structure - fixed buffer, no heap */
 typedef struct {
     char buf[SP_PATH_MAX];
     size_t len;
     SpFlavor flavor;
 } SpPath;
 
-/* Parts iterator */
 typedef struct {
     const SpPath *path;
     size_t pos;
@@ -134,25 +121,22 @@ typedef struct {
     bool anchor_done;
 } SpPartsIter;
 
-/* Suffixes result */
 typedef struct {
     SpStr items[SP_MAX_SUFFIXES];
     size_t count;
 } SpSuffixes;
 
-/* Parents iterator - stores pointer + cursor (same lifetime semantics as SpPartsIter) */
 typedef struct {
     const SpPath *path;
-    size_t current_len;  /* Truncation point for current parent */
+    size_t current_len;
     bool done;
 } SpParentsIter;
 
-/* Directory iteration */
 typedef struct {
-    SpPath dir;           /* Directory being iterated */
-    int done;             /* -1 = error, 0 = in progress, 1 = done */
+    SpPath dir;
+    int done;
     struct {
-        void *handle;     /* DIR* (POSIX) or HANDLE (Windows, NULL until first next()) */
+        void *handle;
     } priv_;
 } SpIterdirIter;
 
@@ -160,44 +144,38 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p);
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out);  /* returns child path */
 void sp_iterdir_end(SpIterdirIter *it);
 
-/* Iterdir foreach macro */
 #define SP_ITERDIR_FOREACH(dir, entry_var) \
     for (struct { SpIterdirIter it; int done; } sp_ictx_ = { sp_iterdir_begin(dir), 0 }; \
          !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
     for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
 
-/* Glob iterator limits */
 #ifndef SP_GLOB_MAX_DEPTH
 #define SP_GLOB_MAX_DEPTH 32
 #endif
 #ifndef SP_GLOB_MAX_SEGMENTS
-#define SP_GLOB_MAX_SEGMENTS 64  /* Support patterns with many segments (e.g., 50 ../..) */
+#define SP_GLOB_MAX_SEGMENTS 64
 #endif
 #ifndef SP_GLOB_PATTERN_MAX
 #define SP_GLOB_PATTERN_MAX 256
 #endif
 
-/* Glob iterator */
 typedef struct {
-    int depth;  /* Current depth (0 = base dir), -1 = done/error */
+    int depth;
     struct {
         char pattern_buf[SP_GLOB_PATTERN_MAX];
-        size_t seg_offsets[SP_GLOB_MAX_SEGMENTS];  /* Offsets into pattern_buf */
+        size_t seg_offsets[SP_GLOB_MAX_SEGMENTS];
         int seg_types[SP_GLOB_MAX_SEGMENTS];
         size_t seg_count;
         bool dir_only;
         bool case_insensitive;
-        bool yield_base_pending;  /* When pattern starts with **, yield base dir first */
+        bool yield_base_pending;
         SpFlavor flavor;
-        SpPath current_dir;                        /* Shared path buffer for current directory */
+        SpPath current_dir;
         struct { void *handle; size_t path_len; } stack[SP_GLOB_MAX_DEPTH];
         size_t seg_idxs[SP_GLOB_MAX_DEPTH];
     } priv_;
 } SpGlobIter;
 
-/* ============ API Macros ============ */
-
-/* Path creation with optional flavor: sp_path("foo/bar") or sp_path("foo", SP_FLAVOR_POSIX) */
 typedef struct {
     SpFlavor flavor;
 } SpPathOpts;
@@ -209,17 +187,12 @@ typedef struct {
 #define sp_join(base, ...) sp_join_impl((base), (const char *[]){__VA_ARGS__, NULL})
 #endif
 
-/* Comparison: sp_eq(a, b) */
 #define sp_eq(a, b) sp_path_eq(&(a), &(b))
 
-/* String view literal */
 #define sp_sv(s) SP_PRIV_STR((s), sizeof(s) - 1)
 #define sp_sv_from(s, n) SP_PRIV_STR((s), (n))
 
-/* Array length helper (works only for real arrays, not pointers) */
 #define SP_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
-
-/* ============ Core Functions ============ */
 
 SpPath sp_path_new(const char *s, SpPathOpts opts);
 SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor);
@@ -250,7 +223,6 @@ SpPath sp_join_n(const SpPath *base, const char *s, size_t len);
 SpPath sp_join_impl(const SpPath *base, const char **parts);
 SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
-/* Construct new path from segments (parts_count entries in parts array) */
 SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count);
 SpPath sp_with_name(const SpPath *p, const char *name);
 SpPath sp_with_stem(const SpPath *p, const char *stem);
@@ -284,23 +256,21 @@ bool sp_is_socket(const SpPath *p);
 bool sp_is_mount(const SpPath *p);
 bool sp_is_junction(const SpPath *p);
 
-/* Stat result structure - mirrors Python's os.stat_result */
-/* Note: field names use sp_ prefix to avoid macro conflicts with system headers */
 typedef struct {
-    unsigned int sp_mode;      /* File type and permissions */
-    unsigned long long sp_ino; /* Inode number */
-    unsigned long long sp_dev; /* Device ID */
-    unsigned long long sp_nlink; /* Number of hard links */
-    unsigned int sp_uid;       /* User ID of owner */
-    unsigned int sp_gid;       /* Group ID of owner */
-    long long sp_size;         /* Total size in bytes */
-    double sp_atime;           /* Time of last access */
-    double sp_mtime;           /* Time of last modification */
-    double sp_ctime;           /* Time of last status change (Unix) / creation (Windows) */
-    long long sp_atime_ns;     /* Time of last access (nanoseconds since epoch) */
-    long long sp_mtime_ns;     /* Time of last modification (nanoseconds since epoch) */
-    long long sp_ctime_ns;     /* Time of last status change (nanoseconds since epoch) */
-    bool valid;                /* True if stat succeeded */
+    unsigned int sp_mode;
+    unsigned long long sp_ino;
+    unsigned long long sp_dev;
+    unsigned long long sp_nlink;
+    unsigned int sp_uid;
+    unsigned int sp_gid;
+    long long sp_size;
+    double sp_atime;
+    double sp_mtime;
+    double sp_ctime;
+    long long sp_atime_ns;
+    long long sp_mtime_ns;
+    long long sp_ctime_ns;
+    bool valid;
 } SpStatResult;
 
 SpStatResult sp_stat(const SpPath *p);   /* follows symlinks */
@@ -308,80 +278,70 @@ SpStatResult sp_lstat(const SpPath *p);  /* does not follow symlinks */
 bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b);
 size_t sp_parents_count(const SpPath *p);
 
-/* Symlink & link operations */
-SpPath sp_readlink(const SpPath *p);  /* read symlink target; returns error path if not a symlink */
-SpPath sp_resolve(const SpPath *p, bool strict);  /* resolve to canonical absolute path */
-bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory);  /* create symlink */
-bool sp_hardlink_to(const SpPath *p, const SpPath *target);  /* create hard link */
-bool sp_samefile(const SpPath *a, const SpPath *b);  /* check if paths refer to same file */
+SpPath sp_readlink(const SpPath *p);
+SpPath sp_resolve(const SpPath *p, bool strict);
+bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory);
+bool sp_hardlink_to(const SpPath *p, const SpPath *target);
+bool sp_samefile(const SpPath *a, const SpPath *b);
 
-/* mkdir result codes */
 #define SP_MKDIR_OK 0
-#define SP_MKDIR_ERR_EXISTS 1          /* Directory already exists (and exist_ok=false) */
-#define SP_MKDIR_ERR_NOT_FOUND 2       /* Parent directory doesn't exist */
-#define SP_MKDIR_ERR_NOT_DIR 3         /* A parent component of the path is not a directory */
-#define SP_MKDIR_ERR_PERMISSION 4      /* Permission denied */
-#define SP_MKDIR_ERR_OTHER 5           /* Other error */
-#define SP_MKDIR_ERR_EXISTS_NOT_DIR 6  /* Path exists but is not a directory (e.g., a file) */
-#define SP_MKDIR_DEF_MODE 0777         /* Default mode (0 = use this); umask applied by OS */
+#define SP_MKDIR_ERR_EXISTS 1
+#define SP_MKDIR_ERR_NOT_FOUND 2
+#define SP_MKDIR_ERR_NOT_DIR 3
+#define SP_MKDIR_ERR_PERMISSION 4
+#define SP_MKDIR_ERR_OTHER 5
+#define SP_MKDIR_ERR_EXISTS_NOT_DIR 6
+#define SP_MKDIR_DEF_MODE 0777
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);
 
-/* Unified error codes (used by SpPathOp and available for general use) */
 enum {
     SP_OK = 0,
-    SP_ERR,                /* generic failure (bool ops that returned false) */
-    SP_ERR_EXISTS,         /* file/directory already exists */
-    SP_ERR_NOT_FOUND,      /* no such file or directory */
-    SP_ERR_NOT_DIR,        /* not a directory */
-    SP_ERR_PERMISSION,     /* permission denied */
-    SP_ERR_EXISTS_NOT_DIR, /* path exists but is not a directory */
-    SP_ERR_OPEN,           /* could not open file */
-    SP_ERR_READ,           /* read failed */
-    SP_ERR_WRITE,          /* write failed */
-    SP_ERR_TOO_LARGE,      /* file too large for buffer */
-    SP_ERR_OTHER_OP        /* unknown error */
+    SP_ERR,
+    SP_ERR_EXISTS,
+    SP_ERR_NOT_FOUND,
+    SP_ERR_NOT_DIR,
+    SP_ERR_PERMISSION,
+    SP_ERR_EXISTS_NOT_DIR,
+    SP_ERR_OPEN,
+    SP_ERR_READ,
+    SP_ERR_WRITE,
+    SP_ERR_TOO_LARGE,
+    SP_ERR_OTHER_OP
 };
 
 const char *sp_error_str(int error);
-void sp_error_print(int error, const char *context);
 
-/* Fluent operation result - path + error code */
 typedef struct { SpPath path; int error; } SpPathOp;
 
-/* File/directory modification operations */
-bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);  /* create file or update timestamps */
-bool sp_unlink(const SpPath *p, bool missing_ok);  /* delete file */
-bool sp_rmdir(const SpPath *p);  /* delete empty directory */
-SpPath sp_rename(const SpPath *p, const SpPath *target);  /* rename file/directory, returns new path */
-SpPath sp_replace(const SpPath *p, const SpPath *target);  /* replace target with this file, returns new path */
-bool sp_chmod(const SpPath *p, unsigned int mode);  /* change file permissions */
+bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);
+bool sp_unlink(const SpPath *p, bool missing_ok);
+bool sp_rmdir(const SpPath *p);
+SpPath sp_rename(const SpPath *p, const SpPath *target);
+SpPath sp_replace(const SpPath *p, const SpPath *target);
+bool sp_chmod(const SpPath *p, unsigned int mode);
 
-/* File I/O (bring your own buffer, no malloc) */
 typedef struct { size_t bytes; int error; } SpIOResult;
-#define SP_IO_OK            0  /* success */
-#define SP_IO_ERR_OPEN      1  /* could not open (not found, permission, is_dir, etc.) */
-#define SP_IO_ERR_READ      2  /* read failed mid-stream */
-#define SP_IO_ERR_WRITE     3  /* write failed mid-stream */
-#define SP_IO_ERR_TOO_LARGE 4  /* file larger than buf_size (result.bytes = actual size) */
+#define SP_IO_OK            0
+#define SP_IO_ERR_OPEN      1
+#define SP_IO_ERR_READ      2
+#define SP_IO_ERR_WRITE     3
+#define SP_IO_ERR_TOO_LARGE 4
 
 SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size);
 SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len);
 
-/* Home directory and user expansion */
-SpPath sp_home(SpFlavor flavor);  /* get user's home directory */
-SpPath sp_expanduser(const SpPath *p);  /* expand ~ to home directory */
+SpPath sp_home(SpFlavor flavor);
+SpPath sp_expanduser(const SpPath *p);
 
-/* User/group info */
-SpTerm sp_owner(const SpPath *p);  /* get file owner name */
-SpTerm sp_group(const SpPath *p);  /* get file group name */
+SpTerm sp_owner(const SpPath *p);
+SpTerm sp_group(const SpPath *p);
 
-/* Walk limits */
 #ifndef SP_WALK_MAX_ENTRIES
 #define SP_WALK_MAX_ENTRIES 64
 #endif
 #ifndef SP_WALK_NAME_MAX
-#define SP_WALK_NAME_MAX 128   /* Max filename length */
+#define SP_WALK_NAME_MAX 128
 #endif
 
 /* Walk entry for callback-based API */
@@ -527,10 +487,9 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 
 #endif /* SNAKEPATH_H */
 
-/* ============ Implementation ============ */
 #ifdef SNAKEPATH_IMPLEMENTATION
 
-#include <stdio.h>   /* For fprintf, stderr (sp_error_print), rename */
+#include <stdio.h>
 
 /* Platform-specific includes for getcwd and stat */
 #ifdef SP_WINDOWS
@@ -1238,12 +1197,11 @@ SpPath sp_with_stem(const SpPath *p, const char *stem) {
 
     SpTerm suf = sp_suffix(p);
     char name[SP_PATH_MAX];
-    if (slen + suf.len >= SP_PATH_MAX) slen = SP_PATH_MAX - suf.len - 1;
-    memcpy(name, stem, slen);
-    if (suf.len > 0) {
-        memcpy(name + slen, suf.buf, suf.len);
-    }
-    name[slen + suf.len] = '\0';
+    size_t suffix_len = suf.len >= SP_PATH_MAX ? SP_PATH_MAX - 1 : suf.len;
+    if (slen + suffix_len >= SP_PATH_MAX) slen = SP_PATH_MAX - suffix_len - 1;
+    if (slen > 0) memcpy(name, stem, slen);
+    if (suffix_len > 0) memcpy(name + slen, suf.buf, suffix_len);
+    name[slen + suffix_len] = '\0';
     return sp_with_name(p, name);
 }
 
@@ -1263,12 +1221,11 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
 
     SpTerm stm = sp_stem(p);
     char name[SP_PATH_MAX];
+    if (suflen >= SP_PATH_MAX) suflen = SP_PATH_MAX - 1;
     size_t stmlen = stm.len;
     if (stmlen + suflen >= SP_PATH_MAX) stmlen = SP_PATH_MAX - suflen - 1;
-    if (stmlen > 0) {
-        memcpy(name, stm.buf, stmlen);
-    }
-    memcpy(name + stmlen, suffix, suflen);
+    if (stmlen > 0) memcpy(name, stm.buf, stmlen);
+    if (suflen > 0) memcpy(name + stmlen, suffix, suflen);
     name[stmlen + suflen] = '\0';
     return sp_with_name(p, name);
 }
@@ -1302,7 +1259,6 @@ SpPath sp_absolute(const SpPath *p) {
     return sp_joinpath(&cwd, p);
 }
 
-/* Collect path parts into array, returns count */
 static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     SpPartsIter it = sp_parts_begin(p);
     SpStr part;
@@ -1313,20 +1269,17 @@ static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     return n;
 }
 
-/* Shared implementation for sp_relative_to, sp_relative_to_walk_up, sp_is_relative_to */
 static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, bool walk_up) {
     SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
     size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2);
     size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
 
     if (walk_up) {
-        /* Reject '..' in other */
         for (size_t i = 0; i < o_count; i++)
             if (o_parts[i].len == 2 && o_parts[i].data[0] == '.' && o_parts[i].data[1] == '.')
                 return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
     }
 
-    /* Check anchor compatibility */
     size_t p_anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     size_t o_anchor = sp_priv_anchor_len(other->buf, other->len, other->flavor);
     if (p_anchor > 0 || o_anchor > 0) {
@@ -1338,15 +1291,12 @@ static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, boo
         }
     }
 
-    /* Find common prefix length */
     size_t common = 0;
     while (common < p_count && common < o_count && sp_priv_sv_eq_flavor(p_parts[common], o_parts[common], p->flavor))
         common++;
 
-    /* Without walk_up, all of other's parts must match */
     if (!walk_up && common < o_count) return sp_priv_error_path(SP_ERR_NOT_RELATIVE);
 
-    /* Build result */
     SpPath r = SP_PRIV_ZERO;
     r.flavor = p->flavor;
     bool first = true;
@@ -1385,15 +1335,17 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     return sp_priv_relative_to_impl(p, other, true);
 }
 
+static inline SpPath sp_priv_parts_path(const SpPath *p, const char **parts) {
+    return sp_priv_path_from_parts(p->flavor, parts, sp_priv_parts_count(parts));
+}
+
 bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
-    size_t parts_count = sp_priv_parts_count(parts);
-    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
+    SpPath other = sp_priv_parts_path(p, parts);
     return sp_is_relative_to(p, &other);
 }
 
 SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
-    size_t parts_count = sp_priv_parts_count(parts);
-    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
+    SpPath other = sp_priv_parts_path(p, parts);
     return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
 }
 
@@ -1410,7 +1362,6 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
     size_t path_len = strlen(path);
     size_t pos = 0;
 
-    /* Determine URI prefix based on path type */
     const char *prefix;
     size_t plen;
     if (path_len >= 2 && path[0] == '/' && path[1] == '/') {
@@ -1428,7 +1379,6 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
     memcpy(buf, prefix, plen);
     pos = plen;
 
-    /* URL-encode the path */
     static const char hex[] = "0123456789ABCDEF";
     for (size_t i = 0; i < path_len; i++) {
         unsigned char c = SP_PRIV_CAST(unsigned char, path[i]);
@@ -1684,16 +1634,12 @@ bool sp_is_mount(const SpPath *p) {
     if (sp_priv_has_embedded_null(p)) return false;
 #ifdef SP_WINDOWS
     const char *path_str = sp_str(p);
-    /* On Windows, check if path is a drive root or mount point */
     char vol_path[SP_PATH_MAX];
     if (!GetVolumePathNameA(path_str, vol_path, SP_PATH_MAX)) return false;
-    /* Compare the volume path with the actual path (normalized) */
     size_t vlen = strlen(vol_path);
     size_t plen = p->len > 0 ? p->len : 1;
-    /* Remove trailing backslash from both for comparison */
     if (vlen > 0 && vol_path[vlen - 1] == '\\') vlen--;
     if (plen > 0 && (path_str[plen - 1] == '\\' || path_str[plen - 1] == '/')) plen--;
-    /* Path is a mount point if it equals the volume path */
     return sp_priv_str_eq_ci(path_str, plen, vol_path, vlen);
 #else
     SpStatResult st_path = sp_lstat(p);
@@ -1714,24 +1660,19 @@ bool sp_is_junction(const SpPath *p) {
     const char *path_str = sp_str(p);
     DWORD attrs = GetFileAttributesA(path_str);
     if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-    /* Must be a directory with reparse point attribute */
     if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return false;
     if (!(attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
-    /* Check if it's specifically a junction (IO_REPARSE_TAG_MOUNT_POINT) */
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(path_str, &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     FindClose(h);
-    /* Junction has IO_REPARSE_TAG_MOUNT_POINT (0xA0000003) */
     return fd.dwReserved0 == 0xA0000003;
 #else
-    /* Junctions don't exist on POSIX systems */
     (void)p;
     return false;
 #endif
 }
 
-/* Helper to fill SpStatResult from POSIX stat structure */
 #ifndef SP_WINDOWS
 static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_mode = SP_PRIV_CAST(unsigned int, st->st_mode);
@@ -1744,16 +1685,11 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
     r->sp_atime = SP_PRIV_CAST(double, st->st_atime);
     r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
     r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
-    /* Nanosecond timestamps - use st_atimespec on BSD, seconds elsewhere.
-     * Note: Linux glibc has st_atim but requires _POSIX_C_SOURCE >= 200809L,
-     * which we can't guarantee. Using seconds-only for portability. */
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    /* BSD-style: st_atimespec, st_mtimespec, st_ctimespec */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
 #else
-    /* Fallback: seconds-only precision */
     r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
     r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
     r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
@@ -1762,7 +1698,6 @@ static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
 }
 #endif
 
-/* Windows FILETIME to Unix timestamp conversion macros */
 #ifdef SP_WINDOWS
 #define SP_FILETIME_TO_UNIX(ft) \
     (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
@@ -1877,8 +1812,6 @@ SpPath sp_readlink(const SpPath *p) {
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
-    /* On Windows, use CreateFile with FILE_FLAG_OPEN_REPARSE_POINT to open
-       the symlink itself, then use DeviceIoControl to read the target. */
     HANDLE h = CreateFileA(path_str, GENERIC_READ,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING,
@@ -1888,7 +1821,6 @@ SpPath sp_readlink(const SpPath *p) {
         return result;
     }
 
-    /* Buffer for reparse data (REPARSE_DATA_BUFFER) */
     char reparse_buf[16384];
     DWORD bytes_returned;
     if (!DeviceIoControl(h, 0x000900A8 /* FSCTL_GET_REPARSE_POINT */,
@@ -1900,7 +1832,6 @@ SpPath sp_readlink(const SpPath *p) {
     }
     CloseHandle(h);
 
-    /* Parse REPARSE_DATA_BUFFER structure - symlinks and junctions have similar layout */
     DWORD tag = *(DWORD *)reparse_buf;
     size_t data_offset = (tag == 0xA000000C) ? 20 : (tag == 0xA0000003) ? 16 : 0;
     if (data_offset == 0) {
@@ -1946,7 +1877,6 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
-    /* On Windows, use GetFullPathNameA for resolution */
     char full_path[SP_PATH_MAX];
     DWORD len = GetFullPathNameA(path_str, SP_PATH_MAX, full_path, NULL);
     if (len == 0 || len >= SP_PATH_MAX) {
@@ -1957,7 +1887,6 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         return sp_absolute(p);
     }
 
-    /* Check if path exists when strict=true */
     if (strict) {
         DWORD attrs = GetFileAttributesA(full_path);
         if (attrs == INVALID_FILE_ATTRIBUTES) {
@@ -1979,7 +1908,6 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         result.buf[result.len] = '\0';
     } else {
         if (strict) { result.buf[0] = SP_ERR_OTHER; return result; }
-        /* Non-strict: resolve longest existing prefix, append rest */
         SpPath abs_path = sp_absolute(p);
         SpPath curr = abs_path;
         while (curr.len > 0) {
@@ -2004,37 +1932,38 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     return result;
 }
 
-bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory) {
+static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(target);
-    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) return false;
-    const char *link_path = sp_str(p);
-    const char *target_path = sp_str(target);
+    if (sp_priv_has_embedded_null(p)) return false;
+    *out = sp_str(p);
+    return true;
+}
 
+static bool sp_priv_two_path_cstr(const SpPath *a, const SpPath *b, const char **a_str, const char **b_str) {
+    return sp_priv_path_cstr(a, a_str) && sp_priv_path_cstr(b, b_str);
+}
+
+static bool sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool symbolic, bool target_is_directory) {
+    const char *link_path, *target_path;
+    if (!sp_priv_two_path_cstr(p, target, &link_path, &target_path)) return false;
 #ifdef SP_WINDOWS
-    /* On Windows, use CreateSymbolicLinkA */
-    DWORD flags = target_is_directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
-    /* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 0x2 (Windows 10+) */
-    flags |= 0x2;
-    return CreateSymbolicLinkA(link_path, target_path, flags) != 0;
+    if (symbolic) {
+        DWORD flags = target_is_directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
+        return CreateSymbolicLinkA(link_path, target_path, flags | 0x2) != 0;
+    }
+    return CreateHardLinkA(link_path, target_path, NULL) != 0;
 #else
-    (void)target_is_directory; /* POSIX symlink doesn't need this flag */
-    return symlink(target_path, link_path) == 0;
+    (void)target_is_directory;
+    return symbolic ? symlink(target_path, link_path) == 0 : link(target_path, link_path) == 0;
 #endif
 }
 
-bool sp_hardlink_to(const SpPath *p, const SpPath *target) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(target);
-    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) return false;
-    const char *link_path = sp_str(p);
-    const char *target_path = sp_str(target);
+bool sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory) {
+    return sp_priv_link_to_impl(p, target, true, target_is_directory);
+}
 
-#ifdef SP_WINDOWS
-    return CreateHardLinkA(link_path, target_path, NULL) != 0;
-#else
-    return link(target_path, link_path) == 0;
-#endif
+bool sp_hardlink_to(const SpPath *p, const SpPath *target) {
+    return sp_priv_link_to_impl(p, target, false, false);
 }
 
 bool sp_samefile(const SpPath *a, const SpPath *b) {
@@ -2046,11 +1975,9 @@ bool sp_samefile(const SpPath *a, const SpPath *b) {
 
     if (!stat_a.valid || !stat_b.valid) return false;
 
-    /* Same file if device and inode match */
     return stat_a.sp_dev == stat_b.sp_dev && stat_a.sp_ino == stat_b.sp_ino;
 }
 
-/* Helper to create parent directories recursively */
 static int sp_priv_mkdir_parents(const SpPath *p) {
     SpPath parent = sp_parent(p);
     if (sp_path_eq(&parent, p) || parent.len == 0) return SP_MKDIR_OK;
@@ -2059,10 +1986,9 @@ static int sp_priv_mkdir_parents(const SpPath *p) {
 }
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
-    SP_ASSERT_PATH_INVARIANT(p);
+    const char *path_str;
     if (mode == 0) mode = SP_MKDIR_DEF_MODE;
-    if (sp_priv_has_embedded_null(p)) return SP_MKDIR_ERR_OTHER;
-    const char *path_str = sp_str(p);
+    if (!sp_priv_path_cstr(p, &path_str)) return SP_MKDIR_ERR_OTHER;
     if (parents) {
         int r = sp_priv_mkdir_parents(p);
         if (r != SP_MKDIR_OK) return r;
@@ -2091,48 +2017,32 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
 #endif
 }
 
-/* ============ File/Directory Modification Implementation ============ */
-
 bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return false;
     if (mode == 0) mode = 0666;
 
 #ifdef SP_WINDOWS
-    /* Check if file exists first */
     DWORD attrs = GetFileAttributesA(path_str);
-    bool file_exists = (attrs != INVALID_FILE_ATTRIBUTES);
-
-    if (file_exists) {
-        if (!exist_ok) return false;  /* File exists and exist_ok=false */
-        /* Update timestamps */
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        if (!exist_ok) return false;
         HANDLE h = CreateFileA(path_str, FILE_WRITE_ATTRIBUTES,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) return false;
         FILETIME ft;
-        GetSystemTimeAsFileTime(&ft);  /* Full 100-nanosecond precision */
-        SetFileTime(h, NULL, &ft, &ft);
+        GetSystemTimeAsFileTime(&ft);
+        bool ok = SetFileTime(h, NULL, &ft, &ft) != 0;
         CloseHandle(h);
-        return true;
+        return ok;
     }
-    /* File doesn't exist - create it */
     HANDLE h = CreateFileA(path_str, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return false;
     CloseHandle(h);
     return true;
 #else
-    /* Check if file exists first */
     struct stat st;
-    bool file_exists = (stat(path_str, &st) == 0);
-
-    if (file_exists) {
-        if (!exist_ok) return false;  /* File exists and exist_ok=false */
-        /* Update timestamps to current time (NULL = now) */
-        return utime(path_str, SP_PRIV_NULL) == 0;
-    }
-    /* File doesn't exist - create it */
+    if (stat(path_str, &st) == 0) return exist_ok && utime(path_str, SP_PRIV_NULL) == 0;
     int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
     if (fd < 0) return false;
     close(fd);
@@ -2140,33 +2050,27 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
 #endif
 }
 
-bool sp_unlink(const SpPath *p, bool missing_ok) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
-
+static bool sp_priv_remove_impl(const SpPath *p, bool is_dir, bool missing_ok) {
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return false;
 #ifdef SP_WINDOWS
+    if (is_dir) return RemoveDirectoryA(path_str) != 0;
     if (DeleteFileA(path_str)) return true;
     DWORD err = GetLastError();
-    if (missing_ok && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)) return true;
-    return false;
+    return missing_ok && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND);
 #else
-    if (unlink(path_str) == 0) return true;
-    if (missing_ok && errno == ENOENT) return true;
-    return false;
+    int rc = is_dir ? rmdir(path_str) : unlink(path_str);
+    if (rc == 0) return true;
+    return !is_dir && missing_ok && errno == ENOENT;
 #endif
 }
 
-bool sp_rmdir(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
+bool sp_unlink(const SpPath *p, bool missing_ok) {
+    return sp_priv_remove_impl(p, false, missing_ok);
+}
 
-#ifdef SP_WINDOWS
-    return RemoveDirectoryA(path_str) != 0;
-#else
-    return rmdir(path_str) == 0;
-#endif
+bool sp_rmdir(const SpPath *p) {
+    return sp_priv_remove_impl(p, true, false);
 }
 
 static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_replace) {
@@ -2200,42 +2104,35 @@ SpPath sp_rename(const SpPath *p, const SpPath *target) { return sp_priv_move(p,
 SpPath sp_replace(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, true); }
 
 bool sp_chmod(const SpPath *p, unsigned int mode) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    const char *path_str = sp_str(p);
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return false;
 
 #ifdef SP_WINDOWS
-    /* Windows only supports setting the read-only attribute */
     DWORD attrs = GetFileAttributesA(path_str);
     if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-
-    /* If mode doesn't have write permission, set read-only */
     DWORD new_attrs = attrs;
     if ((mode & 0222) == 0) {
         new_attrs |= FILE_ATTRIBUTE_READONLY;
     } else {
         new_attrs &= ~FILE_ATTRIBUTE_READONLY;
     }
-    if (new_attrs == attrs) return true;  /* No change needed */
+    if (new_attrs == attrs) return true;
     return SetFileAttributesA(path_str, new_attrs) != 0;
 #else
     return chmod(path_str, SP_PRIV_CAST(mode_t, mode)) == 0;
 #endif
 }
 
-/* ============ File I/O Implementation ============ */
-
 SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
-    SpIOResult r;
-    memset(&r, 0, sizeof(r));
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) { r.error = SP_IO_ERR_OPEN; return r; }
+    SpIOResult r = SP_PRIV_ZERO;
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) { r.error = SP_IO_ERR_OPEN; return r; }
     SpStatResult st = sp_stat(p);
     if (!st.valid || st.sp_size < 0) { r.error = SP_IO_ERR_OPEN; return r; }
     size_t sz = SP_PRIV_CAST(size_t, st.sp_size);
     if (sz > buf_size) { r.bytes = sz; r.error = SP_IO_ERR_TOO_LARGE; return r; }
 
-    FILE *f = fopen(sp_str(p), "rb");
+    FILE *f = fopen(path_str, "rb");
     if (!f) { r.error = SP_IO_ERR_OPEN; return r; }
     size_t got = fread(buf, 1, sz, f);
     if (got != sz) { fclose(f); r.bytes = got; r.error = SP_IO_ERR_READ; return r; }
@@ -2245,11 +2142,10 @@ SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
 }
 
 SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
-    SpIOResult r;
-    memset(&r, 0, sizeof(r));
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) { r.error = SP_IO_ERR_OPEN; return r; }
-    FILE *f = fopen(sp_str(p), "wb");
+    SpIOResult r = SP_PRIV_ZERO;
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) { r.error = SP_IO_ERR_OPEN; return r; }
+    FILE *f = fopen(path_str, "wb");
     if (!f) { r.error = SP_IO_ERR_OPEN; return r; }
     size_t wrote = fwrite(data, 1, data_len, f);
     if (wrote != data_len) { fclose(f); r.bytes = wrote; r.error = SP_IO_ERR_WRITE; return r; }
@@ -2257,8 +2153,6 @@ SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
     r.bytes = wrote;
     return r;
 }
-
-/* ============ Unified Error Codes ============ */
 
 const char *sp_error_str(int error) {
     switch (error) {
@@ -2277,20 +2171,11 @@ const char *sp_error_str(int error) {
     }
 }
 
-void sp_error_print(int error, const char *context) {
-    fprintf(stderr, "%s: %s\n", context ? context : "(null)", sp_error_str(error));
-}
-
-/* ============ Glob Implementation ============ */
-
-/* Include dirent for POSIX or use Windows APIs */
 #ifdef SP_WINDOWS
-/* Already included windows.h above */
 #else
 #include <dirent.h>
 #endif
 
-/* Glob segment types */
 #define SP_GLOB_SEG_LITERAL 0
 #define SP_GLOB_SEG_PATTERN 1
 #define SP_GLOB_SEG_DOUBLESTAR 2
@@ -2313,20 +2198,6 @@ static bool sp_priv_glob_match(const char *name, const char *pattern, int seg_ty
         && sp_priv_fnmatch(pattern, strlen(pattern), name, strlen(name), case_insensitive);
 }
 
-/* ============ Shared directory-reading primitives ============ */
-
-static bool sp_priv_readdir_open(void **handle, const SpPath *dir) {
-#ifdef SP_WINDOWS
-    DWORD attr = GetFileAttributesA(dir->len ? dir->buf : ".");
-    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
-    *handle = SP_PRIV_NULL;
-    return true;
-#else
-    *handle = opendir(sp_str(dir));
-    return *handle != SP_PRIV_NULL;
-#endif
-}
-
 static void sp_priv_readdir_close(void **handle) {
     if (!*handle) return;
 #ifdef SP_WINDOWS
@@ -2337,7 +2208,6 @@ static void sp_priv_readdir_close(void **handle) {
     *handle = SP_PRIV_NULL;
 }
 
-/* Read next directory entry, skipping . and .., building full child path */
 static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) {
 #ifdef SP_WINDOWS
     WIN32_FIND_DATAA fd;
@@ -2380,8 +2250,6 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
     }
 #endif
 }
-
-/* ============ Glob directory helpers ============ */
 
 static void sp_priv_glob_pop(SpGlobIter *it) {
     sp_priv_readdir_close(&it->priv_.stack[it->depth].handle);
@@ -2466,12 +2334,10 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         int seg_type = it->priv_.seg_types[seg_idx];
         bool is_last = (seg_idx == it->priv_.seg_count - 1);
 
-        /* Literal . or .. : synthesize without readdir (opendir fails on some systems) */
         if (seg_type == SP_GLOB_SEG_LITERAL && SP_GLOB_IS_DOT_OR_DOTDOT(pattern)) {
             SpPath full = sp_join_one(&it->priv_.current_dir, pattern);
             if (!sp_is_dir(&full)) { sp_priv_glob_pop(it); continue; }
             if (is_last) { it->priv_.seg_idxs[depth]++; *out = full; return true; }
-            /* Advance; reopen only if next segment needs readdir */
             it->priv_.seg_idxs[depth]++;
             it->priv_.current_dir = full;
             const char *next_pattern = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
@@ -2493,7 +2359,6 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         bool matches_dir_constraint = !it->priv_.dir_only || isdir;
 
         if (seg_type == SP_GLOB_SEG_DOUBLESTAR) {
-            /* ** : try matching next segment, then recurse into directories */
             if (!is_last) {
                 const char *next_pattern = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
                 int next_type = it->priv_.seg_types[seg_idx + 1];
@@ -2539,8 +2404,6 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
     return sp_glob_begin(base, rglob_pattern, cs);
 }
 
-/* ============ Home Directory and User Expansion Implementation ============ */
-
 SpPath sp_home(SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
     const char *s = NULL;
@@ -2568,7 +2431,6 @@ SpPath sp_expanduser(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     if (p->len == 0 || p->buf[0] != '~') return sp_path_copy(p);
 
-    /* Check for ~ alone or ~/... */
     bool is_current_user = (p->len == 1) ||
                           (p->len > 1 && sp_priv_is_sep(p->buf[1], p->flavor));
 
@@ -2576,12 +2438,9 @@ SpPath sp_expanduser(const SpPath *p) {
         SpPath home = sp_home(p->flavor);
         if (sp_path_is_error(&home)) return sp_priv_error_path(SP_ERR_OTHER);
         if (p->len == 1) return home;
-        /* Append the rest of the path after ~/ (skip both ~ and separator) */
         const char *rest = p->buf + 2;
         size_t rest_len = p->len - 2;
 
-        /* On Windows, if rest looks like a drive letter (e.g., "a:b" from "~/a:b"),
-           prefix with "./" to prevent it from being interpreted as an absolute path */
         if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
             char protected_path[SP_PATH_MAX];
             protected_path[0] = '.';
@@ -2595,7 +2454,6 @@ SpPath sp_expanduser(const SpPath *p) {
     }
 
 #ifndef SP_WINDOWS
-    /* On POSIX, handle ~username */
     size_t end = 1;
     while (end < p->len && !sp_priv_is_sep(p->buf[end], p->flavor)) end++;
     char username[256];
@@ -2615,10 +2473,7 @@ SpPath sp_expanduser(const SpPath *p) {
 #endif
 }
 
-/* ============ User/Group Info Implementation ============ */
-
 #ifndef SP_WINDOWS
-/* Helper for sp_owner/sp_group - looks up name by uid or gid */
 static SpTerm sp_priv_id_to_name(const SpPath *p, bool get_owner) {
     if (sp_priv_has_embedded_null(p)) return sp_priv_term(NULL, 0);
     SpStatResult st = sp_stat(p);
@@ -2655,8 +2510,6 @@ SpTerm sp_group(const SpPath *p) {
 #endif
 }
 
-/* ============ Directory Iteration Implementation ============ */
-
 SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     SpIterdirIter it;
     memset(&it, 0, sizeof(it));
@@ -2665,7 +2518,14 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     if (sp_priv_has_embedded_null(p)) return it;
     it.dir = sp_path_copy(p);
-    if (!sp_priv_readdir_open(&it.priv_.handle, &it.dir)) return it;
+#ifdef SP_WINDOWS
+    DWORD attr = GetFileAttributesA(it.dir.len ? it.dir.buf : ".");
+    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return it;
+    it.priv_.handle = SP_PRIV_NULL;
+#else
+    it.priv_.handle = opendir(sp_str(&it.dir));
+    if (!it.priv_.handle) return it;
+#endif
     it.done = 0;
     return it;
 }
@@ -2682,14 +2542,10 @@ void sp_iterdir_end(SpIterdirIter *it) {
     it->done = 1;
 }
 
-/* ============ Walk Implementation (recursive, callback-based) ============ */
-
-/* Comparison function for qsort - sort name strings */
 static int sp_priv_walk_name_cmp(const void *a, const void *b) {
     return strcmp(SP_PRIV_CAST(const char *, a), SP_PRIV_CAST(const char *, b));
 }
 
-/* Helper to copy name into walk name buffer */
 static void sp_priv_walk_copy_name(char dest[SP_WALK_NAME_MAX], const char *src) {
     size_t len = strlen(src);
     if (len >= SP_WALK_NAME_MAX) len = SP_WALK_NAME_MAX - 1;
@@ -2697,7 +2553,6 @@ static void sp_priv_walk_copy_name(char dest[SP_WALK_NAME_MAX], const char *src)
     dest[len] = '\0';
 }
 
-/* Scan directory and populate entry with dirnames/filenames (names only) */
 static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
                               char dirnames[][SP_WALK_NAME_MAX], size_t *dirname_count,
                               char filenames[][SP_WALK_NAME_MAX], size_t *filename_count) {
@@ -2725,21 +2580,17 @@ static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
     return true;
 }
 
-/* Recursive walk implementation */
 static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow_symlinks,
                                    SpWalkFn callback, SpWalkErrorFn on_error, void *user_data) {
-    /* Stack-allocated arrays for this directory level */
     char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
     char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
     size_t dirname_count, filename_count;
 
-    /* Scan current directory */
     if (!sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count)) {
         if (on_error) on_error(dir, errno, user_data);
-        return true;  /* Continue walking other branches */
+        return true;
     }
 
-    /* Build entry for callback */
     SpWalkEntry entry;
     entry.dirpath = *dir;
     entry.dirnames = dirnames;
@@ -2749,24 +2600,19 @@ static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow
     entry.user_data = user_data;
 
     if (top_down) {
-        /* Top-down: call callback first, then recurse */
-        if (!callback(&entry)) return false;  /* User requested stop */
-
-        /* Recurse into subdirectories (entry.dirname_count may have been modified for pruning) */
+        if (!callback(&entry)) return false;
         for (size_t i = 0; i < entry.dirname_count; i++) {
             SpPath subdir = sp_join_one(dir, entry.dirnames[i]);
             if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
                 return false;
         }
     } else {
-        /* Bottom-up: recurse first, then call callback */
         for (size_t i = 0; i < dirname_count; i++) {
             SpPath subdir = sp_join_one(dir, dirnames[i]);
             if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
                 return false;
         }
 
-        /* Re-scan to get fresh counts (directory may have changed) */
         sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count);
         entry.dirname_count = dirname_count;
         entry.filename_count = filename_count;
