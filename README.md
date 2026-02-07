@@ -146,6 +146,13 @@ int main(void) {
     tmp = sp_joinpath(&base, &other);
     printf("  joinpath: %s\n", sp_str(&tmp));
 
+    /* .with_segments https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_segments */
+    const char *segments[] = {"var", "log", "nginx"};
+    tmp = sp_with_segments(&base, segments, SP_ARRAY_LEN(segments));
+    printf("  with_segments: %s\n", sp_str(&tmp));
+    tmp = SPF_PATH(base)->with_segments(segments, SP_ARRAY_LEN(segments))->path();
+    printf("  (fluent)      %s\n", sp_str(&tmp));
+
     /* ── Modification ──────────────────────────────────────────── */
     section("Modification");
 

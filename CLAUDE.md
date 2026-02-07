@@ -42,3 +42,13 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - Windows CI: race condition with parallel MSVC builds
 - Clang `-Wnrvo` in `sp_path_convert` (disabled via SNAKEPATH_NO_NRVO)
 - Windows console: Turkish İ (U+0130) needs UTF-8 wrapper
+
+## Learnings
+
+- Keep wrapper layers thin: one-to-one calls only, no logic that replaces core behavior.
+- Python bindings should use `os.fspath()` directly (no `str()` fallback) so non-pathlike types raise `TypeError`.
+- Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
+- Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
+- `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
+- New functionality goes in `snakepath.h` first; then mirror wrappers in `tests/python_harness/snakepath_lib.c` and `tests/python_harness/snakepath/__init__.py`, plus tests in `tests/test.c` (and `tests/test_fluent_api.c` for fluent parity).
+- When API examples change, update `api_demo.c` first, then sync `README.md` and `index.html`, and record any new learnings here.

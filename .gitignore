@@ -2,7 +2,7 @@ nob
 nob.old
 *.o
 *.dSYM/
-demo
+api_demo
 
 # Python
 __pycache__/

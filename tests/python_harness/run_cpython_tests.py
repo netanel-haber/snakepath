@@ -74,23 +74,6 @@ EXPECTED_FAILURES = {
     ],
 
     # =========================================================================
-    # with_segments() not implemented - requires Python subclass cooperation
-    # Tests expect subclass attributes to be preserved across path operations
-    # =========================================================================
-    "has no attribute 'session_id'": [
-        ("PosixPathAsPureTest", "test_with_segments_common"),
-        ("PurePathSubclassTest", "test_with_segments_common"),
-        ("PurePathTest", "test_with_segments_common"),
-        ("PurePosixPathTest", "test_with_segments_common"),
-        ("PureWindowsPathTest", "test_with_segments_common"),
-        ("WindowsPathAsPureTest", "test_with_segments_common"),
-        ("PathSubclassTest", "test_with_segments"),
-        ("PathTest", "test_with_segments"),
-        ("PosixPathTest", "test_with_segments"),
-        ("WindowsPathTest", "test_with_segments"),
-    ],
-
-    # =========================================================================
     # with_suffix() tuple argument validation differs from Python
     # C library raises TypeError, Python raises ValueError for tuple suffix
     # =========================================================================
@@ -109,14 +92,6 @@ EXPECTED_FAILURES = {
     # =========================================================================
     "cannot be pickled": [
         ("PurePathSubclassTest", "test_pickling_common"),
-    ],
-
-    # =========================================================================
-    # CompatiblePathTest.test_truediv - joinpath doesn't accept arbitrary PathLike
-    # os.fspath() rejects objects without __fspath__ returning str/bytes
-    # =========================================================================
-    "expected str, bytes or os.PathLike object, not CompatPath": [
-        ("CompatiblePathTest", "test_truediv"),
     ],
 
 

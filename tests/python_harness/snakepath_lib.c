@@ -72,6 +72,10 @@ SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
 }
 
 /* Multi-segment variants */
+SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t parts_count, SpPath *out) {
+    *out = sp_with_segments(p, parts, parts_count);
+}
+
 SP_EXPORT int sp_is_relative_to_parts_wrap(const SpPath *p, const char **parts) {
     return sp_is_relative_to_parts(p, parts) ? 1 : 0;
 }
@@ -258,38 +262,26 @@ SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
     *out = sp_expanduser(p);
 }
 
-/* User/group info - returns: -1 = not implemented, 0 = success, 1 = error/not found */
+/* User/group info - returns: 0 = success, 1 = error/not found */
+#ifndef SP_WINDOWS
 SP_EXPORT int sp_owner_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
-#ifdef SP_WINDOWS
-    (void)p; (void)buf_size;
-    buf[0] = '\0';
-    *len = 0;
-    return -1;  /* Not implemented on Windows */
-#else
     SpTerm t = sp_owner(p);
     size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1;
     memcpy(buf, t.buf, n);
     buf[n] = '\0';
     *len = t.len;
     return t.len > 0 ? 0 : 1;
-#endif
 }
 
 SP_EXPORT int sp_group_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) {
-#ifdef SP_WINDOWS
-    (void)p; (void)buf_size;
-    buf[0] = '\0';
-    *len = 0;
-    return -1;  /* Not implemented on Windows */
-#else
     SpTerm t = sp_group(p);
     size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1;
     memcpy(buf, t.buf, n);
     buf[n] = '\0';
     *len = t.len;
     return t.len > 0 ? 0 : 1;
-#endif
 }
+#endif
 
 /* iterdir iterator */
 SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
