@@ -52,3 +52,5 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
 - New functionality goes in `snakepath.h` first; then mirror wrappers in `tests/python_harness/snakepath_lib.c` and `tests/python_harness/snakepath/__init__.py`, plus tests in `tests/test.c` (and `tests/test_fluent_api.c` for fluent parity).
 - When API examples change, update `api_demo.c` first, then sync `README.md` and `index.html`, and record any new learnings here.
+- Public API call depth is now enforced by `tests/test_call_depth.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
+- For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
