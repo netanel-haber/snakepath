@@ -251,25 +251,32 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
 }
 
 /* Run Python tests */
-static bool run_python_tests(void) {
-    Nob_Cmd cmd = {0};
-
-    /* Find Python interpreter */
+static const char *find_python(void) {
     const char *python = NULL;
 #ifdef _WIN32
     python = "python";
 #else
-    /* Try common Python names */
     if (nob_file_exists("/usr/bin/python3")) {
         python = "python3";
     } else if (nob_file_exists("/usr/bin/python")) {
         python = "python";
     } else {
-        /* Try PATH */
         python = "python3";
     }
 #endif
+    return python;
+}
 
+static bool run_call_depth_tests(void) {
+    Nob_Cmd cmd = {0};
+    const char *python = find_python();
+    nob_cmd_append(&cmd, python, "tests/test_call_depth.py", "snakepath.h", "3");
+    return nob_cmd_run(&cmd);
+}
+
+static bool run_python_tests(void) {
+    Nob_Cmd cmd = {0};
+    const char *python = find_python();
     nob_cmd_append(&cmd, python, "tests/python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
@@ -459,7 +466,14 @@ int main(int argc, char **argv) {
     }
     procs.count = 0;
 
-    /* Phase 3: Python tests */
+    /* Phase 3: Public call-depth tests */
+    LOG_INFO( "=== Running call-depth tests ===");
+    if (!run_call_depth_tests()) {
+        nob_log(NOB_ERROR, "Call-depth tests failed");
+        all_ok = false;
+    }
+
+    /* Phase 4: Python tests */
     LOG_INFO( "=== Running Python tests ===");
     if (!run_python_tests()) {
         nob_log(NOB_ERROR, "Python tests failed");
@@ -467,7 +481,7 @@ int main(int argc, char **argv) {
     }
 
 #ifndef _WIN32
-    /* Phase 4: Valgrind (must be sequential, slow) */
+    /* Phase 5: Valgrind (must be sequential, slow) */
     if (all_ok) {
         LOG_INFO( "=== Running valgrind ===");
         if (!run_valgrind("./tests/test_gcc")) {
@@ -477,7 +491,7 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    /* Phase 5: Run demo to show it works */
+    /* Phase 6: Run demo to show it works */
     LOG_INFO( "=== Running demo ===");
     if (!run_test_async(demo_output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
