@@ -259,7 +259,6 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
-/* Multi-segment variants (parts is NULL-terminated array of strings) */
 SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
 bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
@@ -2053,13 +2052,10 @@ bool sp_samefile(const SpPath *a, const SpPath *b) {
 
 /* Helper to create parent directories recursively */
 static int sp_priv_mkdir_parents(const SpPath *p) {
-    SpPath parent_path = sp_parent(p);
-    if (sp_path_eq(&parent_path, p) || parent_path.len == 0) return SP_MKDIR_OK;
-    if (sp_exists(&parent_path)) {
-        if (sp_is_dir(&parent_path)) return SP_MKDIR_OK;
-        return SP_MKDIR_ERR_NOT_DIR;
-    }
-    return sp_mkdir(&parent_path, SP_MKDIR_DEF_MODE, true, true);
+    SpPath parent = sp_parent(p);
+    if (sp_path_eq(&parent, p) || parent.len == 0) return SP_MKDIR_OK;
+    int r = sp_mkdir(&parent, SP_MKDIR_DEF_MODE, true, true);
+    return (r == SP_MKDIR_ERR_EXISTS_NOT_DIR) ? SP_MKDIR_ERR_NOT_DIR : r;
 }
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
@@ -2190,11 +2186,8 @@ static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_rep
         return sp_priv_error_path(SP_ERR_OTHER);
     }
 #else
-    if (!allow_replace) {
-        if (sp_exists(target)) {
-            if (sp_samefile(p, target)) return result;  /* Same file, no-op */
-            return sp_priv_error_path(SP_ERR_OTHER);
-        }
+    if (!allow_replace && sp_exists(target)) {
+        return sp_samefile(p, target) ? result : sp_priv_error_path(SP_ERR_OTHER);
     }
     if (rename(src_str, dst_str) != 0) {
         return sp_priv_error_path(SP_ERR_OTHER);
@@ -2324,8 +2317,9 @@ static bool sp_priv_glob_match(const char *name, const char *pattern, int seg_ty
 
 static bool sp_priv_readdir_open(void **handle, const SpPath *dir) {
 #ifdef SP_WINDOWS
-    if (!sp_is_dir(dir)) return false;
-    *handle = SP_PRIV_NULL;  /* Opened lazily in sp_priv_readdir_next */
+    DWORD attr = GetFileAttributesA(dir->len ? dir->buf : ".");
+    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    *handle = SP_PRIV_NULL;
     return true;
 #else
     *handle = opendir(sp_str(dir));
@@ -2358,9 +2352,7 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
                 search[3] = '\0';
             } else {
                 memcpy(search, dir->buf, len);
-                if (!sp_priv_is_sep(search[len - 1], dir->flavor)) {
-                    search[len++] = '\\';
-                }
+                if (!sp_priv_is_sep(search[len - 1], dir->flavor)) search[len++] = '\\';
                 search[len++] = '*';
                 search[len] = '\0';
             }
@@ -2375,7 +2367,10 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
         return true;
     }
 #else
-    if (!*handle) return false;
+    if (!*handle) {
+        *handle = opendir(sp_str(dir));
+        if (!*handle) return false;
+    }
     while (true) {
         struct dirent *de = readdir(SP_PRIV_CAST(DIR *, *handle));
         if (!de) return false;
@@ -2386,45 +2381,25 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
 #endif
 }
 
-/* ============ Glob directory helpers (delegate to shared primitives) ============ */
-
-static void sp_priv_glob_close_handle(SpGlobIter *it, int depth) {
-    sp_priv_readdir_close(&it->priv_.stack[depth].handle);
-}
+/* ============ Glob directory helpers ============ */
 
 static void sp_priv_glob_pop(SpGlobIter *it) {
-    sp_priv_glob_close_handle(it, it->depth);
-    /* Restore current_dir to parent's length */
+    sp_priv_readdir_close(&it->priv_.stack[it->depth].handle);
     size_t parent_len = it->priv_.stack[it->depth].path_len;
     it->priv_.current_dir.len = parent_len;
     it->priv_.current_dir.buf[parent_len] = '\0';
     it->depth--;
 }
 
-static bool sp_priv_glob_open_handle(SpGlobIter *it, int depth) {
-    return sp_priv_readdir_open(&it->priv_.stack[depth].handle, &it->priv_.current_dir);
-}
-
 static bool sp_priv_glob_push(SpGlobIter *it, const SpPath *path, size_t seg_idx) {
     if (it->depth + 1 >= SP_GLOB_MAX_DEPTH) return false;
     int depth = it->depth + 1;
-    /* Save parent's path length so we can restore on pop */
-    size_t saved_len = it->priv_.current_dir.len;
-    it->priv_.stack[depth].path_len = saved_len;
+    it->priv_.stack[depth].path_len = it->priv_.current_dir.len;
+    it->priv_.stack[depth].handle = SP_PRIV_NULL;
     it->priv_.current_dir = *path;
-    if (!sp_priv_glob_open_handle(it, depth)) {
-        /* Restore current_dir on failure */
-        it->priv_.current_dir.len = saved_len;
-        it->priv_.current_dir.buf[saved_len] = '\0';
-        return false;
-    }
     it->depth = depth;
     it->priv_.seg_idxs[depth] = seg_idx;
     return true;
-}
-
-static bool sp_priv_glob_readdir(SpGlobIter *it, int depth, SpPath *full) {
-    return sp_priv_readdir_next(&it->priv_.stack[depth].handle, &it->priv_.current_dir, full);
 }
 
 static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor, char *buf,
@@ -2462,7 +2437,10 @@ SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitiv
         (cs != SP_CASE_SENSITIVE && sp_priv_is_windows_flavor(base->flavor));
     it.priv_.seg_count = sp_priv_glob_parse_pattern(pattern, base->flavor, it.priv_.pattern_buf,
         it.priv_.seg_offsets, it.priv_.seg_types, &it.priv_.dir_only);
-    if (it.priv_.seg_count == 0 || !sp_priv_glob_push(&it, base, 0)) { it.depth = -1; return it; }
+    if (it.priv_.seg_count == 0 || !sp_is_dir(base) || !sp_priv_glob_push(&it, base, 0)) {
+        it.depth = -1;
+        return it;
+    }
     it.depth = 0;
     if (it.priv_.seg_types[0] == SP_GLOB_SEG_DOUBLESTAR && it.priv_.seg_count == 1)
         it.priv_.yield_base_pending = true;
@@ -2499,13 +2477,15 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             const char *next_pattern = it->priv_.pattern_buf + it->priv_.seg_offsets[seg_idx + 1];
             if (it->priv_.seg_types[seg_idx + 1] == SP_GLOB_SEG_LITERAL && SP_GLOB_IS_DOT_OR_DOTDOT(next_pattern))
                 continue;
-            sp_priv_glob_close_handle(it, depth);
-            if (!sp_priv_glob_open_handle(it, depth)) { it->depth--; }
+            sp_priv_readdir_close(&it->priv_.stack[depth].handle);
             continue;
         }
 
         SpPath full;
-        if (!sp_priv_glob_readdir(it, depth, &full)) { sp_priv_glob_pop(it); continue; }
+        if (!sp_priv_readdir_next(&it->priv_.stack[depth].handle, &it->priv_.current_dir, &full)) {
+            sp_priv_glob_pop(it);
+            continue;
+        }
         SpTerm name_term = sp_name(&full);
         const char *name = name_term.buf;
         if (name[0] == '.' && pattern[0] != '.' && seg_type != SP_GLOB_SEG_DOUBLESTAR) continue;
