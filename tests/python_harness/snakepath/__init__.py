@@ -168,6 +168,7 @@ _sig('sp_parts_iter_begin_wrap', [_PP, POINTER(_SpPartsIter)])
 _sig('sp_parts_iter_next_wrap', [POINTER(_SpPartsIter), POINTER(c_char_p), POINTER(c_size_t)], c_int)
 _sig('sp_parents_iter_begin_wrap', [_PP, POINTER(_SpParentsIter)])
 _sig('sp_parents_iter_next_wrap', [POINTER(_SpParentsIter), _PP], c_int)
+_sig('sp_with_segments_wrap', [_PP, POINTER(c_char_p), c_size_t, _PP])
 _sig('sp_is_relative_to_parts_wrap', [_PP, POINTER(c_char_p)], c_int)
 _sig('sp_relative_to_parts_wrap', [_PP, POINTER(c_char_p), c_int, _PP])
 _sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
@@ -247,10 +248,9 @@ class _PathProp:
         self._func = getattr(_lib, f'sp_{name}_wrap')
     def __get__(self, obj, objtype=None):
         if obj is None: return self
-        result = obj.__class__.__new__(obj.__class__)
-        result._sp = _SpPath()
-        self._func(byref(obj._sp), byref(result._sp))
-        return result
+        out = _SpPath()
+        self._func(byref(obj._sp), byref(out))
+        return obj._from_sp(out)
 
 
 class _BoolProp:
@@ -283,7 +283,7 @@ def _encode_buf(s):
 
 def _decode(b):
     """Decode bytes from C library to string"""
-    return '' if b is None else (b.decode('utf-8') if isinstance(b, bytes) else b)
+    return '' if b is None else (b.decode('utf-8', errors='surrogatepass') if isinstance(b, bytes) else b)
 
 
 def _get_pathlib_flavor(obj):
@@ -312,10 +312,7 @@ class _PathParents:
             _lib.sp_parents_iter_begin_wrap(byref(self._path._sp), byref(it))
             out = _SpPath()
             while _lib.sp_parents_iter_next_wrap(byref(it), byref(out)):
-                p = self._path.__class__.__new__(self._path.__class__)
-                p._sp = _SpPath()
-                _lib.sp_path_copy_wrap(byref(out), byref(p._sp))
-                parents.append(p)
+                parents.append(self._path._from_sp(out))
             self._parents = tuple(parents)
         return self._parents
 
@@ -422,6 +419,28 @@ class PurePath:
                     arg_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
                     _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
 
+    def with_segments(self, *pathsegments):
+        """Construct a new path object from any number of path-like objects."""
+        for arg in pathsegments:
+            if isinstance(arg, bytes):
+                raise TypeError(
+                    "argument should be a str or an os.PathLike object "
+                    "where __fspath__ returns a str, not 'bytes'"
+                )
+        parts = [_encode(os.fspath(a)) for a in pathsegments]
+        parts_arr = (c_char_p * len(parts))(*parts) if parts else None
+        out = _SpPath()
+        _lib.sp_with_segments_wrap(byref(self._sp), parts_arr, len(parts), byref(out))
+        return self._from_sp(out)
+
+    def _from_sp(self, sp_value):
+        result = self.__class__.__new__(self.__class__)
+        result._sp = _SpPath()
+        _lib.sp_path_copy_wrap(byref(sp_value), byref(result._sp))
+        if hasattr(self, "__dict__"):
+            result.__dict__.update(self.__dict__)
+        return result
+
     def __str__(self):
         return _decode(_lib.sp_str_wrap(byref(self._sp)))
 
@@ -459,10 +478,16 @@ class PurePath:
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
 
     def __truediv__(self, other):
-        return self.joinpath(other)
+        try:
+            return self.joinpath(other)
+        except TypeError:
+            return NotImplemented
 
     def __rtruediv__(self, other):
-        return self.__class__(other, self)
+        try:
+            return self.with_segments(other, self)
+        except TypeError:
+            return NotImplemented
 
     @property
     def suffixes(self):
@@ -510,7 +535,7 @@ class PurePath:
         for arg in args:
             if isinstance(arg, bytes):
                 raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        parts = [_encode(os.fspath(a) if hasattr(a, '__fspath__') else str(a)) for a in args]
+        parts = [_encode(os.fspath(a)) for a in args]
         parts.append(None)
         parts_arr = (c_char_p * len(parts))(*parts)
         return bool(_lib.sp_is_relative_to_parts_wrap(byref(self._sp), parts_arr))
@@ -522,18 +547,17 @@ class PurePath:
             if isinstance(arg, bytes):
                 raise TypeError("argument should be a str or os.PathLike object, not bytes")
 
-        parts = [_encode(os.fspath(a) if hasattr(a, '__fspath__') else str(a)) for a in args]
+        parts = [_encode(os.fspath(a)) for a in args]
         parts.append(None)
         parts_arr = (c_char_p * len(parts))(*parts)
 
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_relative_to_parts_wrap(byref(self._sp), parts_arr, 1 if walk_up else 0, byref(result._sp))
+        out = _SpPath()
+        _lib.sp_relative_to_parts_wrap(byref(self._sp), parts_arr, 1 if walk_up else 0, byref(out))
 
-        if _lib.sp_relative_to_is_error_wrap(byref(result._sp)):
-            other_str = str(self.__class__(*args))
+        if _lib.sp_relative_to_is_error_wrap(byref(out)):
+            other_str = str(self.with_segments(*args))
             raise ValueError(f"{str(self)!r} is not relative to {other_str!r}")
-        return result
+        return self._from_sp(out)
 
     def joinpath(self, *others):
         for other in others:
@@ -542,30 +566,39 @@ class PurePath:
                     "argument should be a str or an os.PathLike object "
                     "where __fspath__ returns a str, not 'bytes'"
                 )
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_path_copy_wrap(byref(self._sp), byref(result._sp))
+        out = _SpPath()
+        _lib.sp_path_copy_wrap(byref(self._sp), byref(out))
 
         for other in others:
             if isinstance(other, PurePath):
-                _lib.sp_joinpath_wrap(byref(result._sp), byref(other._sp), byref(result._sp))
+                if other._flavor == self._flavor:
+                    _lib.sp_joinpath_wrap(byref(out), byref(other._sp), byref(out))
+                else:
+                    tmp = _SpPath()
+                    _lib.sp_path_convert_wrap(_encode(str(other)), other._flavor, self._flavor, byref(tmp))
+                    _lib.sp_joinpath_wrap(byref(out), byref(tmp), byref(out))
             else:
-                other_buf = _encode_buf(os.fspath(other) if hasattr(os, 'fspath') else str(other))
-                _lib.sp_join_one_len_wrap(byref(result._sp), other_buf, len(other_buf.raw), byref(result._sp))
-        return result
+                src_flavor = _get_pathlib_flavor(other)
+                if src_flavor is not None:
+                    tmp = _SpPath()
+                    _lib.sp_path_convert_wrap(_encode(str(other)), src_flavor, self._flavor, byref(tmp))
+                    _lib.sp_joinpath_wrap(byref(out), byref(tmp), byref(out))
+                else:
+                    other_buf = _encode_buf(os.fspath(other))
+                    _lib.sp_join_one_len_wrap(byref(out), other_buf, len(other_buf.raw), byref(out))
+        return self._from_sp(out)
 
     def _with_field(self, func_name, value, type_name, err_no_name, err_invalid):
         if not isinstance(value, str):
             raise TypeError(f"expected str, not {type(value).__name__}")
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        getattr(_lib, f'sp_{func_name}_wrap')(byref(self._sp), _encode(value), byref(result._sp))
-        err = _lib.sp_path_error_code_wrap(byref(result._sp))
+        out = _SpPath()
+        getattr(_lib, f'sp_{func_name}_wrap')(byref(self._sp), _encode(value), byref(out))
+        err = _lib.sp_path_error_code_wrap(byref(out))
         if err == SP_ERR_NO_NAME:
             raise ValueError(f"{self!r} has an empty name")
         if err == SP_ERR_INVALID_ARG:
             raise ValueError(f"Invalid {type_name} {value!r}")
-        return result
+        return self._from_sp(out)
 
     def with_name(self, name):
         return self._with_field('with_name', name, 'name', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
@@ -630,10 +663,9 @@ class Path(PurePath):
         return result
 
     def absolute(self):
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_absolute_wrap(byref(self._sp), byref(result._sp))
-        return result
+        out = _SpPath()
+        _lib.sp_absolute_wrap(byref(self._sp), byref(out))
+        return self._from_sp(out)
 
     def is_file(self):
         return bool(_lib.sp_is_file_wrap(byref(self._sp)))
@@ -681,21 +713,19 @@ class Path(PurePath):
 
     def readlink(self):
         """Return the path to which the symbolic link points."""
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_readlink_wrap(byref(self._sp), byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+        out = _SpPath()
+        _lib.sp_readlink_wrap(byref(self._sp), byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
             raise OSError(22, "Invalid argument", str(self))
-        return result
+        return self._from_sp(out)
 
     def resolve(self, strict=False):
         """Make the path absolute, resolving all symlinks."""
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_resolve_wrap(byref(self._sp), 1 if strict else 0, byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+        out = _SpPath()
+        _lib.sp_resolve_wrap(byref(self._sp), 1 if strict else 0, byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
             raise FileNotFoundError(2, "No such file or directory", str(self))
-        return result
+        return self._from_sp(out)
 
     def symlink_to(self, target, target_is_directory=False):
         """Make this path a symlink pointing to target."""
@@ -769,15 +799,11 @@ class Path(PurePath):
         cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
 
         results = []
-        path_class = self.__class__
         it = _SpGlobIter()
         match = _SpPath()
         _lib.sp_glob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
         while _lib.sp_glob_next_wrap(byref(it), byref(match)):
-            result = path_class.__new__(path_class)
-            result._sp = _SpPath()
-            _lib.sp_path_copy_wrap(byref(match), byref(result._sp))
-            results.append(result)
+            results.append(self._from_sp(match))
         _lib.sp_glob_end_wrap(byref(it))
         return iter(results)
 
@@ -790,15 +816,11 @@ class Path(PurePath):
         cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
 
         results = []
-        path_class = self.__class__
         it = _SpGlobIter()
         match = _SpPath()
         _lib.sp_rglob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
         while _lib.sp_glob_next_wrap(byref(it), byref(match)):
-            result = path_class.__new__(path_class)
-            result._sp = _SpPath()
-            _lib.sp_path_copy_wrap(byref(match), byref(result._sp))
-            results.append(result)
+            results.append(self._from_sp(match))
         _lib.sp_glob_end_wrap(byref(it))
         return iter(results)
 
@@ -828,12 +850,11 @@ class Path(PurePath):
             _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
             target_sp = target_path._sp
 
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_rename_wrap(byref(self._sp), byref(target_sp), byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+        out = _SpPath()
+        _lib.sp_rename_wrap(byref(self._sp), byref(target_sp), byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
             raise OSError(1, "Operation not permitted", str(self), str(target))
-        return result
+        return self._from_sp(out)
 
     def replace(self, target):
         """Replace target with this file (atomic operation)."""
@@ -846,12 +867,11 @@ class Path(PurePath):
             _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
             target_sp = target_path._sp
 
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_replace_wrap(byref(self._sp), byref(target_sp), byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+        out = _SpPath()
+        _lib.sp_replace_wrap(byref(self._sp), byref(target_sp), byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
             raise OSError(1, "Operation not permitted", str(self), str(target))
-        return result
+        return self._from_sp(out)
 
     def chmod(self, mode):
         """Change the file mode (permissions)."""
@@ -926,12 +946,11 @@ class Path(PurePath):
 
     def expanduser(self):
         """Expand ~ to user's home directory."""
-        result = self.__class__.__new__(self.__class__)
-        result._sp = _SpPath()
-        _lib.sp_expanduser_wrap(byref(self._sp), byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+        out = _SpPath()
+        _lib.sp_expanduser_wrap(byref(self._sp), byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
             raise RuntimeError("Could not expand user")
-        return result
+        return self._from_sp(out)
 
     def owner(self):
         """Return the file owner name."""
@@ -966,10 +985,7 @@ class Path(PurePath):
         try:
             out = _SpPath()
             while _lib.sp_iterdir_next_wrap(byref(it), byref(out)):
-                result = self.__class__.__new__(self.__class__)
-                result._sp = _SpPath()
-                _lib.sp_path_copy_wrap(byref(out), byref(result._sp))
-                yield result
+                yield self._from_sp(out)
         finally:
             _lib.sp_iterdir_end_wrap(byref(it))
 

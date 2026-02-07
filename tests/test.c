@@ -141,6 +141,14 @@ int main(void) {
     JoinTest posix_with_suffix[] = {{"a/b.py", ".gz", "a/b.gz"}, {"a/b", ".gz", "a/b.gz"}, {"a/b.py", "", "a/b"}};
     test_with(P, sp_with_suffix, posix_with_suffix, ARRAY_LEN(posix_with_suffix));
     
+    SpPath posix_ws_base = sp_path_f("ignored", P);
+    const char *posix_ws1[] = {"a", "b"};
+    ASSERT_PATH(sp_with_segments(&posix_ws_base, posix_ws1, ARRAY_LEN(posix_ws1)), "a/b");
+    const char *posix_ws2[] = {"a", "/b", "c"};
+    ASSERT_PATH(sp_with_segments(&posix_ws_base, posix_ws2, ARRAY_LEN(posix_ws2)), "/b/c");
+    const char **posix_ws3 = NULL;
+    ASSERT_PATH(sp_with_segments(&posix_ws_base, posix_ws3, 0), ".");
+
     ASSERT_ABS("/a/b", P, true); ASSERT_ABS("a/b", P, false);
     
     SpPath ps1 = sp_path_f("a/b.py", P); SpSuffixes ss1 = sp_suffixes(&ps1);
@@ -221,6 +229,14 @@ int main(void) {
     JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}};
     test_with(W, sp_with_suffix, win_with_suffix, ARRAY_LEN(win_with_suffix));
     
+    SpPath win_ws_base = sp_path_f("ignored", W);
+    const char *win_ws1[] = {"C:/", "Users", "Bob"};
+    ASSERT_PATH(sp_with_segments(&win_ws_base, win_ws1, ARRAY_LEN(win_ws1)), "C:\\Users\\Bob");
+    const char *win_ws2[] = {"C:/a", "D:/x", "y"};
+    ASSERT_PATH(sp_with_segments(&win_ws_base, win_ws2, ARRAY_LEN(win_ws2)), "D:\\x\\y");
+    const char **win_ws3 = NULL;
+    ASSERT_PATH(sp_with_segments(&win_ws_base, win_ws3, 0), ".");
+
     SpPath wp1 = sp_path_f("c:a/b", W); SpPartsIter wit1 = sp_parts_begin(&wp1);
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "c:");
     ASSERT(sp_parts_next(&wit1, &part)); ASSERT_SV(part, "a");

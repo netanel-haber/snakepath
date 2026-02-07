@@ -216,6 +216,9 @@ typedef struct {
 #define sp_sv(s) SP_PRIV_STR((s), sizeof(s) - 1)
 #define sp_sv_from(s, n) SP_PRIV_STR((s), (n))
 
+/* Array length helper (works only for real arrays, not pointers) */
+#define SP_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
 /* ============ Core Functions ============ */
 
 SpPath sp_path_new(const char *s, SpPathOpts opts);
@@ -247,6 +250,8 @@ SpPath sp_join_n(const SpPath *base, const char *s, size_t len);
 SpPath sp_join_impl(const SpPath *base, const char **parts);
 SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
+/* Construct new path from segments (parts_count entries in parts array) */
+SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count);
 SpPath sp_with_name(const SpPath *p, const char *name);
 SpPath sp_with_stem(const SpPath *p, const char *stem);
 SpPath sp_with_suffix(const SpPath *p, const char *suffix);
@@ -494,6 +499,7 @@ struct sp_fluent_ {
     /* Chainable - return pointer to avoid stack copies */
     SpPrivDontUseThisDirectly_ *(*parent)(void);
     SpPrivDontUseThisDirectly_ *(*join)(const char *);
+    SpPrivDontUseThisDirectly_ *(*with_segments)(const char **, size_t);
     SpPrivDontUseThisDirectly_ *(*with_name)(const char *);
     SpPrivDontUseThisDirectly_ *(*with_stem)(const char *);
     SpPrivDontUseThisDirectly_ *(*with_suffix)(const char *);
@@ -1153,6 +1159,29 @@ SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
     return sp_priv_join_len(base, other->buf, other->len);
 }
 
+static inline size_t sp_priv_parts_count(const char *const *parts) {
+    if (!parts) return 0;
+    size_t count = 0;
+    while (parts[count]) count++;
+    return count;
+}
+
+static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char *const *parts, size_t parts_count) {
+    if (!parts) return sp_path_new("", SP_PRIV_OPTS(flavor));
+    SpPath empty = SP_PRIV_ZERO;
+    empty.flavor = flavor;
+    SpPath r = empty;
+    for (size_t i = 0; i < parts_count; i++) {
+        r = sp_join_one(&r, parts[i]);
+    }
+    return r;
+}
+
+SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    return sp_priv_path_from_parts(p->flavor, parts, parts_count);
+}
+
 static bool sp_priv_is_valid_name(const char *s, size_t len, SpFlavor flavor) {
     if (len == 0) return false;
     if (len == 1 && s[0] == '.') return false;
@@ -1351,19 +1380,15 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     return sp_priv_relative_to_impl(p, other, true);
 }
 
-static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char **parts) {
-    SpPath empty = SP_PRIV_ZERO;
-    empty.flavor = flavor;
-    return sp_join_impl(&empty, parts);
-}
-
 bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
-    SpPath other = sp_priv_path_from_parts(p->flavor, parts);
+    size_t parts_count = sp_priv_parts_count(parts);
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
     return sp_is_relative_to(p, &other);
 }
 
 SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
-    SpPath other = sp_priv_path_from_parts(p->flavor, parts);
+    size_t parts_count = sp_priv_parts_count(parts);
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
     return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
 }
 
@@ -3004,6 +3029,7 @@ static SP_TLS bool sp_priv_f_ctx_active = false;
 #define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser) X(readlink, sp_readlink)
 #define SP_FLUENT_CHAIN_STR(X)                                                                                         \
     X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
+#define SP_FLUENT_CHAIN_PARTS(X) X(with_segments, sp_with_segments)
 #define SP_FLUENT_CHAIN_PATH(X)                                                                                        \
     X(relative_to, sp_relative_to)                                                                                     \
     X(relative_to_walk_up, sp_relative_to_walk_up)                                                                     \
@@ -3101,9 +3127,11 @@ static SpPathOp sp_priv_f_hardlink_to_(const SpPath *target) {
 /* Chainable: declare, then instance, then define (instance must exist for return) */
 #define SP_DECL_CHAIN_VOID(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(void);
 #define SP_DECL_CHAIN_STR(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char *);
+#define SP_DECL_CHAIN_PARTS(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char **, size_t);
 #define SP_DECL_CHAIN_PATH(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const SpPath *);
 SP_FLUENT_CHAIN_VOID(SP_DECL_CHAIN_VOID)
 SP_FLUENT_CHAIN_STR(SP_DECL_CHAIN_STR)
+SP_FLUENT_CHAIN_PARTS(SP_DECL_CHAIN_PARTS)
 SP_FLUENT_CHAIN_PATH(SP_DECL_CHAIN_PATH)
 static SpPrivDontUseThisDirectly_ *sp_priv_f_resolve_(bool strict);
 
@@ -3150,6 +3178,7 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_hardlink_to_,
     sp_priv_f_parent_,
     sp_priv_f_join_,
+    sp_priv_f_with_segments_,
     sp_priv_f_with_name_,
     sp_priv_f_with_stem_,
     sp_priv_f_with_suffix_,
@@ -3173,6 +3202,11 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
         sp_priv_f_ctx = fn(&sp_priv_f_ctx, s);                                                                         \
         return &sp_priv_f_instance;                                                                                    \
     }
+#define SP_DEF_CHAIN_PARTS(n, fn)                                                                                      \
+    static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char **parts, size_t parts_count) {                      \
+        sp_priv_f_ctx = fn(&sp_priv_f_ctx, parts, parts_count);                                                         \
+        return &sp_priv_f_instance;                                                                                    \
+    }
 #define SP_DEF_CHAIN_PATH(n, fn)                                                                                       \
     static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const SpPath *o) {                                             \
         sp_priv_f_ctx = fn(&sp_priv_f_ctx, o);                                                                         \
@@ -3180,6 +3214,7 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     }
 SP_FLUENT_CHAIN_VOID(SP_DEF_CHAIN_VOID)
 SP_FLUENT_CHAIN_STR(SP_DEF_CHAIN_STR)
+SP_FLUENT_CHAIN_PARTS(SP_DEF_CHAIN_PARTS)
 SP_FLUENT_CHAIN_PATH(SP_DEF_CHAIN_PATH)
 static SpPrivDontUseThisDirectly_ *sp_priv_f_resolve_(bool strict) {
     sp_priv_f_ctx = sp_resolve(&sp_priv_f_ctx, strict);

@@ -175,6 +175,11 @@ int main(void) {
     /* >>> PureWindowsPath('c:').joinpath('/Program Files') -> PureWindowsPath('c:/Program Files') */
     ASSERT_FLUENT(SPF_W("c:")->join("/Program Files"), "c:\\Program Files");
 
+    /* ============ with_segments ============ */
+
+    { const char *parts[] = {"foo", "bar"};
+      ASSERT_FLUENT(SPF_P("ignored")->with_segments(parts, SP_ARRAY_LEN(parts)), "foo/bar"); }
+
     /* ============ with_name ============ */
 
     /* >>> PureWindowsPath('c:/Downloads/pathlib.tar.gz').with_name('setup.py') -> 'c:/Downloads/setup.py' */
