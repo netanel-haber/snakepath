@@ -76,20 +76,12 @@ SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t
     *out = sp_with_segments(p, parts, parts_count);
 }
 
-static size_t sp_priv_parts_count(const char **parts) {
-    size_t count = 0;
-    while (parts && parts[count]) count++;
-    return count;
-}
-
 SP_EXPORT int sp_is_relative_to_parts_wrap(const SpPath *p, const char **parts) {
-    SpPath other = sp_with_segments(p, parts, sp_priv_parts_count(parts));
-    return sp_is_relative_to(p, &other) ? 1 : 0;
+    return sp_is_relative_to_parts(p, parts) ? 1 : 0;
 }
 
 SP_EXPORT void sp_relative_to_parts_wrap(const SpPath *p, const char **parts, int walk_up, SpPath *out) {
-    SpPath other = sp_with_segments(p, parts, sp_priv_parts_count(parts));
-    *out = walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
+    *out = sp_relative_to_parts(p, parts, walk_up != 0);
 }
 
 SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {

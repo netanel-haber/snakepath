@@ -259,6 +259,8 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
 bool sp_is_absolute(const SpPath *p);
 SpPath sp_cwd(SpFlavor flavor);
@@ -1162,6 +1164,13 @@ SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
     return sp_priv_join_len(base, other->buf, other->len);
 }
 
+static inline size_t sp_priv_parts_count(const char *const *parts) {
+    if (!parts) return 0;
+    size_t count = 0;
+    while (parts[count]) count++;
+    return count;
+}
+
 static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char *const *parts, size_t parts_count) {
     if (!parts) return sp_path_new("", SP_PRIV_OPTS(flavor));
     SpPath empty = SP_PRIV_ZERO;
@@ -1374,6 +1383,18 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(p);
     SP_ASSERT_PATH_INVARIANT(other);
     return sp_priv_relative_to_impl(p, other, true);
+}
+
+bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
+    size_t parts_count = sp_priv_parts_count(parts);
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
+    return sp_is_relative_to(p, &other);
+}
+
+SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
+    size_t parts_count = sp_priv_parts_count(parts);
+    SpPath other = sp_priv_path_from_parts(p->flavor, parts, parts_count);
+    return walk_up ? sp_relative_to_walk_up(p, &other) : sp_relative_to(p, &other);
 }
 
 size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
