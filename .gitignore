@@ -20,3 +20,7 @@ tests/test_gpp
 tests/test_clangpp
 tests/test_fluent_*
 tests/test_msvc*
+
+# Stale test symlink artifacts
+test_fluent_sym_*.tmp
+test_fluent_symtgt_*.tmp
