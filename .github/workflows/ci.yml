@@ -25,10 +25,10 @@ jobs:
           sudo apt-get install -y gcc g++ clang valgrind
 
       - name: Build nob
-        run: cc -o nob nob.c
+        run: cc -o build/nob build/nob.c
 
       - name: Run build and tests
-        run: ./nob
+        run: ./build/nob
         env:
           SNAKEPATH_SANITIZE: "1"
 
@@ -48,7 +48,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build nob
-        run: cl.exe /Fe:nob.exe nob.c
+        run: cl.exe /Fe:build\nob.exe build\nob.c
 
       - name: Run build and tests
-        run: .\nob.exe
+        run: .\build\nob.exe
