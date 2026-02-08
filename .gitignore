@@ -1,5 +1,5 @@
-nob
-nob.old
+build/nob
+build/nob.old
 *.o
 *.dSYM/
 api_demo
@@ -9,17 +9,17 @@ __pycache__/
 *.pyc
 
 # Tests
-tests/python_harness/cpython_tests/
-tests/python_harness/libsnakepath.so
-tests/python_harness/snakepath.dll
-tests/test_gcc
-tests/test_clang
-tests/test_gcc_san
-tests/test_clang_san
-tests/test_gpp
-tests/test_clangpp
-tests/test_fluent_*
-tests/test_msvc*
+build/python_harness/cpython_tests/
+build/python_harness/libsnakepath.so
+build/python_harness/snakepath.dll
+build/test_gcc
+build/test_clang
+build/test_gcc_san
+build/test_clang_san
+build/test_gpp
+build/test_clangpp
+build/test_fluent_*
+build/test_msvc*
 
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp

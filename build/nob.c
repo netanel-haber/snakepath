@@ -1,10 +1,10 @@
 /* nob.c - Build script for snakepath using nob.h
- * Usage: cc -o nob nob.c && ./nob
+ * Usage: cc -o build/nob build/nob.c && ./build/nob
  *
  * Builds are parallelized across available CPU cores.
  *
  * For quiet mode (no command echo):
- *   cc -DSNAKEPATH_QUIET -o nob nob.c && ./nob
+ *   cc -DSNAKEPATH_QUIET -o build/nob build/nob.c && ./build/nob
  */
 
 #ifdef SNAKEPATH_QUIET
@@ -123,14 +123,14 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 #endif
     }
 
-    /* Include root directory for header files */
+    /* Include project root for snakepath.h */
 #ifdef _WIN32
     if (cfg.compiler == COMPILER_MSVC || cfg.compiler == COMPILER_MSVC_CPP) {
-        nob_cmd_append(&cmd, "/I.");
+        nob_cmd_append(&cmd, "/I..");
     } else
 #endif
     {
-        nob_cmd_append(&cmd, "-I.");
+        nob_cmd_append(&cmd, "-I..");
     }
 
     append_warnings(&cmd, cfg.compiler);
@@ -199,18 +199,18 @@ static bool run_valgrind(const char *exe) {
 
 static const char *all_artifacts[] = {
 #ifdef _WIN32
-    "tests/test_msvc.exe", "tests/test_msvc_cpp.exe", "tests/test_fluent_msvc.exe", "demo.exe",
-    /* PDB and obj files from MSVC (now in tests/ directory to avoid conflicts) */
-    "tests/test_msvc.pdb", "tests/test_msvc_cpp.pdb", "tests/test_fluent_msvc.pdb", "demo.pdb",
-    "tests/test_msvc.obj", "tests/test_msvc_cpp.obj", "tests/test_fluent_msvc.obj", "api_demo.obj",
+    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "../demo.exe",
+    /* PDB and obj files from MSVC */
+    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "../demo.pdb",
+    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "../api_demo.obj",
     /* Legacy obj files in root (clean these up too) */
-    "test.obj", "test_fluent_api.obj",
-    "tests/python_harness/snakepath.dll",
+    "../test.obj", "../test_fluent_api.obj",
+    "python_harness/snakepath.dll",
 #else
-    "tests/test_gcc", "tests/test_clang", "tests/test_gcc_san", "tests/test_clang_san",
-    "tests/test_gpp", "tests/test_clangpp", "tests/test_fluent_gcc", "tests/test_fluent_clang",
-    "api_demo",
-    "tests/python_harness/libsnakepath.so",
+    "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
+    "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
+    "../api_demo",
+    "python_harness/libsnakepath.so",
 #endif
     NULL
 };
@@ -222,23 +222,23 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
 #ifdef _WIN32
     if (compiler == COMPILER_MSVC) {
         nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
-        nob_cmd_append(&cmd, "/W4", "/I.");
-        nob_cmd_append(&cmd, "/Fe:tests/python_harness/snakepath.dll");
-        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+        nob_cmd_append(&cmd, "/W4", "/I..");
+        nob_cmd_append(&cmd, "/Fe:python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
     } else {
         nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
-        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2", "-I.");
+        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2", "-I..");
         nob_cmd_append(&cmd, "-fvisibility=hidden");
-        nob_cmd_append(&cmd, "-o", "tests/python_harness/snakepath.dll");
-        nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+        nob_cmd_append(&cmd, "-o", "python_harness/snakepath.dll");
+        nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
     }
 #else
     const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
-    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2", "-I.");
+    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2", "-I..");
     nob_cmd_append(&cmd, "-Wall", "-Wextra");
     nob_cmd_append(&cmd, "-fvisibility=hidden");
-    nob_cmd_append(&cmd, "-o", "tests/python_harness/libsnakepath.so");
-    nob_cmd_append(&cmd, "tests/python_harness/snakepath_lib.c");
+    nob_cmd_append(&cmd, "-o", "python_harness/libsnakepath.so");
+    nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
 #endif
 
     bool result;
@@ -270,14 +270,14 @@ static const char *find_python(void) {
 static bool run_call_depth_tests(void) {
     Nob_Cmd cmd = {0};
     const char *python = find_python();
-    nob_cmd_append(&cmd, python, "tests/test_call_depth.py", "snakepath.h", "3");
+    nob_cmd_append(&cmd, python, "test_call_depth.py", "../snakepath.h", "3");
     return nob_cmd_run(&cmd);
 }
 
 static bool run_python_tests(void) {
     Nob_Cmd cmd = {0};
     const char *python = find_python();
-    nob_cmd_append(&cmd, python, "tests/python_harness/run_cpython_tests.py");
+    nob_cmd_append(&cmd, python, "python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -296,6 +296,9 @@ static bool clean_artifacts(void) {
 
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
+
+    /* nob.c lives in build/ alongside test sources — chdir so paths are simple */
+    nob_set_current_dir("build");
 
     /* Check VERBOSE env var - default true, set to 0 to suppress INFO logs */
     const char *verbose_env = getenv("VERBOSE");
@@ -344,39 +347,39 @@ int main(int argc, char **argv) {
 
 #ifdef _WIN32
     BuildConfig test_configs[] = {
-        {COMPILER_MSVC,     false, "MSVC (C)",   "tests/test_msvc.exe"},
-        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "tests/test_msvc_cpp.exe"},
+        {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
+        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
     };
     size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
     BuildConfig fluent_configs[] = {
-        {COMPILER_MSVC, false, "MSVC Fluent", "tests/test_fluent_msvc.exe"},
+        {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
     };
-    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "api_demo.exe"};
-    const char *demo_output = "api_demo.exe";
+    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "../api_demo.exe"};
+    const char *demo_output = "../api_demo.exe";
 #else
     bool use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
     bool skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;  /* For Termux where gcc is clang */
 
     /* Full configs with sanitizers */
     BuildConfig test_configs_full[] = {
-        {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
-        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./tests/test_gcc_san"},
-        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./tests/test_clang_san"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
+        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
+        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
+        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./test_clang_san"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
     };
     /* No sanitizers */
     BuildConfig test_configs_no_san[] = {
-        {COMPILER_GCC,     false, "GCC",                "./tests/test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./tests/test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
+        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
+        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
+        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
     };
     /* Clang-only (for Termux where gcc is clang) */
     BuildConfig test_configs_clang_only[] = {
-        {COMPILER_CLANG,   false, "Clang",              "./tests/test_clang"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./tests/test_clangpp"},
+        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
+        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
     };
 
     BuildConfig *test_configs;
@@ -395,17 +398,17 @@ int main(int argc, char **argv) {
     }
 
     BuildConfig fluent_configs_full[] = {
-        {COMPILER_GCC,   false, "GCC Fluent",   "./tests/test_fluent_gcc"},
-        {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
+        {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
+        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
     };
     BuildConfig fluent_configs_clang[] = {
-        {COMPILER_CLANG, false, "Clang Fluent", "./tests/test_fluent_clang"},
+        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
     };
     BuildConfig *fluent_configs = skip_gcc ? fluent_configs_clang : fluent_configs_full;
     BuildConfig demo_config = skip_gcc
-        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "./api_demo"}
-        : (BuildConfig){COMPILER_GCC, false, "Demo", "./api_demo"};
-    const char *demo_output = "./api_demo";
+        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "../api_demo"}
+        : (BuildConfig){COMPILER_GCC, false, "Demo", "../api_demo"};
+    const char *demo_output = "../api_demo";
 #endif
 
 #ifdef _WIN32
@@ -419,16 +422,16 @@ int main(int argc, char **argv) {
 
     for (size_t i = 0; i < test_count; i++) {
         LOG_INFO( "  Starting build: %s", test_configs[i].name);
-        build_source_async(test_configs[i], "tests/test.c", NULL, &procs);
+        build_source_async(test_configs[i], "test.c", NULL, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
         LOG_INFO( "  Starting build: %s", fluent_configs[i].name);
-        build_source_async(fluent_configs[i], "tests/test_fluent_api.c", NULL, &procs);
+        build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
     }
 
     LOG_INFO( "  Starting build: %s", demo_config.name);
-    build_source_async(demo_config, "api_demo.c", NULL, &procs);
+    build_source_async(demo_config, "../api_demo.c", NULL, &procs);
 
     /* Build Python shared library */
     LOG_INFO( "  Starting build: Python bindings");
@@ -484,7 +487,7 @@ int main(int argc, char **argv) {
     /* Phase 5: Valgrind (must be sequential, slow) */
     if (all_ok) {
         LOG_INFO( "=== Running valgrind ===");
-        if (!run_valgrind("./tests/test_gcc")) {
+        if (!run_valgrind("./test_gcc")) {
             nob_log(NOB_ERROR, "Valgrind check failed");
             all_ok = false;
         }
