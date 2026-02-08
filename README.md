@@ -415,4 +415,4 @@ SOFTWARE.
 </details>
 
 
-<img height="200px" src="./site/snakepath.png" alt="snake ascii art that also looks like a path"/>
+<img height="200px" src="./docs/snakepath.png" alt="snake ascii art that also looks like a path"/>
