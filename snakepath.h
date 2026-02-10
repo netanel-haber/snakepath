@@ -2674,16 +2674,20 @@ bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
 /* ============ Fluent API Implementation ============ */
 #ifdef SNAKEPATH_FLUENT
 
+#if defined(_MSC_VER) && defined(_WINDLL)
+#error "snakepath fluent API uses __declspec(thread) which is unsafe in DLLs loaded via LoadLibrary"
+#endif
+
 #if defined(__cplusplus) && __cplusplus >= 201103L
   #define SP_TLS thread_local
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
   #define SP_TLS _Thread_local
-#elif defined(_MSC_VER)
-  #define SP_TLS __declspec(thread)
 #elif defined(__GNUC__) || defined(__clang__)
   #define SP_TLS __thread
+#elif defined(_MSC_VER)
+  #define SP_TLS __declspec(thread)
 #else
-  #error "No thread-local storage support"
+  #error "snakepath fluent API requires thread-local storage (__thread, _Thread_local, or __declspec(thread))"
 #endif
 
 static SP_TLS SpPath sp_priv_f_ctx;
