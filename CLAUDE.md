@@ -13,6 +13,33 @@ Good: extract helpers, delegate to primitives, early return, remove dead code.
 Bad: shorten names, define convenience macros, remove whitespace/braces, add macro layers that only reduce LOC before preprocessing.
 Rule: semantic compression must compress the expanded code too. If `cc -E -P` turns the "cleanup" back into the same amount of code, more code, or harder-to-follow code, it is not a cleanup.
 
+## Pseudo Commands
+
+### `/sem-compress [path] [optional goal]`
+
+Meaning: do a cleanup-only pass focused on semantic compression for the target file or section.
+
+Required behavior:
+- Do not do whitespace-only cleanup, naming cleanup, brace cleanup, or cosmetic churn.
+- Remove repetition, dead wrappers, duplicated control flow, and low-value helper layers.
+- Treat source LOC reduction as a side effect, not the goal.
+- Judge macro refactors by the expanded code. If `cc -E -P` shows the same boilerplate or more indirection, reject the refactor.
+- Keep public API sections concrete when possible. Prefer small implementation-local helpers over public macro inventories.
+- Stop when the next change would save lines only by hiding code structure, adding slot-order coupling, or making the expanded code harder to follow.
+
+Required workflow:
+1. Read the target in full before editing.
+2. Identify the largest repeated or wrapper-heavy regions.
+3. If macros are involved, inspect the preprocessed view of the touched region.
+4. Make only the changes that are simpler in both source and expanded form.
+5. Verify with `nob`.
+6. If a failure may be local-environment noise, baseline against clean `main` with `./build/nob clean` before calling it a regression.
+
+Required final report:
+- Net LOC delta for the target file.
+- Which changes survived and why they are simpler.
+- Which tempting changes were rejected because they only compressed source text, not expanded code.
+
 ## Testing
 
 **Default local runner:**
