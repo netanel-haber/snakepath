@@ -28,7 +28,7 @@ Required behavior:
 - Stop when the next change would save lines only by hiding code structure, adding slot-order coupling, or making the expanded code harder to follow.
 
 Required workflow:
-1. Read the target in full before editing.
+1. Read `README.md` and `snakepath.h` in full before editing, then read the target in full.
 2. Identify the largest repeated or wrapper-heavy regions.
 3. If macros are involved, inspect the preprocessed view of the touched region.
 4. Make only the changes that are simpler in both source and expanded form.
