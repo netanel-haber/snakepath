@@ -10,11 +10,21 @@ C99 STB-style header-only pathlib port. No malloc, POSIX + Windows. All code in 
 
 ## Refactoring Rules
 Good: extract helpers, delegate to primitives, early return, remove dead code.
-Bad: shorten names, define convenience macros, remove whitespace/braces.
+Bad: shorten names, define convenience macros, remove whitespace/braces, add macro layers that only reduce LOC before preprocessing.
+Rule: semantic compression must compress the expanded code too. If `cc -E -P` turns the "cleanup" back into the same amount of code, more code, or harder-to-follow code, it is not a cleanup.
 
 ## Testing
 
-**Run all three before committing:**
+**Default local runner:**
+
+```bash
+cc -DSNAKEPATH_QUIET -o build/nob build/nob.c
+env SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./build/nob
+```
+
+Use `./build/nob clean` before baseline comparisons or when local build artifacts may be stale.
+
+**Direct commands for focused debugging:**
 
 ```bash
 gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath build/test.c && ./test_snakepath
@@ -24,8 +34,7 @@ cd build/python_harness && gcc -shared -fPIC -o snakepath/libsnakepath.so snakep
 
 **g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
 
-**Termux:** `cc -DSNAKEPATH_QUIET -o build/nob build/nob.c && SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./build/nob`
-Termux `/tmp` symlink failures are expected locally (Python `test_resolve_nonexist_relative_issue38671` and fluent `hardlink_to` test). CI is authoritative.
+**Termux:** prefer `nob`. Local baseline may still reproduce `/tmp` symlink/pathlib quirks and the fluent `hardlink_to` failure even on clean `main`. CI is authoritative.
 
 ## EXPECTED_FAILURES
 
@@ -46,6 +55,13 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 ## Learnings
 
 - Keep wrapper layers thin: one-to-one calls only, no logic that replaces core behavior.
+- Prefer `nob` as the canonical local test entrypoint; use the raw compile commands only when narrowing a specific failure.
+- For cleanup work, optimize for semantic compression, not line-count compression. The real measure is the concrete C the compiler sees, not the source LOC count.
+- Semantic compression must survive preprocessing. A refactor only counts if the `cc -E -P` output is also smaller, flatter, or clearer in substance.
+- If a macro refactor only hides repetition in the source file but expands back to the same wrapper boilerplate, it is not simplification; it is indirection.
+- Use the preprocessed view (`cc -E -P`) to judge macro refactors. Keep a macro only if the expanded code is still obviously simpler than the handwritten alternative.
+- Public API sections should stay concrete. If repetition remains, prefer tiny implementation-local helper macros over public X-macro inventories.
+- Before treating a local filesystem/fluent failure as a regression, stash the patch, run `./build/nob clean`, verify clean `main`, then compare against that baseline.
 - Python bindings should use `os.fspath()` directly (no `str()` fallback) so non-pathlike types raise `TypeError`.
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
