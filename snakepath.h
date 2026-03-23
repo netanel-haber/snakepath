@@ -245,14 +245,18 @@ unsigned long sp_path_hash(const SpPath *p);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
 #define SP_MATCH(p, pattern) sp_match_ex((p), (pattern), -1)
 bool sp_is_reserved(const SpPath *p);
-bool sp_is_file(const SpPath *p);
-bool sp_is_dir(const SpPath *p);
+#define SP_FILE_TYPE_QUERIES(X)        \
+    X(file, S_IFREG, true)             \
+    X(dir, S_IFDIR, true)              \
+    X(symlink, S_IFLNK, false)         \
+    X(block_device, S_IFBLK, true)     \
+    X(char_device, S_IFCHR, true)      \
+    X(fifo, S_IFIFO, true)             \
+    X(socket, S_IFSOCK, true)
+#define SP_DECLARE_FILE_TYPE_QUERY(name, type_mask, follow_symlinks) bool sp_is_##name(const SpPath *p);
+SP_FILE_TYPE_QUERIES(SP_DECLARE_FILE_TYPE_QUERY)
+#undef SP_DECLARE_FILE_TYPE_QUERY
 bool sp_exists(const SpPath *p);
-bool sp_is_symlink(const SpPath *p);
-bool sp_is_block_device(const SpPath *p);
-bool sp_is_char_device(const SpPath *p);
-bool sp_is_fifo(const SpPath *p);
-bool sp_is_socket(const SpPath *p);
 bool sp_is_mount(const SpPath *p);
 bool sp_is_junction(const SpPath *p);
 
@@ -413,6 +417,7 @@ extern "C" {
 #endif
 
 typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
+
 struct sp_fluent_ {
     /* Terminators - end chain and return value */
     SpPath (*path)(void);
@@ -789,6 +794,12 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
 static inline SpPath sp_priv_error_path(char err_code) {
     SpPath p = SP_PRIV_ZERO;
     p.buf[0] = err_code;
+    return p;
+}
+
+static inline SpPath sp_priv_error_path_f(SpFlavor flavor, char err_code) {
+    SpPath p = sp_priv_error_path(err_code);
+    p.flavor = flavor;
     return p;
 }
 
@@ -1615,36 +1626,13 @@ static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follo
     return (st.sp_mode & S_IFMT) == type_mask;
 }
 
-bool sp_is_file(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFREG, true);
-}
-
-bool sp_is_dir(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFDIR, true);
-}
+#define SP_DEFINE_FILE_TYPE_QUERY(name, type_mask, follow_symlinks) \
+    bool sp_is_##name(const SpPath *p) { return sp_priv_has_type(p, type_mask, follow_symlinks); }
+SP_FILE_TYPE_QUERIES(SP_DEFINE_FILE_TYPE_QUERY)
+#undef SP_DEFINE_FILE_TYPE_QUERY
 
 bool sp_exists(const SpPath *p) {
     return sp_stat(p).valid;
-}
-
-bool sp_is_symlink(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFLNK, false);
-}
-
-bool sp_is_block_device(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFBLK, true);
-}
-
-bool sp_is_char_device(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFCHR, true);
-}
-
-bool sp_is_fifo(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFIFO, true);
-}
-
-bool sp_is_socket(const SpPath *p) {
-    return sp_priv_has_type(p, S_IFSOCK, true);
 }
 
 bool sp_is_mount(const SpPath *p) {
@@ -1829,10 +1817,7 @@ SpPath sp_readlink(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath result = SP_PRIV_ZERO;
     result.flavor = p->flavor;
-    if (sp_priv_has_embedded_null(p)) {
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
-    }
+    if (sp_priv_has_embedded_null(p)) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
@@ -1840,10 +1825,7 @@ SpPath sp_readlink(const SpPath *p) {
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING,
                            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    if (h == INVALID_HANDLE_VALUE) {
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
-    }
+    if (h == INVALID_HANDLE_VALUE) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
 
     char reparse_buf[16384];
     DWORD bytes_returned;
@@ -1851,35 +1833,26 @@ SpPath sp_readlink(const SpPath *p) {
                          NULL, 0, reparse_buf, sizeof(reparse_buf),
                          &bytes_returned, NULL)) {
         CloseHandle(h);
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
+        return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
     }
     CloseHandle(h);
 
     DWORD tag = *(DWORD *)reparse_buf;
     size_t data_offset = (tag == 0xA000000C) ? 20 : (tag == 0xA0000003) ? 16 : 0;
-    if (data_offset == 0) {
-        result.buf[0] = SP_ERR_OTHER;
-    } else {
-        WORD print_offset = *(WORD *)(reparse_buf + 12);
-        WORD print_len = *(WORD *)(reparse_buf + 14);
-        WCHAR *print_name = (WCHAR *)(reparse_buf + data_offset + print_offset);
-        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_len / 2,
-                                           result.buf, SP_PATH_MAX - 1, NULL, NULL);
-        if (utf8_len > 0) {
-            result.len = SP_PRIV_CAST(size_t, utf8_len);
-            result.buf[result.len] = '\0';
-            sp_priv_normalize(result.buf, &result.len, result.flavor);
-        } else {
-            result.buf[0] = SP_ERR_OTHER;
-        }
-    }
+    if (data_offset == 0) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
+
+    WORD print_offset = *(WORD *)(reparse_buf + 12);
+    WORD print_len = *(WORD *)(reparse_buf + 14);
+    WCHAR *print_name = (WCHAR *)(reparse_buf + data_offset + print_offset);
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, print_name, print_len / 2,
+                                       result.buf, SP_PATH_MAX - 1, NULL, NULL);
+    if (utf8_len <= 0) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
+    result.len = SP_PRIV_CAST(size_t, utf8_len);
+    result.buf[result.len] = '\0';
+    sp_priv_normalize(result.buf, &result.len, result.flavor);
 #else
     ssize_t len = readlink(path_str, result.buf, SP_PATH_MAX - 1);
-    if (len < 0) {
-        result.buf[0] = SP_ERR_OTHER;
-        return result;
-    }
+    if (len < 0) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
     result.len = SP_PRIV_CAST(size_t, len);
     result.buf[result.len] = '\0';
 #endif
@@ -1891,33 +1864,16 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath result = SP_PRIV_ZERO;
     result.flavor = p->flavor;
-    if (sp_priv_has_embedded_null(p)) {
-        if (strict) {
-            result.buf[0] = SP_ERR_OTHER;
-            return result;
-        }
-        return sp_priv_absolute_path(p);
-    }
+    if (sp_priv_has_embedded_null(p)) return strict ? sp_priv_error_path_f(p->flavor, SP_ERR_OTHER) : sp_priv_absolute_path(p);
     const char *path_str = sp_str(p);
 
 #ifdef SP_WINDOWS
     char full_path[SP_PATH_MAX];
     DWORD len = GetFullPathNameA(path_str, SP_PATH_MAX, full_path, NULL);
-    if (len == 0 || len >= SP_PATH_MAX) {
-        if (strict) {
-            result.buf[0] = SP_ERR_OTHER;
-            return result;
-        }
-        return sp_priv_absolute_path(p);
-    }
-
-    if (strict) {
-        DWORD attrs = GetFileAttributesA(full_path);
-        if (attrs == INVALID_FILE_ATTRIBUTES) {
-            result.buf[0] = SP_ERR_OTHER;
-            return result;
-        }
-    }
+    if (len == 0 || len >= SP_PATH_MAX)
+        return strict ? sp_priv_error_path_f(p->flavor, SP_ERR_OTHER) : sp_priv_absolute_path(p);
+    if (strict && GetFileAttributesA(full_path) == INVALID_FILE_ATTRIBUTES)
+        return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
 
     memcpy(result.buf, full_path, len);
     result.len = len;
@@ -1931,7 +1887,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         result.len = len;
         result.buf[result.len] = '\0';
     } else {
-        if (strict) { result.buf[0] = SP_ERR_OTHER; return result; }
+        if (strict) return sp_priv_error_path_f(p->flavor, SP_ERR_OTHER);
         SpPath abs_path = sp_priv_absolute_path(p);
         size_t curr_len = abs_path.len;
         while (curr_len > 0) {
@@ -1966,13 +1922,9 @@ static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
     return true;
 }
 
-static bool sp_priv_two_path_cstr(const SpPath *a, const SpPath *b, const char **a_str, const char **b_str) {
-    return sp_priv_path_cstr(a, a_str) && sp_priv_path_cstr(b, b_str);
-}
-
 static bool sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool symbolic, bool target_is_directory) {
     const char *link_path, *target_path;
-    if (!sp_priv_two_path_cstr(p, target, &link_path, &target_path)) return false;
+    if (!sp_priv_path_cstr(p, &link_path) || !sp_priv_path_cstr(target, &target_path)) return false;
 #ifdef SP_WINDOWS
     if (symbolic) {
         DWORD flags = target_is_directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
@@ -2192,18 +2144,18 @@ SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
 
 const char *sp_error_str(int error) {
     switch (error) {
-        case SP_OK:                return "Success";
-        case SP_ERR:               return "Operation failed";
-        case SP_ERR_EXISTS:        return "File exists";
-        case SP_ERR_NOT_FOUND:     return "No such file or directory";
-        case SP_ERR_NOT_DIR:       return "Not a directory";
-        case SP_ERR_PERMISSION:    return "Permission denied";
-        case SP_ERR_EXISTS_NOT_DIR:return "Path exists but is not a directory";
-        case SP_ERR_OPEN:          return "Could not open file";
-        case SP_ERR_READ:          return "Read failed";
-        case SP_ERR_WRITE:         return "Write failed";
-        case SP_ERR_TOO_LARGE:     return "File too large for buffer";
-        default:                   return "Unknown error";
+        case SP_OK:                 return "Success";
+        case SP_ERR:                return "Operation failed";
+        case SP_ERR_EXISTS:         return "File exists";
+        case SP_ERR_NOT_FOUND:      return "No such file or directory";
+        case SP_ERR_NOT_DIR:        return "Not a directory";
+        case SP_ERR_PERMISSION:     return "Permission denied";
+        case SP_ERR_EXISTS_NOT_DIR: return "Path exists but is not a directory";
+        case SP_ERR_OPEN:           return "Could not open file";
+        case SP_ERR_READ:           return "Read failed";
+        case SP_ERR_WRITE:          return "Write failed";
+        case SP_ERR_TOO_LARGE:      return "File too large for buffer";
+        default:                    return "Unknown error";
     }
 }
 
@@ -2693,135 +2645,94 @@ bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
 static SP_TLS SpPath sp_priv_f_ctx;
 static SP_TLS bool sp_priv_f_ctx_active = false;
 
-/* X-macro lists for fluent API generation */
-#define SP_FLUENT_TERM_VOID(X)                                                                                         \
-    X(path, SpPath, sp_priv_f_ctx)                                                                                     \
-    X(suffixes, SpSuffixes, sp_suffixes(&sp_priv_f_ctx))                                                               \
-    X(is_absolute, bool, sp_is_absolute(&sp_priv_f_ctx))                                                               \
-    X(is_file, bool, sp_is_file(&sp_priv_f_ctx))                                                                       \
-    X(is_dir, bool, sp_is_dir(&sp_priv_f_ctx))                                                                         \
-    X(exists, bool, sp_exists(&sp_priv_f_ctx))                                                                         \
-    X(is_symlink, bool, sp_is_symlink(&sp_priv_f_ctx))                                                                 \
-    X(is_block_device, bool, sp_is_block_device(&sp_priv_f_ctx))                                                       \
-    X(is_char_device, bool, sp_is_char_device(&sp_priv_f_ctx))                                                         \
-    X(is_fifo, bool, sp_is_fifo(&sp_priv_f_ctx))                                                                       \
-    X(is_socket, bool, sp_is_socket(&sp_priv_f_ctx))                                                                   \
-    X(is_mount, bool, sp_is_mount(&sp_priv_f_ctx))                                                                     \
-    X(is_junction, bool, sp_is_junction(&sp_priv_f_ctx))                                                               \
-    X(is_reserved, bool, sp_is_reserved(&sp_priv_f_ctx))                                                               \
-    X(stat, SpStatResult, sp_stat(&sp_priv_f_ctx))                                                                     \
-    X(lstat, SpStatResult, sp_lstat(&sp_priv_f_ctx))
-#define SP_FLUENT_TERM_TERM(X)                                                                                         \
-    X(name, SpTerm, sp_name) X(stem, SpTerm, sp_stem) X(suffix, SpTerm, sp_suffix) X(drive, SpTerm, sp_drive)          \
-        X(root, SpTerm, sp_root) X(anchor, SpTerm, sp_anchor) X(owner, SpTerm, sp_owner) X(group, SpTerm, sp_group)
-#define SP_FLUENT_CHAIN_VOID(X) X(parent, sp_parent) X(absolute, sp_absolute) X(expanduser, sp_expanduser) X(readlink, sp_readlink)
-#define SP_FLUENT_CHAIN_STR(X)                                                                                         \
-    X(join, sp_join_one) X(with_name, sp_with_name) X(with_stem, sp_with_stem) X(with_suffix, sp_with_suffix)
-#define SP_FLUENT_CHAIN_PARTS(X) X(with_segments, sp_with_segments)
-#define SP_FLUENT_CHAIN_PATH(X)                                                                                        \
-    X(relative_to, sp_relative_to)                                                                                     \
-    X(relative_to_walk_up, sp_relative_to_walk_up)                                                                     \
-    X(rename, sp_rename)                                                                                               \
-    X(replace, sp_replace)
-#define SP_FLUENT_TERM_PATH(X)                                                                                         \
-    X(is_relative_to, sp_is_relative_to)                                                                               \
-    X(eq, sp_path_eq)                                                                                                  \
-    X(ne, sp_path_ne)                                                                                                  \
-    X(samefile, sp_samefile)
+static void sp_priv_f_done(void) {
+    sp_priv_f_ctx_active = false;
+}
 
-/* Generate terminator functions */
-#define SP_GEN_TERM_VOID(n, ret, expr)                                                                                 \
-    static ret sp_priv_f_##n##_(void) {                                                                                \
-        sp_priv_f_ctx_active = false;                                                                                  \
-        return expr;                                                                                                   \
-    }
-#define SP_GEN_TERM_STR(n, ret, fn)                                                                                    \
-    static ret sp_priv_f_##n##_(void) {                                                                                \
-        sp_priv_f_ctx_active = false;                                                                                  \
-        return fn(&sp_priv_f_ctx);                                                                                     \
-    }
-SP_FLUENT_TERM_VOID(SP_GEN_TERM_VOID)
-SP_FLUENT_TERM_TERM(SP_GEN_TERM_STR)
-#define SP_GEN_TERM_PATH(n, fn)                                                                                        \
-    static bool sp_priv_f_##n##_(const SpPath *o) {                                                                    \
-        sp_priv_f_ctx_active = false;                                                                                  \
-        return fn(&sp_priv_f_ctx, o);                                                                                  \
-    }
-SP_FLUENT_TERM_PATH(SP_GEN_TERM_PATH)
-static SpIOResult sp_priv_f_read_file_(char *buf, size_t buf_size) {
-    sp_priv_f_ctx_active = false;
-    return sp_read_file(&sp_priv_f_ctx, buf, buf_size);
-}
-static SpIOResult sp_priv_f_write_file_(const char *data, size_t data_len) {
-    sp_priv_f_ctx_active = false;
-    return sp_write_file(&sp_priv_f_ctx, data, data_len);
-}
-/* Hand-written terminators with unique signatures */
-static void sp_priv_f_as_posix_(char *out, size_t out_size) {
-    sp_priv_f_ctx_active = false;
-    sp_as_posix(&sp_priv_f_ctx, out, out_size);
-}
-static size_t sp_priv_f_as_uri_(char *buf, size_t buf_size) {
-    sp_priv_f_ctx_active = false;
-    return sp_as_uri(&sp_priv_f_ctx, buf, buf_size);
-}
-static int sp_priv_f_match_(const char *pattern) {
-    sp_priv_f_ctx_active = false;
-    return sp_match_ex(&sp_priv_f_ctx, pattern, -1);
-}
-/* SpPathOp mutator terminators - terminators that return path+error */
-static SpPathOp sp_priv_f_pathop(bool ok) {
+static SpPathOp sp_priv_f_pathop(int error) {
     SpPathOp r;
     r.path = sp_priv_f_ctx;
-    sp_priv_f_ctx_active = false;
-    r.error = ok ? SP_OK : SP_ERR;
+    sp_priv_f_done();
+    r.error = error;
     return r;
-}
-static int sp_priv_mkdir_to_error(int r) {
-    switch (r) {
-        case SP_MKDIR_OK:                   return SP_OK;
-        case SP_MKDIR_ERR_EXISTS:           return SP_ERR_EXISTS;
-        case SP_MKDIR_ERR_NOT_FOUND:        return SP_ERR_NOT_FOUND;
-        case SP_MKDIR_ERR_NOT_DIR:          return SP_ERR_NOT_DIR;
-        case SP_MKDIR_ERR_PERMISSION:       return SP_ERR_PERMISSION;
-        case SP_MKDIR_ERR_EXISTS_NOT_DIR:   return SP_ERR_EXISTS_NOT_DIR;
-        default:                            return SP_ERR_OTHER_OP;
-    }
-}
-static SpPathOp sp_priv_f_mkdir_(unsigned int mode, bool parents, bool exist_ok) {
-    SpPathOp r = sp_priv_f_pathop(true);
-    r.error = sp_priv_mkdir_to_error(sp_mkdir(&r.path, mode, parents, exist_ok));
-    return r;
-}
-static SpPathOp sp_priv_f_touch_(unsigned int mode, bool exist_ok) {
-    return sp_priv_f_pathop(sp_touch(&sp_priv_f_ctx, mode, exist_ok));
-}
-static SpPathOp sp_priv_f_unlink_(bool missing_ok) {
-    return sp_priv_f_pathop(sp_unlink(&sp_priv_f_ctx, missing_ok));
-}
-static SpPathOp sp_priv_f_rmdir_(void) {
-    return sp_priv_f_pathop(sp_rmdir(&sp_priv_f_ctx));
-}
-static SpPathOp sp_priv_f_chmod_(unsigned int mode) {
-    return sp_priv_f_pathop(sp_chmod(&sp_priv_f_ctx, mode));
-}
-static SpPathOp sp_priv_f_symlink_to_(const SpPath *target, bool target_is_directory) {
-    return sp_priv_f_pathop(sp_symlink_to(&sp_priv_f_ctx, target, target_is_directory));
-}
-static SpPathOp sp_priv_f_hardlink_to_(const SpPath *target) {
-    return sp_priv_f_pathop(sp_hardlink_to(&sp_priv_f_ctx, target));
 }
 
-/* Chainable: declare, then instance, then define (instance must exist for return) */
-#define SP_DECL_CHAIN_VOID(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(void);
-#define SP_DECL_CHAIN_STR(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char *);
-#define SP_DECL_CHAIN_PARTS(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char **, size_t);
-#define SP_DECL_CHAIN_PATH(n, fn) static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const SpPath *);
-SP_FLUENT_CHAIN_VOID(SP_DECL_CHAIN_VOID)
-SP_FLUENT_CHAIN_STR(SP_DECL_CHAIN_STR)
-SP_FLUENT_CHAIN_PARTS(SP_DECL_CHAIN_PARTS)
-SP_FLUENT_CHAIN_PATH(SP_DECL_CHAIN_PATH)
-static SpPrivDontUseThisDirectly_ *sp_priv_f_resolve_(bool strict);
+static int sp_priv_mkdir_to_error(int r) {
+    switch (r) {
+        case SP_MKDIR_OK:                 return SP_OK;
+        case SP_MKDIR_ERR_EXISTS:         return SP_ERR_EXISTS;
+        case SP_MKDIR_ERR_NOT_FOUND:      return SP_ERR_NOT_FOUND;
+        case SP_MKDIR_ERR_NOT_DIR:        return SP_ERR_NOT_DIR;
+        case SP_MKDIR_ERR_PERMISSION:     return SP_ERR_PERMISSION;
+        case SP_MKDIR_ERR_EXISTS_NOT_DIR: return SP_ERR_EXISTS_NOT_DIR;
+        default:                          return SP_ERR_OTHER_OP;
+    }
+}
+
+#define SP_F_TERM(ret, name, params, expr) \
+    static ret sp_priv_f_##name##_ params { sp_priv_f_done(); return (expr); }
+#define SP_F_PROC(name, params, expr) \
+    static void sp_priv_f_##name##_ params { sp_priv_f_done(); expr; }
+
+SP_F_TERM(SpPath, path, (void), sp_priv_f_ctx)
+SP_F_TERM(SpTerm, name, (void), sp_name(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, stem, (void), sp_stem(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, suffix, (void), sp_suffix(&sp_priv_f_ctx))
+SP_F_TERM(SpSuffixes, suffixes, (void), sp_suffixes(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, drive, (void), sp_drive(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, root, (void), sp_root(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, anchor, (void), sp_anchor(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, owner, (void), sp_owner(&sp_priv_f_ctx))
+SP_F_TERM(SpTerm, group, (void), sp_group(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_absolute, (void), sp_is_absolute(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_relative_to, (const SpPath *o), sp_is_relative_to(&sp_priv_f_ctx, o))
+SP_F_TERM(bool, is_file, (void), sp_is_file(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_dir, (void), sp_is_dir(&sp_priv_f_ctx))
+SP_F_TERM(bool, exists, (void), sp_exists(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_symlink, (void), sp_is_symlink(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_block_device, (void), sp_is_block_device(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_char_device, (void), sp_is_char_device(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_fifo, (void), sp_is_fifo(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_socket, (void), sp_is_socket(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_mount, (void), sp_is_mount(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_junction, (void), sp_is_junction(&sp_priv_f_ctx))
+SP_F_TERM(bool, is_reserved, (void), sp_is_reserved(&sp_priv_f_ctx))
+SP_F_TERM(SpStatResult, stat, (void), sp_stat(&sp_priv_f_ctx))
+SP_F_TERM(SpStatResult, lstat, (void), sp_lstat(&sp_priv_f_ctx))
+SP_F_TERM(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))
+SP_F_TERM(bool, ne, (const SpPath *o), sp_path_ne(&sp_priv_f_ctx, o))
+SP_F_TERM(bool, samefile, (const SpPath *o), sp_samefile(&sp_priv_f_ctx, o))
+SP_F_TERM(SpIOResult, read_file, (char *buf, size_t buf_size), sp_read_file(&sp_priv_f_ctx, buf, buf_size))
+SP_F_TERM(SpIOResult, write_file, (const char *data, size_t data_len), sp_write_file(&sp_priv_f_ctx, data, data_len))
+SP_F_PROC(as_posix, (char *out, size_t out_size), sp_as_posix(&sp_priv_f_ctx, out, out_size))
+SP_F_TERM(size_t, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))
+SP_F_TERM(int, match, (const char *pattern), sp_match_ex(&sp_priv_f_ctx, pattern, -1))
+SP_F_TERM(SpPathOp, mkdir, (unsigned int mode, bool parents, bool exist_ok),
+          sp_priv_f_pathop(sp_priv_mkdir_to_error(sp_mkdir(&sp_priv_f_ctx, mode, parents, exist_ok))))
+SP_F_TERM(SpPathOp, touch, (unsigned int mode, bool exist_ok),
+          sp_priv_f_pathop(sp_touch(&sp_priv_f_ctx, mode, exist_ok) ? SP_OK : SP_ERR))
+SP_F_TERM(SpPathOp, unlink, (bool missing_ok), sp_priv_f_pathop(sp_unlink(&sp_priv_f_ctx, missing_ok) ? SP_OK : SP_ERR))
+SP_F_TERM(SpPathOp, rmdir, (void), sp_priv_f_pathop(sp_rmdir(&sp_priv_f_ctx) ? SP_OK : SP_ERR))
+SP_F_TERM(SpPathOp, chmod, (unsigned int mode), sp_priv_f_pathop(sp_chmod(&sp_priv_f_ctx, mode) ? SP_OK : SP_ERR))
+SP_F_TERM(SpPathOp, symlink_to, (const SpPath *target, bool target_is_directory),
+          sp_priv_f_pathop(sp_symlink_to(&sp_priv_f_ctx, target, target_is_directory) ? SP_OK : SP_ERR))
+SP_F_TERM(SpPathOp, hardlink_to, (const SpPath *target), sp_priv_f_pathop(sp_hardlink_to(&sp_priv_f_ctx, target) ? SP_OK : SP_ERR))
+
+#define SP_F_CHAIN_DECL(name, params) static SpPrivDontUseThisDirectly_ *sp_priv_f_##name##_ params;
+SP_F_CHAIN_DECL(parent, (void))
+SP_F_CHAIN_DECL(join, (const char *s))
+SP_F_CHAIN_DECL(with_segments, (const char **parts, size_t parts_count))
+SP_F_CHAIN_DECL(with_name, (const char *s))
+SP_F_CHAIN_DECL(with_stem, (const char *s))
+SP_F_CHAIN_DECL(with_suffix, (const char *s))
+SP_F_CHAIN_DECL(absolute, (void))
+SP_F_CHAIN_DECL(expanduser, (void))
+SP_F_CHAIN_DECL(relative_to, (const SpPath *o))
+SP_F_CHAIN_DECL(relative_to_walk_up, (const SpPath *o))
+SP_F_CHAIN_DECL(readlink, (void))
+SP_F_CHAIN_DECL(resolve, (bool strict))
+SP_F_CHAIN_DECL(rename, (const SpPath *o))
+SP_F_CHAIN_DECL(replace, (const SpPath *o))
 
 static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_path_,
@@ -2880,34 +2791,32 @@ static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
     sp_priv_f_replace_
 };
 
-#define SP_DEF_CHAIN_VOID(n, fn)                                                                                       \
-    static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(void) {                                                        \
-        sp_priv_f_ctx = fn(&sp_priv_f_ctx);                                                                            \
-        return &sp_priv_f_instance;                                                                                    \
-    }
-#define SP_DEF_CHAIN_STR(n, fn)                                                                                        \
-    static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char *s) {                                               \
-        sp_priv_f_ctx = fn(&sp_priv_f_ctx, s);                                                                         \
-        return &sp_priv_f_instance;                                                                                    \
-    }
-#define SP_DEF_CHAIN_PARTS(n, fn)                                                                                      \
-    static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const char **parts, size_t parts_count) {                      \
-        sp_priv_f_ctx = fn(&sp_priv_f_ctx, parts, parts_count);                                                         \
-        return &sp_priv_f_instance;                                                                                    \
-    }
-#define SP_DEF_CHAIN_PATH(n, fn)                                                                                       \
-    static SpPrivDontUseThisDirectly_ *sp_priv_f_##n##_(const SpPath *o) {                                             \
-        sp_priv_f_ctx = fn(&sp_priv_f_ctx, o);                                                                         \
-        return &sp_priv_f_instance;                                                                                    \
-    }
-SP_FLUENT_CHAIN_VOID(SP_DEF_CHAIN_VOID)
-SP_FLUENT_CHAIN_STR(SP_DEF_CHAIN_STR)
-SP_FLUENT_CHAIN_PARTS(SP_DEF_CHAIN_PARTS)
-SP_FLUENT_CHAIN_PATH(SP_DEF_CHAIN_PATH)
-static SpPrivDontUseThisDirectly_ *sp_priv_f_resolve_(bool strict) {
-    sp_priv_f_ctx = sp_resolve(&sp_priv_f_ctx, strict);
+static SpPrivDontUseThisDirectly_ *sp_priv_f_chain(SpPath path) {
+    sp_priv_f_ctx = path;
     return &sp_priv_f_instance;
 }
+
+#define SP_F_CHAIN(name, params, expr) \
+    static SpPrivDontUseThisDirectly_ *sp_priv_f_##name##_ params { return sp_priv_f_chain(expr); }
+SP_F_CHAIN(parent, (void), sp_parent(&sp_priv_f_ctx))
+SP_F_CHAIN(join, (const char *s), sp_join_one(&sp_priv_f_ctx, s))
+SP_F_CHAIN(with_segments, (const char **parts, size_t parts_count), sp_with_segments(&sp_priv_f_ctx, parts, parts_count))
+SP_F_CHAIN(with_name, (const char *s), sp_with_name(&sp_priv_f_ctx, s))
+SP_F_CHAIN(with_stem, (const char *s), sp_with_stem(&sp_priv_f_ctx, s))
+SP_F_CHAIN(with_suffix, (const char *s), sp_with_suffix(&sp_priv_f_ctx, s))
+SP_F_CHAIN(absolute, (void), sp_absolute(&sp_priv_f_ctx))
+SP_F_CHAIN(expanduser, (void), sp_expanduser(&sp_priv_f_ctx))
+SP_F_CHAIN(relative_to, (const SpPath *o), sp_relative_to(&sp_priv_f_ctx, o))
+SP_F_CHAIN(relative_to_walk_up, (const SpPath *o), sp_relative_to_walk_up(&sp_priv_f_ctx, o))
+SP_F_CHAIN(readlink, (void), sp_readlink(&sp_priv_f_ctx))
+SP_F_CHAIN(resolve, (bool strict), sp_resolve(&sp_priv_f_ctx, strict))
+SP_F_CHAIN(rename, (const SpPath *o), sp_rename(&sp_priv_f_ctx, o))
+SP_F_CHAIN(replace, (const SpPath *o), sp_replace(&sp_priv_f_ctx, o))
+
+#undef SP_F_CHAIN
+#undef SP_F_CHAIN_DECL
+#undef SP_F_PROC
+#undef SP_F_TERM
 
 SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath p) {
     assert(!sp_priv_f_ctx_active && "snakepath fluent API: previous chain not terminated");
