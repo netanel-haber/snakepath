@@ -1630,6 +1630,13 @@ bool sp_exists(const SpPath *p) {
     return sp_stat(p).valid;
 }
 
+static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    if (sp_priv_has_embedded_null(p)) return false;
+    *out = sp_str(p);
+    return true;
+}
+
 bool sp_is_mount(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     if (sp_priv_has_embedded_null(p)) return false;
@@ -1710,8 +1717,8 @@ static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpStatResult result = SP_PRIV_ZERO;
     result.valid = false;
-    if (sp_priv_has_embedded_null(p)) return result;
-    const char *path_str = sp_str(p);
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return result;
 
 #ifdef SP_WINDOWS
     DWORD flags = FILE_FLAG_BACKUP_SEMANTICS;
@@ -1811,8 +1818,8 @@ SpPath sp_readlink(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath result = SP_PRIV_ZERO;
     result.flavor = p->flavor;
-    if (sp_priv_has_embedded_null(p)) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
-    const char *path_str = sp_str(p);
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
 
 #ifdef SP_WINDOWS
     HANDLE h = CreateFileA(path_str, GENERIC_READ,
@@ -1858,8 +1865,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath result = SP_PRIV_ZERO;
     result.flavor = p->flavor;
-    if (sp_priv_has_embedded_null(p)) return strict ? sp_priv_error_path(p->flavor, SP_ERR_OTHER) : sp_priv_absolute_path(p);
-    const char *path_str = sp_str(p);
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str))
+        return strict ? sp_priv_error_path(p->flavor, SP_ERR_OTHER) : sp_priv_absolute_path(p);
 
 #ifdef SP_WINDOWS
     char full_path[SP_PATH_MAX];
@@ -1907,13 +1915,6 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
 #endif
 
     return result;
-}
-
-static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
-    *out = sp_str(p);
-    return true;
 }
 
 static bool sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool symbolic, bool target_is_directory) {
@@ -1995,11 +1996,11 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str)) return false;
     if (mode == 0) mode = 0666;
+    bool exists = sp_exists(p);
+    if (exists && !exist_ok) return false;
 
 #ifdef SP_WINDOWS
-    DWORD attrs = GetFileAttributesA(path_str);
-    if (attrs != INVALID_FILE_ATTRIBUTES) {
-        if (!exist_ok) return false;
+    if (exists) {
         HANDLE h = CreateFileA(path_str, FILE_WRITE_ATTRIBUTES,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -2015,8 +2016,7 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
     CloseHandle(h);
     return true;
 #else
-    struct stat st;
-    if (stat(path_str, &st) == 0) return exist_ok && utime(path_str, SP_PRIV_NULL) == 0;
+    if (exists) return utime(path_str, SP_PRIV_NULL) == 0;
     int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
     if (fd < 0) return false;
     close(fd);
@@ -2051,28 +2051,17 @@ static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_rep
     SP_ASSERT_PATH_INVARIANT(p);
     SP_ASSERT_PATH_INVARIANT(target);
     SpPath result = *target;
-
-    if (sp_priv_has_embedded_null(p) || sp_priv_has_embedded_null(target)) {
+    const char *src_str, *dst_str;
+    if (!sp_priv_path_cstr(p, &src_str) || !sp_priv_path_cstr(target, &dst_str))
         return sp_priv_error_path(target->flavor, SP_ERR_OTHER);
-    }
-
-    const char *src_str = sp_str(p);
-    const char *dst_str = sp_str(target);
 
 #ifdef SP_WINDOWS
     if (!MoveFileExA(src_str, dst_str, allow_replace ? MOVEFILE_REPLACE_EXISTING : 0)) {
         return sp_priv_error_path(target->flavor, SP_ERR_OTHER);
     }
 #else
-    if (!allow_replace) {
-        struct stat dst_st;
-        if (stat(dst_str, &dst_st) == 0) {
-            struct stat src_st;
-            if (stat(src_str, &src_st) == 0 && src_st.st_dev == dst_st.st_dev && src_st.st_ino == dst_st.st_ino)
-                return result;
-            return sp_priv_error_path(target->flavor, SP_ERR_OTHER);
-        }
-    }
+    if (!allow_replace && sp_exists(target))
+        return sp_samefile(p, target) ? result : sp_priv_error_path(target->flavor, SP_ERR_OTHER);
     if (rename(src_str, dst_str) != 0) {
         return sp_priv_error_path(target->flavor, SP_ERR_OTHER);
     }
@@ -2151,8 +2140,7 @@ const char *sp_error_str(int error) {
     }
 }
 
-#ifdef SP_WINDOWS
-#else
+#ifndef SP_WINDOWS
 #include <dirent.h>
 #endif
 
@@ -2189,9 +2177,10 @@ static void sp_priv_readdir_close(void **handle) {
 }
 
 static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) {
-#ifdef SP_WINDOWS
-    WIN32_FIND_DATAA fd;
     while (true) {
+        const char *name;
+#ifdef SP_WINDOWS
+        WIN32_FIND_DATAA fd;
         if (!*handle) {
             char search[SP_PATH_MAX + 3];
             size_t len = dir->len;
@@ -2211,24 +2200,20 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
         } else {
             if (!FindNextFileA(*handle, &fd)) return false;
         }
-        const char *name = fd.cFileName;
+        name = fd.cFileName;
+#else
+        if (!*handle) {
+            *handle = opendir(sp_str(dir));
+            if (!*handle) return false;
+        }
+        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, *handle));
+        if (!de) return false;
+        name = de->d_name;
+#endif
         if (SP_GLOB_IS_DOT_OR_DOTDOT(name)) continue;
         *out = sp_priv_join_len(dir, name, strlen(name));
         return true;
     }
-#else
-    if (!*handle) {
-        *handle = opendir(sp_str(dir));
-        if (!*handle) return false;
-    }
-    while (true) {
-        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, *handle));
-        if (!de) return false;
-        if (SP_GLOB_IS_DOT_OR_DOTDOT(de->d_name)) continue;
-        *out = sp_priv_join_len(dir, de->d_name, strlen(de->d_name));
-        return true;
-    }
-#endif
 }
 
 static void sp_priv_glob_pop(SpGlobIter *it) {
@@ -2455,8 +2440,12 @@ SpPath sp_expanduser(const SpPath *p) {
 #endif
 }
 
-#ifndef SP_WINDOWS
 static SpTerm sp_priv_id_to_name(const SpPath *p, bool get_owner) {
+#ifdef SP_WINDOWS
+    (void)p;
+    (void)get_owner;
+    return sp_priv_term(NULL, 0);
+#else
     SpStatResult st = sp_stat(p);
     if (!st.valid) return sp_priv_term(NULL, 0);
     const char *name = NULL;
@@ -2468,27 +2457,17 @@ static SpTerm sp_priv_id_to_name(const SpPath *p, bool get_owner) {
         if (gr) name = gr->gr_name;
     }
     return name ? sp_priv_term(name, strlen(name)) : sp_priv_term(NULL, 0);
-}
 #endif
+}
 
 SpTerm sp_owner(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-#ifdef SP_WINDOWS
-    (void)p;
-    return sp_priv_term(NULL, 0);
-#else
     return sp_priv_id_to_name(p, true);
-#endif
 }
 
 SpTerm sp_group(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-#ifdef SP_WINDOWS
-    (void)p;
-    return sp_priv_term(NULL, 0);
-#else
     return sp_priv_id_to_name(p, false);
-#endif
 }
 
 SpIterdirIter sp_iterdir_begin(const SpPath *p) {
@@ -2500,8 +2479,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     if (sp_priv_has_embedded_null(p)) return it;
     it.dir = sp_path_copy(p);
 #ifdef SP_WINDOWS
-    DWORD attr = GetFileAttributesA(it.dir.len ? it.dir.buf : ".");
-    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return it;
+    if (it.dir.len > 0 && !sp_priv_has_type(&it.dir, S_IFDIR, true)) return it;
     it.priv_.handle = SP_PRIV_NULL;
 #else
     it.priv_.handle = opendir(sp_str(&it.dir));
