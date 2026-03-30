@@ -191,13 +191,13 @@ SP_EXPORT int sp_match_err_invalid(void) { return SP_MATCH_ERR_INVALID; }
 SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok) {
     return sp_mkdir(p, mode, parents != 0, exist_ok != 0);
 }
-SP_EXPORT int sp_mkdir_ok(void) { return SP_MKDIR_OK; }
-SP_EXPORT int sp_mkdir_err_exists(void) { return SP_MKDIR_ERR_EXISTS; }
-SP_EXPORT int sp_mkdir_err_not_found(void) { return SP_MKDIR_ERR_NOT_FOUND; }
-SP_EXPORT int sp_mkdir_err_not_dir(void) { return SP_MKDIR_ERR_NOT_DIR; }
-SP_EXPORT int sp_mkdir_err_permission(void) { return SP_MKDIR_ERR_PERMISSION; }
-SP_EXPORT int sp_mkdir_err_other(void) { return SP_MKDIR_ERR_OTHER; }
-SP_EXPORT int sp_mkdir_err_exists_not_dir(void) { return SP_MKDIR_ERR_EXISTS_NOT_DIR; }
+SP_EXPORT int sp_mkdir_ok(void) { return SP_OK; }
+SP_EXPORT int sp_mkdir_err_exists(void) { return SP_ERR_EXISTS; }
+SP_EXPORT int sp_mkdir_err_not_found(void) { return SP_ERR_NOT_FOUND; }
+SP_EXPORT int sp_mkdir_err_not_dir(void) { return SP_ERR_NOT_DIR; }
+SP_EXPORT int sp_mkdir_err_permission(void) { return SP_ERR_PERMISSION; }
+SP_EXPORT int sp_mkdir_err_other(void) { return SP_ERR_OTHER_OP; }
+SP_EXPORT int sp_mkdir_err_exists_not_dir(void) { return SP_ERR_EXISTS_NOT_DIR; }
 
 /* glob iterator */
 SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
@@ -247,11 +247,11 @@ SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data
     *bytes_out = r.bytes;
     *error_out = r.error;
 }
-SP_EXPORT int sp_io_ok(void) { return SP_IO_OK; }
-SP_EXPORT int sp_io_err_open(void) { return SP_IO_ERR_OPEN; }
-SP_EXPORT int sp_io_err_read(void) { return SP_IO_ERR_READ; }
-SP_EXPORT int sp_io_err_write(void) { return SP_IO_ERR_WRITE; }
-SP_EXPORT int sp_io_err_too_large(void) { return SP_IO_ERR_TOO_LARGE; }
+SP_EXPORT int sp_io_ok(void) { return SP_OK; }
+SP_EXPORT int sp_io_err_open(void) { return SP_ERR_OPEN; }
+SP_EXPORT int sp_io_err_read(void) { return SP_ERR_READ; }
+SP_EXPORT int sp_io_err_write(void) { return SP_ERR_WRITE; }
+SP_EXPORT int sp_io_err_too_large(void) { return SP_ERR_TOO_LARGE; }
 
 /* Home directory and user expansion */
 SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) {
