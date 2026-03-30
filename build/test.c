@@ -399,16 +399,16 @@ int main(void) {
 
     /* Test basic mkdir */
     int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
-    ASSERT(mkdir_result == SP_MKDIR_OK);
+    ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_test) == true);
 
     /* Test mkdir with exist_ok=false should fail when dir exists */
     mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
-    ASSERT(mkdir_result == SP_MKDIR_ERR_EXISTS);
+    ASSERT(mkdir_result == SP_ERR_EXISTS);
 
     /* Test mkdir with exist_ok=true should succeed when dir exists */
     mkdir_result = sp_mkdir(&mkdir_test, 0755, false, true);
-    ASSERT(mkdir_result == SP_MKDIR_OK);
+    ASSERT(mkdir_result == SP_OK);
 
     /* Cleanup */
     test_rmdir(sp_str(&mkdir_test));
@@ -419,7 +419,7 @@ int main(void) {
     snprintf(nested_sub, sizeof(nested_sub), "%s/subdir", test_dir_mkdir_nested);
     SpPath mkdir_nested = sp_path_f(nested_path, SP_FLAVOR_NATIVE);
     mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false);
-    ASSERT(mkdir_result == SP_MKDIR_OK);
+    ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_nested) == true);
 
     /* Cleanup nested dirs */
@@ -430,7 +430,7 @@ int main(void) {
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
     mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, false, false);
-    ASSERT(mkdir_result == SP_MKDIR_ERR_NOT_FOUND);
+    ASSERT(mkdir_result == SP_ERR_NOT_FOUND);
 
     printf("  mkdir tests OK\n");
 
@@ -624,7 +624,7 @@ int main(void) {
     SpPath rmdir_dir = sp_path_f(rmdir_path, SP_FLAVOR_NATIVE);
 
     /* Create directory */
-    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false) == SP_MKDIR_OK);
+    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false) == SP_OK);
     ASSERT(sp_is_dir(&rmdir_dir) == true);
 
     /* Test rmdir on empty directory */
@@ -646,12 +646,12 @@ int main(void) {
     /* Write then read back */
     {
         SpIOResult wr = sp_write_file(&rw_file, "hello world", 11);
-        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.error == SP_OK);
         ASSERT(wr.bytes == 11);
 
         char rbuf[64];
         SpIOResult rd = sp_read_file(&rw_file, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.error == SP_OK);
         ASSERT(rd.bytes == 11);
         ASSERT(memcmp(rbuf, "hello world", 11) == 0);
     }
@@ -659,12 +659,12 @@ int main(void) {
     /* Overwrite (truncate) */
     {
         SpIOResult wr = sp_write_file(&rw_file, "hi", 2);
-        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.error == SP_OK);
         ASSERT(wr.bytes == 2);
 
         char rbuf[64];
         SpIOResult rd = sp_read_file(&rw_file, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.error == SP_OK);
         ASSERT(rd.bytes == 2);
         ASSERT(memcmp(rbuf, "hi", 2) == 0);
     }
@@ -673,7 +673,7 @@ int main(void) {
     {
         char tiny[1];
         SpIOResult rd = sp_read_file(&rw_file, tiny, sizeof(tiny));
-        ASSERT(rd.error == SP_IO_ERR_TOO_LARGE);
+        ASSERT(rd.error == SP_ERR_TOO_LARGE);
         ASSERT(rd.bytes == 2);  /* reports actual file size */
     }
 
@@ -682,14 +682,14 @@ int main(void) {
         SpPath nofile = sp_path_f("/nonexistent/file.txt", P);
         char rbuf[64];
         SpIOResult rd = sp_read_file(&nofile, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_IO_ERR_OPEN);
+        ASSERT(rd.error == SP_ERR_OPEN);
     }
 
     /* Write to nonexistent directory */
     {
         SpPath nodir = sp_path_f("/nonexistent/dir/file.txt", P);
         SpIOResult wr = sp_write_file(&nodir, "x", 1);
-        ASSERT(wr.error == SP_IO_ERR_OPEN);
+        ASSERT(wr.error == SP_ERR_OPEN);
     }
 
     /* Read directory (should fail with OPEN error) */
@@ -698,7 +698,7 @@ int main(void) {
         char rbuf[64];
         SpIOResult rd = sp_read_file(&rw_dir, rbuf, sizeof(rbuf));
         /* Reading a directory may fail at open or read depending on OS, but should not succeed */
-        ASSERT(rd.error != SP_IO_OK || rd.bytes == 0);
+        ASSERT(rd.error != SP_OK || rd.bytes == 0);
     }
 
     /* Empty file */
@@ -707,12 +707,12 @@ int main(void) {
         snprintf(empty_path, sizeof(empty_path), "./test_rw_empty_%ld.tmp", pid);
         SpPath empty_file = sp_path_f(empty_path, SP_FLAVOR_NATIVE);
         SpIOResult wr = sp_write_file(&empty_file, "", 0);
-        ASSERT(wr.error == SP_IO_OK);
+        ASSERT(wr.error == SP_OK);
         ASSERT(wr.bytes == 0);
 
         char rbuf[64];
         SpIOResult rd = sp_read_file(&empty_file, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_IO_OK);
+        ASSERT(rd.error == SP_OK);
         ASSERT(rd.bytes == 0);
         sp_unlink(&empty_file, false);
     }
@@ -722,9 +722,9 @@ int main(void) {
         SpPath null_path = sp_path_from_n("file\0hidden", 11, SP_FLAVOR_NATIVE);
         char rbuf[64];
         SpIOResult rd = sp_read_file(&null_path, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_IO_ERR_OPEN);
+        ASSERT(rd.error == SP_ERR_OPEN);
         SpIOResult wr = sp_write_file(&null_path, "x", 1);
-        ASSERT(wr.error == SP_IO_ERR_OPEN);
+        ASSERT(wr.error == SP_ERR_OPEN);
     }
 
     /* Cleanup */
