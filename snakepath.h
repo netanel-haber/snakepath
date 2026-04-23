@@ -97,14 +97,16 @@ typedef struct {
     size_t len;
 } SpTerm;
 
+static inline size_t sp_priv_copy_trunc(char *dst, size_t cap, const char *src, size_t len) {
+    size_t n = len < cap - 1 ? len : cap - 1;
+    if (n > 0) memcpy(dst, src, n);
+    dst[n] = '\0';
+    return n;
+}
+
 static inline SpTerm sp_priv_term(const char *data, size_t len) {
     SpTerm t = SP_PRIV_ZERO;
-    if (data && len > 0) {
-        size_t n = len < SP_TERM_MAX - 1 ? len : SP_TERM_MAX - 1;
-        memcpy(t.buf, data, n);
-        t.buf[n] = '\0';
-        t.len = n;
-    }
+    if (data && len > 0) t.len = sp_priv_copy_trunc(t.buf, SP_TERM_MAX, data, len);
     return t;
 }
 
@@ -591,18 +593,27 @@ static inline char sp_priv_tolower(char c) {
     return c;
 }
 
-/* Case-insensitive string comparison for Windows paths */
-static inline bool sp_priv_str_eq_ci(const char *a, size_t alen, const char *b, size_t blen) {
-    if (alen != blen) return false;
-    for (size_t i = 0; i < alen; i++) {
-        if (sp_priv_tolower(a[i]) != sp_priv_tolower(b[i])) return false;
+static int sp_priv_str_cmp_case(const char *a, size_t alen, const char *b, size_t blen, bool case_insensitive) {
+    size_t min_len = alen < blen ? alen : blen;
+    if (case_insensitive) {
+        for (size_t i = 0; i < min_len; i++) {
+            char ca = sp_priv_tolower(a[i]);
+            char cb = sp_priv_tolower(b[i]);
+            if (ca != cb) return ca < cb ? -1 : 1;
+        }
+    } else {
+        int cmp = memcmp(a, b, min_len);
+        if (cmp != 0) return cmp;
     }
-    return true;
+    return alen < blen ? -1 : (alen > blen ? 1 : 0);
+}
+static int sp_priv_str_cmp_flavor(const char *a, size_t alen, const char *b, size_t blen, SpFlavor flavor) {
+    return sp_priv_str_cmp_case(a, alen, b, blen, sp_priv_is_windows_flavor(flavor));
 }
 
 /* Flavor-aware string view comparison (case-insensitive for Windows) */
 static inline bool sp_priv_sv_eq_flavor(SpStr a, SpStr b, SpFlavor flavor) {
-    return sp_priv_is_windows_flavor(flavor) ? sp_priv_str_eq_ci(a.data, a.len, b.data, b.len) : sp_sv_eq(a, b);
+    return sp_priv_str_cmp_flavor(a.data, a.len, b.data, b.len, flavor) == 0;
 }
 
 /* Path-building helpers */
@@ -615,13 +626,27 @@ static inline void sp_priv_append_cstr(SpPath *r, const char *s, size_t len) {
         r->len += len;
     }
 }
-
-/* Check if path contains embedded null bytes (which would truncate C strings) */
-static inline bool sp_priv_has_embedded_null(const SpPath *p) {
-    for (size_t i = 0; i < p->len; i++) {
-        if (p->buf[i] == '\0') return true;
-    }
-    return false;
+static inline void sp_priv_terminate(SpPath *p) { p->buf[p->len] = '\0'; }
+static inline SpPath sp_priv_path_from_raw(const char *s, size_t len, SpFlavor flavor) {
+    SpPath p = SP_PRIV_ZERO;
+    p.flavor = flavor;
+    p.len = len >= SP_PATH_MAX ? SP_PATH_MAX - 1 : len;
+    if (s && p.len > 0) memcpy(p.buf, s, p.len);
+    sp_priv_terminate(&p);
+    return p;
+}
+static inline SpPath sp_priv_empty_path(SpFlavor flavor) { return sp_priv_path_from_raw(NULL, 0, flavor); }
+static inline size_t sp_priv_find_sep(const char *s, size_t len, size_t pos, SpFlavor flavor) {
+    while (pos < len && !sp_priv_is_sep(s[pos], flavor)) pos++;
+    return pos;
+}
+static inline size_t sp_priv_skip_seps(const char *s, size_t len, size_t pos, SpFlavor flavor) {
+    while (pos < len && sp_priv_is_sep(s[pos], flavor)) pos++;
+    return pos;
+}
+static inline size_t sp_priv_rfind_sep(const char *s, size_t pos, size_t stop, SpFlavor flavor) {
+    while (pos > stop && !sp_priv_is_sep(s[pos - 1], flavor)) pos--;
+    return pos;
 }
 
 static inline bool sp_priv_has_drive(const char *s, size_t len, SpFlavor flavor) {
@@ -643,6 +668,16 @@ typedef struct {
     bool is_complete;     /* Has both non-empty server AND share */
 } SpUncInfo;
 
+static void sp_priv_parse_unc_components(SpUncInfo *info, const char *s, size_t len, SpFlavor flavor, size_t start) {
+    size_t i = sp_priv_find_sep(s, len, start, flavor);
+    if (i > start) info->server_end = i;
+    if (i < len && info->server_end > 0) {
+        size_t share_start = i + 1;
+        i = sp_priv_find_sep(s, len, share_start, flavor);
+        if (i > share_start) { info->share_end = i; info->is_complete = true; }
+    }
+}
+
 /* Parse UNC path structure. Assumes sp_priv_is_unc() already returned true. */
 static SpUncInfo sp_priv_parse_unc(const char *s, size_t len, SpFlavor flavor) {
     SpUncInfo info = {0, 0, false, false, false};
@@ -653,38 +688,16 @@ static SpUncInfo sp_priv_parse_unc(const char *s, size_t len, SpFlavor flavor) {
 
     /* Check for //?/UNC pattern (case-insensitive) */
     if (has_device_prefix && len >= 8 && sp_priv_is_sep(s[3], flavor)) {
-        char c4 = s[4], c5 = s[5], c6 = s[6];
-        if (c4 >= 'a' && c4 <= 'z') c4 -= 32;
-        if (c5 >= 'a' && c5 <= 'z') c5 -= 32;
-        if (c6 >= 'a' && c6 <= 'z') c6 -= 32;
-        if (c4 == 'U' && c5 == 'N' && c6 == 'C' && (len == 7 || sp_priv_is_sep(s[7], flavor))) {
+        if (sp_priv_str_cmp_case(s + 4, 3, "UNC", 3, true) == 0 && (len == 7 || sp_priv_is_sep(s[7], flavor))) {
             info.is_unc_device = true;
             info.is_device_ns = false; /* UNC device is separate from plain device ns */
-            size_t i = 8; /* Past "//?/UNC/" */
-            if (i < len) {
-                while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
-                if (i > 8) info.server_end = i; /* Non-empty server */
-                if (i < len) {
-                    i++; /* Past separator */
-                    size_t share_start = i;
-                    while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
-                    if (i > share_start) { info.share_end = i; info.is_complete = true; }
-                }
-            }
+            sp_priv_parse_unc_components(&info, s, len, flavor, 8); /* Past "//?/UNC/" */
             return info;
         }
     }
 
     /* Regular UNC: //server/share */
-    size_t i = 2;
-    while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
-    if (i > 2) info.server_end = i; /* Non-empty server */
-    if (i < len && info.server_end > 0) {
-        i++; /* Past separator */
-        size_t share_start = i;
-        while (i < len && !sp_priv_is_sep(s[i], flavor)) i++;
-        if (i > share_start) { info.share_end = i; info.is_complete = true; }
-    }
+    sp_priv_parse_unc_components(&info, s, len, flavor, 2);
     return info;
 }
 
@@ -802,9 +815,8 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
 }
 
 static inline SpPath sp_priv_error_path(SpFlavor flavor, char err_code) {
-    SpPath p = SP_PRIV_ZERO;
+    SpPath p = sp_priv_empty_path(flavor);
     p.buf[0] = err_code;
-    p.flavor = flavor;
     return p;
 }
 
@@ -812,8 +824,7 @@ static inline size_t sp_priv_parent_len_raw(const char *buf, size_t len, SpFlavo
     if (len == 0) return 0;
     size_t anchor = sp_priv_anchor_len(buf, len, flavor);
     if (len <= anchor) return len;
-    size_t i = len;
-    while (i > anchor && !sp_priv_is_sep(buf[i - 1], flavor)) i--;
+    size_t i = sp_priv_rfind_sep(buf, len, anchor, flavor);
     if (i > anchor) i--;
     if (i == 0 && anchor == 0) return 0;
     if (i <= anchor) i = anchor;
@@ -821,23 +832,12 @@ static inline size_t sp_priv_parent_len_raw(const char *buf, size_t len, SpFlavo
 }
 
 static inline SpPath sp_priv_parent_path(const SpPath *p) {
-    SpPath r = SP_PRIV_ZERO;
-    size_t parent_len = sp_priv_parent_len_raw(p->buf, p->len, p->flavor);
-    r.flavor = p->flavor;
-    r.len = parent_len;
-    if (parent_len > 0) memcpy(r.buf, p->buf, parent_len);
-    r.buf[r.len] = '\0';
-    return r;
+    return sp_priv_path_from_raw(p->buf, sp_priv_parent_len_raw(p->buf, p->len, p->flavor), p->flavor);
 }
 
 SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor) {
     SP_ASSERT_FLAVOR(flavor);
-    SpPath p = SP_PRIV_ZERO;
-    p.flavor = flavor;
-    p.len = len;
-    if (p.len >= SP_PATH_MAX) p.len = SP_PATH_MAX - 1;
-    if (s && p.len > 0) memcpy(p.buf, s, p.len);
-    p.buf[p.len] = '\0';
+    SpPath p = sp_priv_path_from_raw(s, len, flavor);
     sp_priv_normalize(p.buf, &p.len, p.flavor);
     return p;
 }
@@ -912,8 +912,7 @@ static inline SpStr sp_priv_name_sv(const SpPath *p) {
     if (p->len == 0) return SP_PRIV_STR(SP_PRIV_NULL, 0);
     size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
     if (anchor == p->len) return SP_PRIV_STR(p->buf + p->len, 0);
-    size_t i = p->len;
-    while (i > anchor && !sp_priv_is_sep(p->buf[i - 1], p->flavor)) i--;
+    size_t i = sp_priv_rfind_sep(p->buf, p->len, anchor, p->flavor);
     if (i == 0 && p->len - i == 1 && p->buf[i] == '.') return SP_PRIV_STR(SP_PRIV_NULL, 0);
     return SP_PRIV_STR(p->buf + i, p->len - i);
 }
@@ -998,18 +997,13 @@ bool sp_parts_next(SpPartsIter *it, SpStr *out) {
         return true;
     }
 retry:
-    while (it->pos < p->len && sp_priv_is_sep(p->buf[it->pos], p->flavor)) {
-        it->pos++;
-    }
+    it->pos = sp_priv_skip_seps(p->buf, p->len, it->pos, p->flavor);
     if (it->pos >= p->len) return false;
     size_t start = it->pos;
-    while (it->pos < p->len && !sp_priv_is_sep(p->buf[it->pos], p->flavor)) {
-        it->pos++;
-    }
+    it->pos = sp_priv_find_sep(p->buf, p->len, it->pos, p->flavor);
     /* On Windows, skip leading '.' protecting a drive letter */
     if (sp_priv_is_windows_flavor(p->flavor) && start == 0 && it->pos - start == 1 && p->buf[start] == '.') {
-        size_t ns = it->pos;
-        while (ns < p->len && sp_priv_is_sep(p->buf[ns], p->flavor)) ns++;
+        size_t ns = sp_priv_skip_seps(p->buf, p->len, it->pos, p->flavor);
         if (ns + 1 < p->len && sp_priv_is_drive_letter(p->buf[ns]) && p->buf[ns + 1] == ':') {
             goto retry;
         }
@@ -1040,10 +1034,7 @@ SpParentsIter sp_parents_begin(const SpPath *p) {
 bool sp_parents_next(SpParentsIter *it, SpPath *out) {
     if (it->done) return false;
     const SpPath *p = it->path;
-    out->flavor = p->flavor;
-    out->len = it->current_len;
-    if (out->len > 0) memcpy(out->buf, p->buf, out->len);
-    out->buf[out->len] = '\0';
+    *out = sp_priv_path_from_raw(p->buf, it->current_len, p->flavor);
     if (out->len == 0) {
         it->done = true;
         return true;
@@ -1066,12 +1057,9 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
         /* Root only - keep drive from base */
         size_t dlen = sp_priv_drive_len(base->buf, base->len, flavor);
         if (dlen > 0) {
-            SpPath r = SP_PRIV_ZERO;
-            r.flavor = flavor;
-            memcpy(r.buf, base->buf, dlen);
-            r.len = dlen;
+            SpPath r = sp_priv_path_from_raw(base->buf, dlen, flavor);
             sp_priv_append_cstr(&r, other, olen);
-            r.buf[r.len] = '\0';
+            sp_priv_terminate(&r);
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
@@ -1092,16 +1080,13 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
             if (olen > 2 && sp_priv_is_sep(other[2], flavor)) {
                 return sp_path_from_n(other, olen, flavor);
             }
-            SpPath r = SP_PRIV_ZERO;
-            r.flavor = flavor;
-            memcpy(r.buf, base->buf, base->len);
-            r.len = base->len;
+            SpPath r = sp_priv_path_from_raw(base->buf, base->len, flavor);
             r.buf[0] = od;
             if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len - 1], flavor)) {
                 sp_priv_append_sep(&r);
             }
             sp_priv_append_cstr(&r, other + 2, olen - 2);
-            r.buf[r.len] = '\0';
+            sp_priv_terminate(&r);
             sp_priv_normalize(r.buf, &r.len, flavor);
             return r;
         }
@@ -1117,7 +1102,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
         sp_priv_append_sep(&r);
     }
     sp_priv_append_cstr(&r, other, olen);
-    r.buf[r.len] = '\0';
+    sp_priv_terminate(&r);
     sp_priv_normalize(r.buf, &r.len, flavor);
     return r;
 }
@@ -1153,8 +1138,7 @@ SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
 }
 
 static inline SpPath sp_priv_path_from_parts(SpFlavor flavor, const char *const *parts, size_t parts_count) {
-    SpPath r = SP_PRIV_ZERO;
-    r.flavor = flavor;
+    SpPath r = sp_priv_empty_path(flavor);
     if (!parts) return r;
     for (size_t i = 0; i < parts_count; i++) {
         const char *part = parts[i];
@@ -1194,7 +1178,7 @@ static SpPath sp_priv_with_name_impl(const SpPath *p, const char *name, size_t n
     }
     if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len - 1], p->flavor)) sp_priv_append_sep(&r);
     sp_priv_append_cstr(&r, name, nlen);
-    r.buf[r.len] = '\0';
+    sp_priv_terminate(&r);
     return r;
 }
 
@@ -1322,23 +1306,22 @@ static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, boo
 
     if (!walk_up && common < o_count) return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
 
-    SpPath r = SP_PRIV_ZERO;
-    r.flavor = p->flavor;
-    bool first = true;
+    SpPath r = sp_priv_empty_path(p->flavor);
     for (size_t i = common; i < o_count; i++) {
         if (i == 0 && o_anchor > 0) continue;
-        if (!first) sp_priv_append_sep(&r);
-        sp_priv_append_cstr(&r, "..", 2);
-        first = false;
+        r = sp_priv_join_len(&r, "..", 2);
     }
     for (size_t i = common; i < p_count; i++) {
         if (i == 0 && p_anchor > 0) continue;
-        if (!first) sp_priv_append_sep(&r);
-        sp_priv_append_cstr(&r, p_parts[i].data, p_parts[i].len);
-        first = false;
+        r = sp_priv_join_len(&r, p_parts[i].data, p_parts[i].len);
     }
-    r.buf[r.len] = '\0';
     return r;
+}
+
+static const char *sp_priv_uri_prefix(const char *path, size_t len) {
+    if (len >= 2 && path[0] == '/' && path[1] == '/') return "file:";
+    if (len > 0 && path[0] == '/') return "file://";
+    return "file:///";
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
@@ -1386,18 +1369,8 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
     size_t path_len = strlen(path);
     size_t pos = 0;
 
-    const char *prefix;
-    size_t plen;
-    if (path_len >= 2 && path[0] == '/' && path[1] == '/') {
-        prefix = "file:";
-        plen = 5;
-    } else if (path_len > 0 && path[0] == '/') {
-        prefix = "file://";
-        plen = 7;
-    } else {
-        prefix = "file:///";
-        plen = 8;
-    }
+    const char *prefix = sp_priv_uri_prefix(path, path_len);
+    size_t plen = strlen(prefix);
 
     if (pos + plen >= buf_size) return 0;
     memcpy(buf, prefix, plen);
@@ -1406,8 +1379,8 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
     static const char hex[] = "0123456789ABCDEF";
     for (size_t i = 0; i < path_len; i++) {
         unsigned char c = SP_PRIV_CAST(unsigned char, path[i]);
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' ||
-            c == '_' || c == '~' || c == '/') {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '.' || c == '_' || c == '~' || c == '/') {
             if (pos + 1 >= buf_size) return 0;
             buf[pos++] = SP_PRIV_CAST(char, c);
         } else if (c == ':' && i > 0 && path[i - 1] != '/') {
@@ -1427,28 +1400,13 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
 bool sp_path_eq(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
     SP_ASSERT_PATH_INVARIANT(b);
-    if (a->flavor != b->flavor || a->len != b->len) return false;
-    if (sp_priv_is_windows_flavor(a->flavor)) {
-        return sp_priv_str_eq_ci(a->buf, a->len, b->buf, b->len);
-    }
-    return memcmp(a->buf, b->buf, a->len) == 0;
+    return a->flavor == b->flavor && sp_priv_str_cmp_flavor(a->buf, a->len, b->buf, b->len, a->flavor) == 0;
 }
 
 int sp_path_cmp(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
     SP_ASSERT_PATH_INVARIANT(b);
-    size_t min_len = a->len < b->len ? a->len : b->len;
-    if (sp_priv_is_windows_flavor(a->flavor)) {
-        for (size_t i = 0; i < min_len; i++) {
-            char ca = sp_priv_tolower(a->buf[i]);
-            char cb = sp_priv_tolower(b->buf[i]);
-            if (ca != cb) return ca < cb ? -1 : 1;
-        }
-    } else {
-        int cmp = memcmp(a->buf, b->buf, min_len);
-        if (cmp != 0) return cmp;
-    }
-    return a->len < b->len ? -1 : (a->len > b->len ? 1 : 0);
+    return sp_priv_str_cmp_flavor(a->buf, a->len, b->buf, b->len, a->flavor);
 }
 
 unsigned long sp_path_hash(const SpPath *p) {
@@ -1497,9 +1455,7 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     bool is_win = sp_priv_is_windows_flavor(p->flavor);
     bool ci = (case_sensitive == -1) ? is_win : (case_sensitive == 0);
 
-    bool pat_has_sep = false;
-    for (size_t i = 0; i < plen && !pat_has_sep; i++)
-        if (pattern[i] == '/' || (is_win && pattern[i] == '\\')) pat_has_sep = true;
+    bool pat_has_sep = sp_priv_find_sep(pattern, plen, 0, p->flavor) < plen;
 
     if (!pat_has_sep) {
         if (SP_PRIV_IS_DOUBLESTAR(pattern, plen)) return SP_MATCH_YES;
@@ -1507,16 +1463,11 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
         return (name.len > 0 && sp_priv_fnmatch(pattern, plen, name.buf, name.len, ci)) ? SP_MATCH_YES : SP_MATCH_NO;
     }
 
-    bool pat_has_drive = false, pat_has_root = false;
-    size_t pat_anchor = 0;
-    if (is_win && plen >= 2 && (sp_priv_is_drive_letter(pattern[0]) || pattern[0] == '*') && pattern[1] == ':') {
-        pat_has_drive = true;
-        pat_anchor = 2;
-        if (plen > 2 && sp_priv_is_sep(pattern[2], p->flavor)) {
-            pat_has_root = true;
-            pat_anchor = 3;
-        }
-    } else if (sp_priv_is_sep(pattern[0], p->flavor)) {
+    bool pat_has_drive = is_win && plen >= 2 && (sp_priv_is_drive_letter(pattern[0]) || pattern[0] == '*') &&
+                         pattern[1] == ':';
+    bool pat_has_root = pat_has_drive && plen > 2 && sp_priv_is_sep(pattern[2], p->flavor);
+    size_t pat_anchor = pat_has_drive ? (pat_has_root ? 3 : 2) : 0;
+    if (!pat_has_drive && sp_priv_is_sep(pattern[0], p->flavor)) {
         pat_has_root = true;
         pat_anchor = 1;
     }
@@ -1525,8 +1476,7 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     if (pat_has_drive) {
         SpTerm drv = sp_drive(p);
         if (drv.len < 2) return SP_MATCH_NO;
-        char pd = sp_priv_tolower(pattern[0]), pthd = sp_priv_tolower(drv.buf[0]);
-        if (pattern[0] != '*' && pd != pthd) return SP_MATCH_NO;
+        if (pattern[0] != '*' && sp_priv_tolower(pattern[0]) != sp_priv_tolower(drv.buf[0])) return SP_MATCH_NO;
     }
     if (pat_has_root) {
         if (sp_root(p).len == 0) return SP_MATCH_NO;
@@ -1550,12 +1500,8 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
         }
         SpPartsIter it = sp_parts_begin(p);
         SpStr part;
-        bool first = true;
+        sp_parts_next(&it, &part); /* skip anchor */
         while (sp_parts_next(&it, &part) && path_count < SP_PATH_MAX / 2) {
-            if (first) {
-                first = false;
-                continue;
-            }
             path_parts[path_count++] = part;
         }
     } else {
@@ -1564,13 +1510,11 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
 
     SpStr pat_parts[SP_PATH_MAX / 2];
     size_t pat_count = 0, start = pat_anchor;
-    for (size_t i = start; i <= plen && pat_count < SP_PATH_MAX / 2; i++) {
-        if (i == plen || pattern[i] == '/' || (is_win && pattern[i] == '\\')) {
-            if (i > start) {
-                pat_parts[pat_count++] = SP_PRIV_STR(pattern + start, i - start);
-            }
-            start = i + 1;
-        }
+    while (start <= plen && pat_count < SP_PATH_MAX / 2) {
+        size_t end = sp_priv_find_sep(pattern, plen, start, p->flavor);
+        if (end > start) pat_parts[pat_count++] = SP_PRIV_STR(pattern + start, end - start);
+        if (end == plen) break;
+        start = end + 1;
     }
 
     size_t path_start = (pat_anchored && path_count > 0 && !unc_root_without_drive) ? 1 : 0;
@@ -1608,11 +1552,12 @@ bool sp_is_reserved(const SpPath *p) {
         if (c != ' ') upper[len++] = SP_PRIV_CAST(char, (c >= 'a' && c <= 'z') ? c - 32 : c);
     }
     upper[len] = '\0';
-    if (strcmp(upper, "CON") == 0 || strcmp(upper, "PRN") == 0 ||
-        strcmp(upper, "AUX") == 0 || strcmp(upper, "NUL") == 0) return true;
+    static const char *const reserved[] = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"};
+    for (size_t i = 0; i < SP_ARRAY_LEN(reserved); i++)
+        if (strcmp(upper, reserved[i]) == 0) return true;
     if (len == 4 && upper[3] >= '1' && upper[3] <= '9' &&
         (memcmp(upper, "COM", 3) == 0 || memcmp(upper, "LPT", 3) == 0)) return true;
-    return strcmp(upper, "CONIN$") == 0 || strcmp(upper, "CONOUT$") == 0;
+    return false;
 }
 
 static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
@@ -1632,24 +1577,25 @@ bool sp_exists(const SpPath *p) {
 
 static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
+    for (size_t i = 0; i < p->len; i++)
+        if (p->buf[i] == '\0') return false;
     *out = sp_str(p);
     return true;
 }
 
 bool sp_is_mount(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return false;
 #ifdef SP_WINDOWS
-    const char *path_str = sp_str(p);
     char vol_path[SP_PATH_MAX];
     if (!GetVolumePathNameA(path_str, vol_path, SP_PATH_MAX)) return false;
     size_t vlen = strlen(vol_path);
     size_t plen = p->len > 0 ? p->len : 1;
     if (vlen > 0 && vol_path[vlen - 1] == '\\') vlen--;
     if (plen > 0 && (path_str[plen - 1] == '\\' || path_str[plen - 1] == '/')) plen--;
-    return sp_priv_str_eq_ci(path_str, plen, vol_path, vlen);
+    return sp_priv_str_cmp_case(path_str, plen, vol_path, vlen, true) == 0;
 #else
+    (void)path_str;
     SpStatResult st_path = sp_lstat(p);
     if (!st_path.valid) return false;
     if ((st_path.sp_mode & S_IFMT) != S_IFDIR) return false;
@@ -1662,10 +1608,9 @@ bool sp_is_mount(const SpPath *p) {
 }
 
 bool sp_is_junction(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return false;
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return false;
 #ifdef SP_WINDOWS
-    const char *path_str = sp_str(p);
     DWORD attrs = GetFileAttributesA(path_str);
     if (attrs == INVALID_FILE_ATTRIBUTES) return false;
     if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return false;
@@ -1676,7 +1621,7 @@ bool sp_is_junction(const SpPath *p) {
     FindClose(h);
     return fd.dwReserved0 == 0xA0000003;
 #else
-    (void)p;
+    (void)path_str;
     return false;
 #endif
 }
@@ -1798,15 +1743,10 @@ bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
 }
 
 size_t sp_parents_count(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    size_t curr_len = p->len;
+    SpParentsIter it = sp_parents_begin(p);
+    SpPath parent;
     size_t count = 0;
-    while (curr_len > 0) {
-        size_t parent_len = sp_priv_parent_len_raw(p->buf, curr_len, p->flavor);
-        if (parent_len == curr_len) break;
-        count++;
-        curr_len = parent_len;
-    }
+    while (sp_parents_next(&it, &parent)) count++;
     return count;
 }
 
@@ -1816,8 +1756,7 @@ SpStatResult sp_lstat(const SpPath *p) {
 
 SpPath sp_readlink(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpPath result = SP_PRIV_ZERO;
-    result.flavor = p->flavor;
+    SpPath result = sp_priv_empty_path(p->flavor);
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str)) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
 
@@ -1849,13 +1788,13 @@ SpPath sp_readlink(const SpPath *p) {
                                        result.buf, SP_PATH_MAX - 1, NULL, NULL);
     if (utf8_len <= 0) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
     result.len = SP_PRIV_CAST(size_t, utf8_len);
-    result.buf[result.len] = '\0';
+    sp_priv_terminate(&result);
     sp_priv_normalize(result.buf, &result.len, result.flavor);
 #else
     ssize_t len = readlink(path_str, result.buf, SP_PATH_MAX - 1);
     if (len < 0) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
     result.len = SP_PRIV_CAST(size_t, len);
-    result.buf[result.len] = '\0';
+    sp_priv_terminate(&result);
 #endif
 
     return result;
@@ -1863,8 +1802,6 @@ SpPath sp_readlink(const SpPath *p) {
 
 SpPath sp_resolve(const SpPath *p, bool strict) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpPath result = SP_PRIV_ZERO;
-    result.flavor = p->flavor;
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
         return strict ? sp_priv_error_path(p->flavor, SP_ERR_OTHER) : sp_priv_absolute_path(p);
@@ -1877,27 +1814,19 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     if (strict && GetFileAttributesA(full_path) == INVALID_FILE_ATTRIBUTES)
         return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
 
-    memcpy(result.buf, full_path, len);
-    result.len = len;
-    result.buf[result.len] = '\0';
-    sp_priv_normalize(result.buf, &result.len, result.flavor);
+    return sp_path_from_n(full_path, len, p->flavor);
 #else
     char resolved[SP_PATH_MAX];
     if (realpath(path_str, resolved) != NULL) {
-        size_t len = strlen(resolved);
-        memcpy(result.buf, resolved, len);
-        result.len = len;
-        result.buf[result.len] = '\0';
+        return sp_path_from_n(resolved, strlen(resolved), p->flavor);
     } else {
         if (strict) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
         SpPath abs_path = sp_priv_absolute_path(p);
         size_t curr_len = abs_path.len;
         while (curr_len > 0) {
-            char curr_path[SP_PATH_MAX];
-            memcpy(curr_path, abs_path.buf, curr_len);
-            curr_path[curr_len] = '\0';
-            if (realpath(curr_path, resolved) != NULL) {
-                result = sp_path_from_n(resolved, strlen(resolved), p->flavor);
+            SpPath curr_path = sp_priv_path_from_raw(abs_path.buf, curr_len, abs_path.flavor);
+            if (realpath(sp_str(&curr_path), resolved) != NULL) {
+                SpPath result = sp_path_from_n(resolved, strlen(resolved), p->flavor);
                 if (curr_len < abs_path.len) {
                     size_t rest = curr_len;
                     while (rest < abs_path.len && abs_path.buf[rest] == '/') rest++;
@@ -1913,8 +1842,6 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         return abs_path;
     }
 #endif
-
-    return result;
 }
 
 static bool sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool symbolic, bool target_is_directory) {
@@ -2072,6 +1999,13 @@ static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_rep
 SpPath sp_rename(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, false); }
 SpPath sp_replace(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, true); }
 
+static SpIOResult sp_priv_io_result(size_t bytes, int error) {
+    SpIOResult r = SP_PRIV_ZERO;
+    r.bytes = bytes;
+    r.error = error;
+    return r;
+}
+
 bool sp_chmod(const SpPath *p, unsigned int mode) {
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str)) return false;
@@ -2093,51 +2027,38 @@ bool sp_chmod(const SpPath *p, unsigned int mode) {
 }
 
 SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
-    SpIOResult r = SP_PRIV_ZERO;
     const char *path_str;
-    if (!sp_priv_path_cstr(p, &path_str)) { r.error = SP_ERR_OPEN; return r; }
+    if (!sp_priv_path_cstr(p, &path_str)) return sp_priv_io_result(0, SP_ERR_OPEN);
     SpStatResult st = sp_stat(p);
-    if (!st.valid || st.sp_size < 0) { r.error = SP_ERR_OPEN; return r; }
+    if (!st.valid || st.sp_size < 0) return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t sz = SP_PRIV_CAST(size_t, st.sp_size);
-    if (sz > buf_size) { r.bytes = sz; r.error = SP_ERR_TOO_LARGE; return r; }
+    if (sz > buf_size) return sp_priv_io_result(sz, SP_ERR_TOO_LARGE);
 
     FILE *f = fopen(path_str, "rb");
-    if (!f) { r.error = SP_ERR_OPEN; return r; }
+    if (!f) return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t got = fread(buf, 1, sz, f);
-    if (got != sz) { fclose(f); r.bytes = got; r.error = SP_ERR_READ; return r; }
-    if (fclose(f) != 0) { r.bytes = got; r.error = SP_ERR_READ; return r; }
-    r.bytes = got;
-    return r;
+    if (got != sz) { fclose(f); return sp_priv_io_result(got, SP_ERR_READ); }
+    return sp_priv_io_result(got, fclose(f) == 0 ? SP_OK : SP_ERR_READ);
 }
 
 SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
-    SpIOResult r = SP_PRIV_ZERO;
     const char *path_str;
-    if (!sp_priv_path_cstr(p, &path_str)) { r.error = SP_ERR_OPEN; return r; }
+    if (!sp_priv_path_cstr(p, &path_str)) return sp_priv_io_result(0, SP_ERR_OPEN);
     FILE *f = fopen(path_str, "wb");
-    if (!f) { r.error = SP_ERR_OPEN; return r; }
+    if (!f) return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t wrote = fwrite(data, 1, data_len, f);
-    if (wrote != data_len) { fclose(f); r.bytes = wrote; r.error = SP_ERR_WRITE; return r; }
-    if (fclose(f) != 0) { r.bytes = wrote; r.error = SP_ERR_WRITE; return r; }
-    r.bytes = wrote;
-    return r;
+    if (wrote != data_len) { fclose(f); return sp_priv_io_result(wrote, SP_ERR_WRITE); }
+    return sp_priv_io_result(wrote, fclose(f) == 0 ? SP_OK : SP_ERR_WRITE);
 }
 
 const char *sp_error_str(int error) {
-    switch (error) {
-        case SP_OK:                 return "Success";
-        case SP_ERR:                return "Operation failed";
-        case SP_ERR_EXISTS:         return "File exists";
-        case SP_ERR_NOT_FOUND:      return "No such file or directory";
-        case SP_ERR_NOT_DIR:        return "Not a directory";
-        case SP_ERR_PERMISSION:     return "Permission denied";
-        case SP_ERR_EXISTS_NOT_DIR: return "Path exists but is not a directory";
-        case SP_ERR_OPEN:           return "Could not open file";
-        case SP_ERR_READ:           return "Read failed";
-        case SP_ERR_WRITE:          return "Write failed";
-        case SP_ERR_TOO_LARGE:      return "File too large for buffer";
-        default:                    return "Unknown error";
-    }
+    static const char *const messages[] = {
+        "Success", "Operation failed", "File exists",
+        "No such file or directory", "Not a directory", "Permission denied",
+        "Path exists but is not a directory", "Could not open file", "Read failed",
+        "Write failed", "File too large for buffer", "Unknown error"
+    };
+    return (error >= 0 && error < SP_PRIV_CAST(int, SP_ARRAY_LEN(messages))) ? messages[error] : "Unknown error";
 }
 
 #ifndef SP_WINDOWS
@@ -2159,9 +2080,7 @@ static int sp_priv_glob_segment_type(const char *segment) {
 
 static bool sp_priv_glob_match(const char *name, const char *pattern, int seg_type, bool case_insensitive) {
     if (seg_type == SP_GLOB_SEG_LITERAL)
-        return case_insensitive
-            ? sp_priv_str_eq_ci(name, strlen(name), pattern, strlen(pattern))
-            : strcmp(name, pattern) == 0;
+        return sp_priv_str_cmp_case(name, strlen(name), pattern, strlen(pattern), case_insensitive) == 0;
     return seg_type == SP_GLOB_SEG_PATTERN
         && sp_priv_fnmatch(pattern, strlen(pattern), name, strlen(name), case_insensitive);
 }
@@ -2237,10 +2156,8 @@ static bool sp_priv_glob_push(SpGlobIter *it, const SpPath *path, size_t seg_idx
 
 static size_t sp_priv_glob_parse_pattern(const char *pattern, SpFlavor flavor, char *buf,
                                          size_t *offsets, int *types, bool *dir_only) {
-    size_t count = 0, len = strlen(pattern);
-    if (len >= SP_GLOB_PATTERN_MAX) len = SP_GLOB_PATTERN_MAX - 1;
-    memcpy(buf, pattern, len);
-    buf[len] = '\0';
+    size_t count = 0;
+    size_t len = sp_priv_copy_trunc(buf, SP_GLOB_PATTERN_MAX, pattern, strlen(pattern));
     *dir_only = (len > 0 && sp_priv_is_sep(pattern[len - 1], flavor));
 
     for (char *p = buf, *start = p; count < SP_GLOB_MAX_SEGMENTS; p++) {
@@ -2363,11 +2280,8 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
         return sp_glob_begin(base, pattern, cs);
 
     char rglob_pattern[SP_GLOB_PATTERN_MAX];
-    size_t pattern_len = strlen(pattern);
-    if (pattern_len + 4 >= SP_GLOB_PATTERN_MAX) pattern_len = SP_GLOB_PATTERN_MAX - 4;
     rglob_pattern[0] = '*'; rglob_pattern[1] = '*'; rglob_pattern[2] = sp_priv_sep(base->flavor);
-    memcpy(rglob_pattern + 3, pattern, pattern_len);
-    rglob_pattern[3 + pattern_len] = '\0';
+    sp_priv_copy_trunc(rglob_pattern + 3, SP_GLOB_PATTERN_MAX - 3, pattern, strlen(pattern));
     return sp_glob_begin(base, rglob_pattern, cs);
 }
 
@@ -2412,17 +2326,14 @@ SpPath sp_expanduser(const SpPath *p) {
             char protected_path[SP_PATH_MAX];
             protected_path[0] = '.';
             protected_path[1] = '/';
-            size_t copy_len = rest_len < SP_PATH_MAX - 3 ? rest_len : SP_PATH_MAX - 3;
-            memcpy(protected_path + 2, rest, copy_len);
-            protected_path[2 + copy_len] = '\0';
+            sp_priv_copy_trunc(protected_path + 2, SP_PATH_MAX - 2, rest, rest_len);
             return sp_join_one(&home, protected_path);
         }
         return sp_join_n(&home, rest, rest_len);
     }
 
 #ifndef SP_WINDOWS
-    size_t end = 1;
-    while (end < p->len && !sp_priv_is_sep(p->buf[end], p->flavor)) end++;
+    size_t end = sp_priv_find_sep(p->buf, p->len, 1, p->flavor);
     char username[256];
     size_t ulen = end - 1;
     if (ulen >= sizeof(username)) return sp_path_copy(p);
@@ -2475,14 +2386,15 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     memset(&it, 0, sizeof(it));
     it.done = -1;
     if (!p) return it;
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_has_embedded_null(p)) return it;
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str)) return it;
     it.dir = sp_path_copy(p);
 #ifdef SP_WINDOWS
+    (void)path_str;
     if (it.dir.len > 0 && !sp_priv_has_type(&it.dir, S_IFDIR, true)) return it;
     it.priv_.handle = SP_PRIV_NULL;
 #else
-    it.priv_.handle = opendir(sp_str(&it.dir));
+    it.priv_.handle = opendir(path_str);
     if (!it.priv_.handle) return it;
 #endif
     it.done = 0;
@@ -2505,13 +2417,6 @@ static int sp_priv_walk_name_cmp(const void *a, const void *b) {
     return strcmp(SP_PRIV_CAST(const char *, a), SP_PRIV_CAST(const char *, b));
 }
 
-static void sp_priv_walk_copy_name(char dest[SP_WALK_NAME_MAX], const char *src) {
-    size_t len = strlen(src);
-    if (len >= SP_WALK_NAME_MAX) len = SP_WALK_NAME_MAX - 1;
-    memcpy(dest, src, len);
-    dest[len] = '\0';
-}
-
 static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
                               char dirnames[][SP_WALK_NAME_MAX], size_t *dirname_count,
                               char filenames[][SP_WALK_NAME_MAX], size_t *filename_count) {
@@ -2523,13 +2428,10 @@ static bool sp_priv_walk_scan(const SpPath *dir, bool follow_symlinks,
     while (sp_iterdir_next(&it, &entry)) {
         SpTerm name = sp_name(&entry);
         bool is_dir = sp_is_dir(&entry) && (follow_symlinks || !sp_is_symlink(&entry));
-        if (is_dir) {
-            if (*dirname_count < SP_WALK_MAX_ENTRIES)
-                sp_priv_walk_copy_name(dirnames[(*dirname_count)++], name.buf);
-        } else {
-            if (*filename_count < SP_WALK_MAX_ENTRIES)
-                sp_priv_walk_copy_name(filenames[(*filename_count)++], name.buf);
-        }
+        char (*names)[SP_WALK_NAME_MAX] = is_dir ? dirnames : filenames;
+        size_t *count = is_dir ? dirname_count : filename_count;
+        if (*count < SP_WALK_MAX_ENTRIES)
+            sp_priv_copy_trunc(names[(*count)++], SP_WALK_NAME_MAX, name.buf, name.len);
     }
     sp_iterdir_end(&it);
     if (*dirname_count > 1)
@@ -2558,20 +2460,17 @@ static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow
     entry.filename_count = filename_count;
     entry.user_data = user_data;
 
-    if (top_down) {
-        if (!callback(&entry)) return false;
-        for (size_t i = 0; i < entry.dirname_count; i++) {
-            SpPath subdir = sp_priv_join_len(dir, entry.dirnames[i], strlen(entry.dirnames[i]));
-            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
-                return false;
-        }
-    } else {
-        for (size_t i = 0; i < dirname_count; i++) {
-            SpPath subdir = sp_priv_join_len(dir, dirnames[i], strlen(dirnames[i]));
-            if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
-                return false;
-        }
+    if (top_down && !callback(&entry)) return false;
 
+    char (*next_dirs)[SP_WALK_NAME_MAX] = top_down ? entry.dirnames : dirnames;
+    size_t next_count = top_down ? entry.dirname_count : dirname_count;
+    for (size_t i = 0; i < next_count; i++) {
+        SpPath subdir = sp_priv_join_len(dir, next_dirs[i], strlen(next_dirs[i]));
+        if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+            return false;
+    }
+
+    if (!top_down) {
         sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count);
         entry.dirname_count = dirname_count;
         entry.filename_count = filename_count;
