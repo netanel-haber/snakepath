@@ -190,7 +190,7 @@ int main(void) {
     ASSERT_PATH(sp_path_f("a//b", P), "a/b");
     ASSERT_PATH(sp_path_f("a/b/", P), "a/b");
     
-    SpPath ea = sp_path_f("a/b", P), eb = sp_path_f("a/b", P); ASSERT(sp_eq(ea, eb));
+    SpPath ea = sp_path_f("a/b", P), eb = sp_path_f("a/b", P); ASSERT(sp_path_eq(&ea, &eb));
     
     SpPath pap = sp_path_f("a/b/c", P); char bap[SP_PATH_MAX];
     sp_as_posix(&pap, bap, sizeof(bap)); ASSERT(strcmp(bap, "a/b/c") == 0);
