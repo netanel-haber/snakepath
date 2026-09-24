@@ -11,7 +11,7 @@ import pathlib
 from ctypes import c_char_p, c_size_t, c_int, POINTER, Structure, byref, create_string_buffer
 
 # Find and load the shared library
-_lib_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_lib_dir = os.path.dirname(os.path.abspath(__file__))
 _lib_names = ['libsnakepath.so', 'libsnakepath.dylib', 'snakepath.dll']
 
 _lib = None

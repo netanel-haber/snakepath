@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+"""Checks run by nob: public call depth in snakepath.h, and docs/index.html and README.md
+embedding the same code (README.md embedding api_demo.c verbatim)."""
 from __future__ import annotations
 
+import html
 import re
 import sys
 from pathlib import Path
@@ -70,10 +73,17 @@ def longest_path_from(start: str, graph: dict[str, set[str]]) -> list[str]:
     return best
 
 
-def main() -> int:
-    header_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("snakepath.h")
-    max_depth = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+def check_docs(root: Path) -> int:
+    demo = (root / "api_demo.c").read_text(encoding="utf-8")
+    readme = re.findall(r"```\w*\n(.*?)```", (root / "README.md").read_text(encoding="utf-8"), re.S)
+    page = [html.unescape(re.sub(r"<[^>]+>", "", block)) for block in
+            re.findall(r"<pre[^>]*>(.*?)</pre>", (root / "docs/index.html").read_text(encoding="utf-8"), re.S)]
+    ok = demo in readme and [b.rstrip("\n") for b in readme] == [b.rstrip("\n") for b in page]
+    print("docs check: OK" if ok else "docs check: FAILED (README.md, docs/index.html and api_demo.c code differ)")
+    return 0 if ok else 1
 
+
+def check_call_depth(header_path: Path, max_depth: int) -> int:
     lines = header_path.read_text(encoding="utf-8").splitlines()
     definitions = collect_definitions(lines)
     names = set(definitions)
@@ -118,4 +128,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("..")
+    raise SystemExit(check_call_depth(root / "snakepath.h", 3) | check_docs(root))
