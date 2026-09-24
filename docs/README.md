@@ -1,6 +1,6 @@
 C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes CPython 3.12's own test suite.
 POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
-Vibe-coded with Claude Code + Cursor.
+Vibe-coded with Claude + Codex.
 
 The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
 
