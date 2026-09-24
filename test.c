@@ -68,21 +68,13 @@ SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, 
 /* Path + Path -> Path */
 SP_EXPORT void sp_joinpath_wrap(const SpPath *a, const SpPath *b, SpPath *out) { *out = sp_joinpath(a, b); }
 
-SP_EXPORT int sp_relative_to_is_error_wrap(const SpPath *p) {
-    return (p->len == 0 && p->buf[0] == SP_ERR_NOT_RELATIVE) ? 1 : 0;
-}
-
 /* Multi-segment variants */
 SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t parts_count, SpPath *out) {
     *out = sp_with_segments(p, parts, parts_count);
 }
 
-SP_EXPORT int sp_is_relative_to_parts_wrap(const SpPath *p, const char **parts) {
-    return sp_is_relative_to_parts(p, parts) ? 1 : 0;
-}
-
-SP_EXPORT void sp_relative_to_parts_wrap(const SpPath *p, const char **parts, int walk_up, SpPath *out) {
-    *out = sp_relative_to_parts(p, parts, walk_up != 0);
+SP_EXPORT void sp_relative_to_wrap(const SpPath *p, const SpPath *other, int walk_up, SpPath *out) {
+    *out = walk_up ? sp_relative_to_walk_up(p, other) : sp_relative_to(p, other);
 }
 
 SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
@@ -99,6 +91,7 @@ SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)fl
 
 /* Path + Path -> bool */
 WRAP_BOOL_BINARY(path_eq)
+WRAP_BOOL_BINARY(is_relative_to)
 
 /* Additional functions */
 SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }

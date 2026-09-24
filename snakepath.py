@@ -144,7 +144,7 @@ for n in ['is_file', 'is_dir', 'exists']:
 for n in ['is_absolute', 'is_reserved',
           'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
           'is_socket', 'is_mount', 'is_junction',
-          'path_is_error', 'path_error_code', 'relative_to_is_error']:
+          'path_is_error', 'path_error_code']:
     _sig(f'sp_{n}_wrap', [_PP], c_int)
 
 _sig('sp_path_eq_wrap', [_PP, _PP], c_int)
@@ -163,8 +163,8 @@ _sig('sp_parts_iter_next_wrap', [POINTER(_SpPartsIter), POINTER(c_char_p), POINT
 _sig('sp_parents_iter_begin_wrap', [_PP, POINTER(_SpParentsIter)])
 _sig('sp_parents_iter_next_wrap', [POINTER(_SpParentsIter), _PP], c_int)
 _sig('sp_with_segments_wrap', [_PP, POINTER(c_char_p), c_size_t, _PP])
-_sig('sp_is_relative_to_parts_wrap', [_PP, POINTER(c_char_p)], c_int)
-_sig('sp_relative_to_parts_wrap', [_PP, POINTER(c_char_p), c_int, _PP])
+_sig('sp_is_relative_to_wrap', [_PP, _PP], c_int)
+_sig('sp_relative_to_wrap', [_PP, _PP, c_int, _PP])
 _sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
 _sig('sp_from_uri_wrap', [c_char_p, c_int, _PP])
 _sig('sp_as_posix_wrap', [_PP, c_char_p, c_size_t])
@@ -301,24 +301,13 @@ def _encode(s):
 
 def _encode_buf(s):
     """Encode string to a ctypes buffer that preserves embedded nulls"""
-    encoded = _encode(s) if isinstance(s, str) else (s if s else b'')
+    encoded = _encode(s)
     return create_string_buffer(encoded, len(encoded))
 
 
 def _decode(b):
     """Decode bytes from C library to string"""
     return '' if b is None else (b.decode('utf-8', errors='surrogatepass') if isinstance(b, bytes) else b)
-
-
-def _parts_array(args, what):
-    """NULL-terminated C string array of path arguments (for the *_parts C functions)"""
-    if not args:
-        raise TypeError(f"{what}() requires at least 1 argument")
-    for arg in args:
-        if isinstance(arg, bytes):
-            raise TypeError("argument should be a str or os.PathLike object, not bytes")
-    parts = [_encode(os.fspath(a)) for a in args] + [None]
-    return (c_char_p * len(parts))(*parts)
 
 
 def _get_pathlib_flavor(obj):
@@ -530,15 +519,20 @@ class PurePath:
     is_absolute = _bool_method('is_absolute')
     is_reserved = _bool_method('is_reserved')
 
-    def is_relative_to(self, *args):
-        return bool(_lib.sp_is_relative_to_parts_wrap(byref(self._sp), _parts_array(args, 'is_relative_to')))
+    def _other(self, other):
+        """C path for another path argument, parsed (or converted) in this path's flavor"""
+        sp = _SpPath()
+        self._load(other, sp)
+        return sp
 
-    def relative_to(self, *args, walk_up=False):
+    def is_relative_to(self, other):
+        return bool(_lib.sp_is_relative_to_wrap(byref(self._sp), byref(self._other(other))))
+
+    def relative_to(self, other, *, walk_up=False):
         out = _SpPath()
-        parts = _parts_array(args, 'relative_to')
-        _lib.sp_relative_to_parts_wrap(byref(self._sp), parts, 1 if walk_up else 0, byref(out))
-        if _lib.sp_relative_to_is_error_wrap(byref(out)):
-            raise ValueError(f"{str(self)!r} is not relative to {str(self.with_segments(*args))!r}")
+        _lib.sp_relative_to_wrap(byref(self._sp), byref(self._other(other)), 1 if walk_up else 0, byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
+            raise ValueError(f"{str(self)!r} is not relative to {str(self._from_sp(self._other(other)))!r}")
         return self._from_sp(out)
 
     def joinpath(self, *others):
