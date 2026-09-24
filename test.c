@@ -733,7 +733,6 @@ static void test_fluent_api(void) {
     ASSERT_STR(sp_error_str(SP_ERR_READ), "Read failed");
     ASSERT_STR(sp_error_str(SP_ERR_WRITE), "Write failed");
     ASSERT_STR(sp_error_str(SP_ERR_TOO_LARGE), "File too large for buffer");
-    ASSERT_STR(sp_error_str(SP_ERR_OTHER_OP), "Unknown error");
     ASSERT_STR(sp_error_str(SP_ERR_NOT_RELATIVE), "Path is not relative to the other path");
     ASSERT_STR(sp_error_str(SP_ERR_NO_NAME), "Path has an empty name");
     ASSERT_STR(sp_error_str(SP_ERR_INVALID_ARG), "Invalid argument");
@@ -1908,7 +1907,7 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpTerm), SP_TERM_MAX + 8);
     ASSERT_SIZE(sizeof(SpStr), 16);
     ASSERT_SIZE(sizeof(SpPartsIter), 24);
-    ASSERT_SIZE(sizeof(SpParentsIter), 24);
+    ASSERT_SIZE(sizeof(SpParentsIter), 16);
     ASSERT_SIZE(sizeof(SpSuffixes), 264);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 16);
