@@ -62,6 +62,7 @@ typedef enum {
 typedef struct {
     Compiler compiler;
     bool sanitizers;
+    bool fluent; /* also build and run the fluent API tests (-DSNAKEPATH_FLUENT) */
     const char *name;
     const char *output;
 } BuildConfig;
@@ -97,7 +98,7 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
 }
 
 /* Build source file, optionally async. Returns true if command was started/completed. */
-static bool build_source_async(BuildConfig cfg, const char *source, const char *extra_define, Nob_Procs *procs) {
+static bool build_source_async(BuildConfig cfg, const char *source, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
 
     switch (cfg.compiler) {
@@ -135,8 +136,8 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
 
     append_warnings(&cmd, cfg.compiler);
 
-    if (extra_define) {
-        nob_cmd_append(&cmd, extra_define);
+    if (cfg.fluent) {
+        nob_cmd_append(&cmd, "-DSNAKEPATH_FLUENT");
     }
 
 #ifdef _WIN32
@@ -243,16 +244,10 @@ static const char *find_python(void) {
 #endif
 }
 
-static bool run_call_depth_tests(void) {
+/* Public call depth in snakepath.h, and the docs embedding api_demo.c in lockstep */
+static bool run_checks(void) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "test_call_depth.py", "../snakepath.h", "3");
-    return nob_cmd_run(&cmd);
-}
-
-/* README.md and docs/index.html must embed the same code as api_demo.c */
-static bool run_docs_check(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "check_docs.py");
+    nob_cmd_append(&cmd, find_python(), "check.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -328,13 +323,11 @@ int main(int argc, char **argv) {
 
 #ifdef _WIN32
     BuildConfig test_configs[] = {
-        {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
-        {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
+        {COMPILER_MSVC,     false, false, "MSVC (C)",    "test_msvc.exe"},
+        {COMPILER_MSVC_CPP, false, false, "MSVC (C++)",  "test_msvc_cpp.exe"},
+        {COMPILER_MSVC,     false, true,  "MSVC Fluent", "test_fluent_msvc.exe"},
     };
-    BuildConfig fluent_configs[] = {
-        {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
-    };
-    BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "../api_demo.exe"};
+    BuildConfig demo_config = {COMPILER_MSVC, false, false, "Demo", "../api_demo.exe"};
 #else
     skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;
     use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
@@ -342,21 +335,18 @@ int main(int argc, char **argv) {
     else if (use_sanitizers) LOG_INFO( "SNAKEPATH_SANITIZE set - including sanitizer builds");
 
     BuildConfig test_configs[] = {
-        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
-        {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
-        {COMPILER_CLANG,   true,  "Clang + sanitizers", "./test_clang_san"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
+        {COMPILER_GCC,     false, false, "GCC",                "./test_gcc"},
+        {COMPILER_CLANG,   false, false, "Clang",              "./test_clang"},
+        {COMPILER_GCC,     true,  false, "GCC + sanitizers",   "./test_gcc_san"},
+        {COMPILER_CLANG,   true,  false, "Clang + sanitizers", "./test_clang_san"},
+        {COMPILER_GPP,     false, false, "G++ (C++)",          "./test_gpp"},
+        {COMPILER_CLANGPP, false, false, "Clang++ (C++)",      "./test_clangpp"},
+        {COMPILER_GCC,     false, true,  "GCC Fluent",         "./test_fluent_gcc"},
+        {COMPILER_CLANG,   false, true,  "Clang Fluent",       "./test_fluent_clang"},
     };
-    BuildConfig fluent_configs[] = {
-        {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
-        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
-    };
-    BuildConfig demo_config = {skip_gcc ? COMPILER_CLANG : COMPILER_GCC, false, "Demo", "../api_demo"};
+    BuildConfig demo_config = {skip_gcc ? COMPILER_CLANG : COMPILER_GCC, false, false, "Demo", "../api_demo"};
 #endif
     size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
-    size_t fluent_count = sizeof(fluent_configs) / sizeof(fluent_configs[0]);
 
     /* Phase 1: Build everything in parallel */
     LOG_INFO( "=== Building all targets ===");
@@ -364,17 +354,11 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < test_count; i++) {
         if (!config_enabled(test_configs[i])) continue;
         LOG_INFO( "  Starting build: %s", test_configs[i].name);
-        build_source_async(test_configs[i], "test.c", NULL, &procs);
-    }
-
-    for (size_t i = 0; i < fluent_count; i++) {
-        if (!config_enabled(fluent_configs[i])) continue;
-        LOG_INFO( "  Starting build: %s", fluent_configs[i].name);
-        build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
+        build_source_async(test_configs[i], "test.c", &procs);
     }
 
     LOG_INFO( "  Starting build: %s", demo_config.name);
-    build_source_async(demo_config, "../api_demo.c", NULL, &procs);
+    build_source_async(demo_config, "../api_demo.c", &procs);
 
     /* Build Python shared library */
     LOG_INFO( "  Starting build: Python bindings");
@@ -401,26 +385,15 @@ int main(int argc, char **argv) {
         run_test_async(test_configs[i].output, &procs);
     }
 
-    for (size_t i = 0; i < fluent_count; i++) {
-        if (!config_enabled(fluent_configs[i])) continue;
-        LOG_INFO( "  Starting test: %s", fluent_configs[i].name);
-        run_test_async(fluent_configs[i].output, &procs);
-    }
-
     if (!nob_procs_flush(&procs)) {
         nob_log(NOB_ERROR, "Some tests failed");
         all_ok = false;
     }
 
-    /* Phase 3: Static checks - public call depth, docs in lockstep with api_demo.c */
-    LOG_INFO( "=== Running call-depth tests ===");
-    if (!run_call_depth_tests()) {
-        nob_log(NOB_ERROR, "Call-depth tests failed");
-        all_ok = false;
-    }
-    LOG_INFO( "=== Checking docs ===");
-    if (!run_docs_check()) {
-        nob_log(NOB_ERROR, "Docs check failed");
+    /* Phase 3: Static checks */
+    LOG_INFO( "=== Running checks ===");
+    if (!run_checks()) {
+        nob_log(NOB_ERROR, "Checks failed");
         all_ok = false;
     }
 

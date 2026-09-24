@@ -93,9 +93,9 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
-- New functionality goes in `snakepath.h` first; then mirror wrappers in `build/python_harness/snakepath_lib.c` and `build/python_harness/snakepath/__init__.py`, plus tests in `build/test.c` (and `build/test_fluent_api.c` for fluent parity).
-- When API examples change, update `api_demo.c` first, then sync `README.md` and `docs/index.html`, and record any new learnings here. `nob` fails (`build/check_docs.py`) if their code blocks drift apart.
-- `build/python_harness/snakepath_lib.c` exports exactly what `snakepath/__init__.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
+- New functionality goes in `snakepath.h` first; then mirror wrappers in `build/python_harness/snakepath_lib.c` and `build/python_harness/snakepath.py`, plus tests in `build/test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
+- When API examples change, update `api_demo.c` first, then sync `README.md` and `docs/index.html`, and record any new learnings here. `nob` fails (`build/check.py`) if their code blocks drift apart.
+- `build/python_harness/snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
 - `build/nob.h` is upstream nob trimmed to what `build/nob.c` uses (see its header). If `nob.c` needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
-- Public API call depth is now enforced by `build/test_call_depth.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
+- Public API call depth is now enforced by `build/check.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
