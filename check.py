@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Checks run by nob: public call depth in snakepath.h, and docs/README.md (also the
-website) embedding api_demo.c verbatim."""
+"""Checks run by nob: public call depth in snakepath.h, and README.md (also the website)
+embedding api_demo.c verbatim."""
 from __future__ import annotations
 
 import re
@@ -73,8 +73,8 @@ def longest_path_from(start: str, graph: dict[str, set[str]]) -> list[str]:
 
 
 def check_docs(root: Path) -> int:
-    ok = (root / "api_demo.c").read_text(encoding="utf-8") in (root / "docs/README.md").read_text(encoding="utf-8")
-    print("docs check: OK" if ok else "docs check: FAILED (docs/README.md does not embed api_demo.c verbatim)")
+    ok = (root / "api_demo.c").read_text(encoding="utf-8") in (root / "README.md").read_text(encoding="utf-8")
+    print("docs check: OK" if ok else "docs check: FAILED (README.md does not embed api_demo.c verbatim)")
     return 0 if ok else 1
 
 
@@ -123,5 +123,5 @@ def check_call_depth(header_path: Path, max_depth: int) -> int:
 
 
 if __name__ == "__main__":
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("..")
+    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     raise SystemExit(check_call_depth(root / "snakepath.h", 3) | check_docs(root))

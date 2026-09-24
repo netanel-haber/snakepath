@@ -30,7 +30,7 @@ rm -f demo snakepath.h
 ## Build & Test
 
 ```bash
-cc -o build/nob build/nob.c && ./build/nob
+cc -x c -o nob nob.h && ./nob
 ```
 
 
