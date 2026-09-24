@@ -1181,13 +1181,22 @@ def setup_tests():
         download_file(TEST_URL, dest)
 
 
+def _stub_module(name):
+    """Module stand-in with a spec, which Python 3.15's ModuleNotFoundError formatting inspects via importlib.resources"""
+    import importlib.machinery
+    import types
+    module = types.ModuleType(name)
+    module.__spec__ = importlib.machinery.ModuleSpec(name, None)
+    return module
+
+
 def setup_pathlib_patch(testfn=None):
     """Patch pathlib module to use snakepath."""
     import types
     import tempfile
 
     # Create pathlib module with snakepath classes
-    pathlib_pkg = types.ModuleType('pathlib')
+    pathlib_pkg = _stub_module('pathlib')
     pathlib_pkg.PurePath = PurePath
     pathlib_pkg.PurePosixPath = PurePosixPath
     pathlib_pkg.PureWindowsPath = PureWindowsPath
@@ -1197,10 +1206,10 @@ def setup_pathlib_patch(testfn=None):
     sys.modules['pathlib'] = pathlib_pkg
 
     # Stub test.support
-    test_pkg = types.ModuleType('test')
+    test_pkg = _stub_module('test')
     sys.modules['test'] = test_pkg
 
-    test_support = types.ModuleType('test.support')
+    test_support = _stub_module('test.support')
     test_support.is_emscripten = False
     test_support.is_wasi = False
     test_support.verbose = False
@@ -1242,7 +1251,7 @@ def setup_pathlib_patch(testfn=None):
 
     # Stub test.support.os_helper
     import shutil
-    os_helper = types.ModuleType('test.support.os_helper')
+    os_helper = _stub_module('test.support.os_helper')
     if testfn is None:
         testfn = str(pathlib.Path(tempfile.gettempdir()) / 'test_pathlib_tmp')
     os_helper.TESTFN = testfn
