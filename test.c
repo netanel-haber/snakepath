@@ -188,8 +188,8 @@ SP_EXPORT int sp_match_yes(void) { return SP_MATCH_YES; }
 SP_EXPORT int sp_match_err_empty(void) { return SP_MATCH_ERR_EMPTY; }
 
 /* mkdir */
-SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok) {
-    return sp_mkdir(p, mode, parents != 0, exist_ok != 0);
+SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok, unsigned int parent_mode) {
+    return sp_mkdir(p, mode, parents != 0, exist_ok != 0, parent_mode);
 }
 
 /* glob iterator */
@@ -873,16 +873,16 @@ static void test_fluent_api(void) {
         char dir_path[128];
         snprintf(dir_path, sizeof(dir_path), "test_fluent_mkdir_%ld", fpid);
 
-        SpPathOp r = SPF(dir_path)->mkdir(0755, false, false);
+        SpPathOp r = SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE);
         ASSERT(r.error == SP_OK);
         ASSERT_STR(sp_str(&r.path), dir_path);
 
         /* mkdir again without exist_ok should fail */
-        SpPathOp r2 = SPF(dir_path)->mkdir(0755, false, false);
+        SpPathOp r2 = SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE);
         ASSERT(r2.error == SP_ERR_EXISTS);
 
         /* mkdir with exist_ok should succeed */
-        SpPathOp r3 = SPF(dir_path)->mkdir(0755, false, true);
+        SpPathOp r3 = SPF(dir_path)->mkdir(0755, false, true, SP_MKDIR_DEF_MODE);
         ASSERT(r3.error == SP_OK);
 
         SpPath cleanup = sp_path(dir_path);
@@ -938,7 +938,7 @@ static void test_fluent_api(void) {
         snprintf(rmdir_path, sizeof(rmdir_path), "test_fluent_rmdir_%ld", fpid);
 
         SpPath p = sp_path(rmdir_path);
-        sp_mkdir(&p, 0755, false, false);
+        sp_mkdir(&p, 0755, false, false, SP_MKDIR_DEF_MODE);
 
         SpPathOp r = SPF(rmdir_path)->rmdir();
         ASSERT(r.error == SP_OK);
@@ -1314,16 +1314,16 @@ int main(void) {
     test_rmdir(sp_str(&mkdir_test));
 
     /* Test basic mkdir */
-    int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
+    int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false, SP_MKDIR_DEF_MODE);
     ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_test, true) == true);
 
     /* Test mkdir with exist_ok=false should fail when dir exists */
-    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false, SP_MKDIR_DEF_MODE);
     ASSERT(mkdir_result == SP_ERR_EXISTS);
 
     /* Test mkdir with exist_ok=true should succeed when dir exists */
-    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, true);
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, true, SP_MKDIR_DEF_MODE);
     ASSERT(mkdir_result == SP_OK);
 
     /* Cleanup */
@@ -1334,7 +1334,7 @@ int main(void) {
     snprintf(nested_path, sizeof(nested_path), "%s/subdir/deep", test_dir_mkdir_nested);
     snprintf(nested_sub, sizeof(nested_sub), "%s/subdir", test_dir_mkdir_nested);
     SpPath mkdir_nested = sp_path_f(nested_path, SP_FLAVOR_NATIVE);
-    mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false);
+    mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false, SP_MKDIR_DEF_MODE);
     ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_nested, true) == true);
 
@@ -1345,7 +1345,7 @@ int main(void) {
 
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
-    mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, false, false);
+    mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, false, false, SP_MKDIR_DEF_MODE);
     ASSERT(mkdir_result == SP_ERR_NOT_FOUND);
 
     printf("  mkdir tests OK\n");
@@ -1420,10 +1420,10 @@ int main(void) {
     snprintf(glob_f3, sizeof(glob_f3), "%s/subdir/file3.txt", test_dir_glob);
 
     SpPath glob_base = sp_path_f(test_dir_glob, SP_FLAVOR_NATIVE);
-    sp_mkdir(&glob_base, 0755, true, true);
+    sp_mkdir(&glob_base, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     SpPath glob_sub = sp_path_f(glob_sub_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&glob_sub, 0755, true, true);
+    sp_mkdir(&glob_sub, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     /* Create test files by touching them (just need the glob to find them) */
     FILE *f1 = fopen(glob_f1, "w");
@@ -1541,7 +1541,7 @@ int main(void) {
     SpPath rmdir_dir = sp_path_f(rmdir_path, SP_FLAVOR_NATIVE);
 
     /* Create directory */
-    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false) == SP_OK);
+    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false, SP_MKDIR_DEF_MODE) == SP_OK);
     ASSERT(sp_is_dir(&rmdir_dir, true) == true);
 
     /* Test rmdir on empty directory */
@@ -1612,7 +1612,7 @@ int main(void) {
         snprintf(root_path, sizeof(root_path), "./test_315_%ld", pid);
         SpPath root = sp_path(root_path), sub = sp_join_one(&root, "sub"), txt = sp_join_one(&root, "a.txt");
         SpPath hidden = sp_join_one(&root, ".hidden"), sub_txt = sp_join_one(&sub, "b.txt");
-        ASSERT(sp_mkdir(&sub, 0755, true, false) == SP_OK);
+        ASSERT(sp_mkdir(&sub, 0755, true, false, SP_MKDIR_DEF_MODE) == SP_OK);
         ASSERT(sp_touch(&txt, 0644, true) && sp_touch(&hidden, 0644, true) && sp_touch(&sub_txt, 0644, true));
         ASSERT(sp_is_dir(&sub, false) && !sp_is_file(&sub, false) && sp_exists(&txt, false));
 
@@ -1831,10 +1831,10 @@ int main(void) {
     snprintf(iterdir_sub, sizeof(iterdir_sub), "%s/subdir", iterdir_path);
 
     SpPath iterdir_base = sp_path_f(iterdir_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&iterdir_base, 0755, true, true);
+    sp_mkdir(&iterdir_base, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     SpPath iterdir_subdir = sp_path_f(iterdir_sub, SP_FLAVOR_NATIVE);
-    sp_mkdir(&iterdir_subdir, 0755, true, true);
+    sp_mkdir(&iterdir_subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     /* Create test files */
     FILE *if1 = fopen(iterdir_f1, "w"); if (if1) fclose(if1);
@@ -1877,10 +1877,10 @@ int main(void) {
     snprintf(walk_f3, sizeof(walk_f3), "%s/subdir/file3.txt", walk_path);
 
     SpPath walk_base = sp_path_f(walk_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&walk_base, 0755, true, true);
+    sp_mkdir(&walk_base, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     SpPath walk_subdir = sp_path_f(walk_sub, SP_FLAVOR_NATIVE);
-    sp_mkdir(&walk_subdir, 0755, true, true);
+    sp_mkdir(&walk_subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
 
     /* Create test files */
     FILE *wf1 = fopen(walk_f1, "w"); if (wf1) fclose(wf1);

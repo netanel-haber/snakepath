@@ -283,7 +283,8 @@ bool sp_samefile(const SpPath *a, const SpPath *b);
 
 #define SP_MKDIR_DEF_MODE 0777
 
-int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);  /* returns SP_OK / SP_ERR_* */
+/* Missing parents (with `parents`) get parent_mode; returns SP_OK / SP_ERR_* */
+int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode);
 
 /* One code space for operation results and failed SpPath results (sp_path_error_code),
  * so sp_error_str() describes either */
@@ -441,8 +442,8 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(size_t, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))                   \
     X_TERM(int, match, (const char *pattern), sp_match_ex(&sp_priv_f_ctx, pattern, -1))                              \
     X_TERM(bool, full_match, (const char *pattern), sp_full_match(&sp_priv_f_ctx, pattern, -1))                        \
-    X_TERM(SpPathOp, mkdir, (unsigned int mode, bool parents, bool exist_ok),                                         \
-           sp_priv_f_pathop(sp_mkdir(&sp_priv_f_ctx, mode, parents, exist_ok)))              \
+    X_TERM(SpPathOp, mkdir, (unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode),               \
+           sp_priv_f_pathop(sp_mkdir(&sp_priv_f_ctx, mode, parents, exist_ok, parent_mode)))                        \
     X_TERM(SpPathOp, touch, (unsigned int mode, bool exist_ok),                                                        \
            sp_priv_f_pathop(sp_touch(&sp_priv_f_ctx, mode, exist_ok) ? SP_OK : SP_ERR))                              \
     X_TERM(SpPathOp, unlink, (bool missing_ok), sp_priv_f_pathop(sp_unlink(&sp_priv_f_ctx, missing_ok) ? SP_OK : SP_ERR)) \
@@ -1786,19 +1787,19 @@ bool sp_samefile(const SpPath *a, const SpPath *b) {
     return stat_a.valid && stat_b.valid && stat_a.sp_dev == stat_b.sp_dev && stat_a.sp_ino == stat_b.sp_ino;
 }
 
-static int sp_priv_mkdir_parents(const SpPath *p) {
+static int sp_priv_mkdir_parents(const SpPath *p, unsigned int parent_mode) {
     SpPath parent = sp_parent(p);
     if (sp_path_eq(&parent, p) || parent.len == 0) return SP_OK;
-    int r = sp_mkdir(&parent, SP_MKDIR_DEF_MODE, true, true);
+    int r = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
     return (r == SP_ERR_EXISTS_NOT_DIR) ? SP_ERR_NOT_DIR : r;
 }
 
-int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok) {
+int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode) {
     const char *path_str;
     if (mode == 0) mode = SP_MKDIR_DEF_MODE;
     if (!sp_priv_path_cstr(p, &path_str)) return SP_ERR_OTHER_OP;
     if (parents) {
-        int r = sp_priv_mkdir_parents(p);
+        int r = sp_priv_mkdir_parents(p, parent_mode);
         if (r != SP_OK) return r;
     }
 #ifdef SP_WINDOWS
@@ -2059,7 +2060,7 @@ static int sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlink
         SpPath child;
         bool more = sp_priv_readdir_next(&handle, src, &child);
         if (!handle) return sp_priv_last_error();
-        err = sp_mkdir(dst, SP_MKDIR_DEF_MODE, false, false);
+        err = sp_mkdir(dst, SP_MKDIR_DEF_MODE, false, false, SP_MKDIR_DEF_MODE);
         for (size_t len = dst->len; err == SP_OK && more; more = sp_priv_readdir_next(&handle, src, &child)) {
             SpStr name = sp_priv_name_sv(&child);
             *dst = sp_priv_join_len(dst, name.data, name.len);
@@ -2296,67 +2297,75 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
     return sp_glob_begin(base, buf, cs, recurse_symlinks);
 }
 
-SpPath sp_home(SpFlavor flavor) {
-    SP_ASSERT_FLAVOR(flavor);
-    const char *s = NULL;
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable: 4996)
-#endif
 #ifdef SP_WINDOWS
-    s = getenv("USERPROFILE");
-#else
-    s = getenv("HOME");
-    if (!s) {
-        struct passwd *pw = getpwuid(getuid());
-        if (pw) s = pw->pw_dir;
+/* An environment variable, read from the process environment (which Python's os.environ also updates) */
+static bool sp_priv_getenv(const char *name, char *buf, DWORD size) {
+    DWORD n = GetEnvironmentVariableA(name, buf, size);
+    return n > 0 && n < size;
+}
+#endif
+
+/* os.path.expanduser("~" + user) as a path; false when the home directory is unknown */
+static bool sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor, SpPath *out) {
+#ifdef SP_WINDOWS
+    /* ntpath: USERPROFILE, else HOMEDRIVE + HOMEPATH; another user's home is guessed as a sibling of ours */
+    char value[SP_PATH_MAX], current[256];
+    if (sp_priv_getenv("USERPROFILE", value, SP_PATH_MAX)) {
+        *out = sp_path_from_n(value, strlen(value), flavor);
+    } else if (sp_priv_getenv("HOMEPATH", value, SP_PATH_MAX)) {
+        char drive[SP_PATH_MAX];
+        SpPath d = sp_priv_empty_path(flavor);
+        if (sp_priv_getenv("HOMEDRIVE", drive, SP_PATH_MAX)) d = sp_path_from_n(drive, strlen(drive), flavor);
+        *out = sp_join_n(&d, value, strlen(value));
+    } else {
+        return false;
     }
+    if (ulen == 0) return true;
+    bool has_current = sp_priv_getenv("USERNAME", current, sizeof(current));
+    size_t clen = has_current ? strlen(current) : 0;
+    if (has_current && clen == ulen && memcmp(current, user, ulen) == 0) return true;
+    SpStr base = sp_priv_name_sv(out);
+    if (!has_current || base.len != clen || memcmp(base.data, current, clen) != 0) return false;
+    SpPath parent = sp_parent(out);
+    *out = sp_join_n(&parent, user, ulen);
+    return true;
+#else
+    /* posixpath: HOME (else the passwd entry) for the current user, the passwd entry for others */
+    const char *dir = ulen == 0 ? getenv("HOME") : SP_PRIV_NULL;
+    if (!dir) {
+        char name[256];
+        if (ulen >= sizeof(name)) return false;
+        memcpy(name, user, ulen);
+        name[ulen] = '\0';
+        struct passwd *pw = ulen == 0 ? getpwuid(getuid()) : getpwnam(name);
+        if (!pw || !pw->pw_dir) return false;
+        dir = pw->pw_dir;
+    }
+    size_t len = strlen(dir);
+    while (len > 0 && dir[len - 1] == '/') len--;
+    *out = len > 0 ? sp_path_from_n(dir, len, flavor) : sp_path_from_n("/", 1, flavor);
+    return true;
 #endif
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-    if (s && *s) return sp_path_from_n(s, strlen(s), flavor);
-    return sp_priv_error_path(flavor, SP_ERR_OTHER);
 }
 
+SpPath sp_home(SpFlavor flavor) {
+    SP_ASSERT_FLAVOR(flavor);
+    SpPath home;
+    return sp_priv_user_home("", 0, flavor, &home) ? home : sp_priv_error_path(flavor, SP_ERR_OTHER);
+}
+
+/* Expands a leading "~" or "~user" part of a path without drive or root; an error if its home is unknown */
 SpPath sp_expanduser(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (p->len == 0 || p->buf[0] != '~') return sp_path_copy(p);
-
-    bool is_current_user = p->len == 1 || sp_priv_is_sep(p->buf[1], p->flavor);
-    if (is_current_user) {
-        SpPath home = sp_home(p->flavor);
-        if (sp_path_is_error(&home)) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
-        if (p->len == 1) return home;
-        const char *rest = p->buf + 2;
-        size_t rest_len = p->len - 2;
-
-        if (sp_priv_is_windows_flavor(p->flavor) && sp_priv_has_drive(rest, rest_len, p->flavor)) {
-            char protected_path[SP_PATH_MAX];
-            protected_path[0] = '.';
-            protected_path[1] = '/';
-            sp_priv_copy_trunc(protected_path + 2, SP_PATH_MAX - 2, rest, rest_len);
-            return sp_join_one(&home, protected_path);
-        }
-        return sp_join_n(&home, rest, rest_len);
-    }
-
-#ifndef SP_WINDOWS
+    if (p->len == 0 || p->buf[0] != '~' || sp_priv_anchor_len(p->buf, p->len, p->flavor) > 0) return sp_path_copy(p);
     size_t end = sp_priv_find_sep(p->buf, p->len, 1, p->flavor);
-    char username[256];
-    size_t ulen = end - 1;
-    if (ulen >= sizeof(username)) return sp_path_copy(p);
-    memcpy(username, p->buf + 1, ulen);
-    username[ulen] = '\0';
-
-    struct passwd *pw = getpwnam(username);
-    if (!pw || !pw->pw_dir) return sp_path_copy(p);
-    SpPath home = sp_path_new(pw->pw_dir, SP_PRIV_OPTS(p->flavor));
+    SpPath home;
+    if (!sp_priv_user_home(p->buf + 1, end - 1, p->flavor, &home)) return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
     if (end >= p->len) return home;
-    return sp_join_n(&home, p->buf + end, p->len - end);
-#else
-    return sp_path_copy(p);
-#endif
+    /* The remaining parts stay parts: a leading "./" keeps one like "c:" from parsing as a drive */
+    char rest[SP_PATH_MAX] = {'.', '/'};
+    sp_priv_copy_trunc(rest + 2, SP_PATH_MAX - 2, p->buf + end + 1, p->len - end - 1);
+    return sp_join_one(&home, rest);
 }
 
 static SpTerm sp_priv_id_to_name(const SpPath *p, bool get_owner) {

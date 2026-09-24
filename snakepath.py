@@ -182,7 +182,7 @@ _sig('sp_resolve_wrap', [_PP, c_int, _PP])
 _sig('sp_symlink_to_wrap', [_PP, _PP, c_int], c_int)
 _sig('sp_hardlink_to_wrap', [_PP, _PP], c_int)
 _sig('sp_samefile_wrap', [_PP, _PP], c_int)
-_sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int], c_int)
+_sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int, ctypes.c_uint], c_int)
 # Glob iterator
 _sizeof_glob_iter = _lib.sp_sizeof_glob_iter()
 class _SpGlobIter(Structure):
@@ -693,8 +693,9 @@ class Path(PurePath):
             raise FileNotFoundError(2, "No such file or directory", str(other_path))
         return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other_sp)))
 
-    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
-        result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0)
+    def mkdir(self, mode=0o777, parents=False, exist_ok=False, *, parent_mode=None):
+        result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0,
+                                    0o777 if parent_mode is None else parent_mode)
         if result == SP_OK:
             return
         path_str = str(self)
@@ -1120,7 +1121,8 @@ EXPECTED_FAILURES = {
     ],
     "has no attribute '_delete'": [
         (cls, f"test_delete_{what}") for cls in _PATH
-        for what in ["dir", "file", "missing", "on_named_pipe", "does_not_choke_on_failing_lstat"]
+        for what in ["dir", "file", "missing", "on_named_pipe", "does_not_choke_on_failing_lstat",
+                     "inner_junction", "outer_junction"]
     ],
 
     # Path.info (a caching PathInfo object), pathlib.types protocols and pathlib.UnsupportedOperation
@@ -1131,7 +1133,7 @@ EXPECTED_FAILURES = {
     ],
     "has no attribute 'types'": [(cls, "test_matches_writablepath_docstrings") for cls in _PATH],
     "has no attribute 'UnsupportedOperation'": [
-        (cls, "test_hardlink_to_unsupported") for cls in _PATH
+        (cls, test) for cls in _PATH for test in ["test_hardlink_to_unsupported", "test_owner_windows", "test_group_windows"]
     ] + [("UnsupportedOperationTest", "test_is_notimplemented")],
 
     # Pickling: C-backed objects with __slots__, and the pathlib._local module path of 3.13 pickles
@@ -1140,13 +1142,14 @@ EXPECTED_FAILURES = {
 
     # Mocks of Python functions the C library never calls: parser.isjunction, os.getcwd, fast-copy syscalls
     "MagicMock": [(cls, "test_is_junction_true") for cls in _PATH],
-    "!=": [(cls, "test_absolute_common") for cls in _PATH],
+    "!=": [(cls, test) for cls in _PATH for test in ["test_absolute_common", "test_absolute_windows"]],
+    # Only POSIX has the patched fast-copy functions; on Windows the test passes
     "FileNotFoundError not raised": [
-        (cls, "test_copy_error_handling") for cls in ["PathTest", "PathSubclassTest", "PosixPathTest"]
+        (cls, "test_copy_error_handling") for cls in ["PathTest", "PathSubclassTest", "PosixPathTest"] if os.name != 'nt'
     ],
 
     # Turkish dotted I case folding needs full Unicode lowercasing; the C library folds ASCII only
-    "PureWindowsPath('İ')": [(cls, "test_eq_windows") for cls in ["PurePathTest", "PureWindowsPathTest"]],
+    "('İ') != ": [(cls, "test_eq_windows") for cls in _PURE + _PATH],
 }
 
 # Build reverse lookup: (class_name, test_name) -> expected_error_substring
@@ -1303,9 +1306,18 @@ def setup_pathlib_patch(testfn=None):
         raise unittest.SkipTest("subst drives not tested")
         yield
     os_helper.subst_drive = subst_drive
-    class EnvironmentVarGuard:
-        def __enter__(self): return {}
-        def __exit__(self, *args): pass
+    class EnvironmentVarGuard(dict):
+        """Edits os.environ (so the C library sees it) and restores it on exit"""
+        def __enter__(self):
+            self.saved = dict(os.environ)
+            return self
+        def __exit__(self, *args):
+            os.environ.clear()
+            os.environ.update(self.saved)
+        def __setitem__(self, name, value): os.environ[name] = value
+        def unset(self, *names):
+            for name in names: os.environ.pop(name, None)
+        def pop(self, name, *default): return os.environ.pop(name, *default)
     os_helper.EnvironmentVarGuard = EnvironmentVarGuard
     sys.modules['test.support.os_helper'] = os_helper
 

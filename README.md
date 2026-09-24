@@ -309,7 +309,7 @@ int main(void) {
     SpPath tmpfile = sp_join_one(&tmpdir, "hello.txt");
 
     /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
-    sp_mkdir(&subdir, 0755, true, true);
+    sp_mkdir(&subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
     printf("  mkdir:   demo_tmp/sub/\n");
 
     /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
