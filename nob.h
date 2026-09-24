@@ -1142,30 +1142,30 @@ static const char *all_artifacts[] = {
     NULL
 };
 
-/* Build Python shared library */
+/* Build the library the Python bindings load: test.c with -DSP_FFI */
 static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
 
 #ifdef _WIN32
     if (compiler == COMPILER_MSVC) {
         nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
-        nob_cmd_append(&cmd, "/W4");
+        nob_cmd_append(&cmd, "/W4", "/DSP_FFI");
         nob_cmd_append(&cmd, "/Fe:snakepath.dll");
-        nob_cmd_append(&cmd, "snakepath_lib.c");
+        nob_cmd_append(&cmd, "test.c");
     } else {
         nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
         nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2");
-        nob_cmd_append(&cmd, "-fvisibility=hidden");
+        nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
         nob_cmd_append(&cmd, "-o", "snakepath.dll");
-        nob_cmd_append(&cmd, "snakepath_lib.c");
+        nob_cmd_append(&cmd, "test.c");
     }
 #else
     const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
     nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2");
     nob_cmd_append(&cmd, "-Wall", "-Wextra");
-    nob_cmd_append(&cmd, "-fvisibility=hidden");
+    nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
     nob_cmd_append(&cmd, "-o", "libsnakepath.so");
-    nob_cmd_append(&cmd, "snakepath_lib.c");
+    nob_cmd_append(&cmd, "test.c");
 #endif
 
     return nob_cmd_run(&cmd, .async = procs);
@@ -1181,16 +1181,10 @@ static const char *find_python(void) {
 #endif
 }
 
-/* Public call depth in snakepath.h, and the docs embedding api_demo.c in lockstep */
-static bool run_checks(void) {
+/* Public call depth, README embedding api_demo.c, and CPython's pathlib tests on the bindings */
+static bool run_python(void) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "check.py");
-    return nob_cmd_run(&cmd);
-}
-
-static bool run_python_tests(void) {
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "run_cpython_tests.py");
+    nob_cmd_append(&cmd, find_python(), "snakepath.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -1236,9 +1230,9 @@ int main(int argc, char **argv) {
                 nob_log(NOB_ERROR, "Failed to build Python library");
                 return 1;
             }
-            LOG_INFO( "=== Running Python tests ===");
-            if (!run_python_tests()) {
-                nob_log(NOB_ERROR, "Python tests failed");
+            LOG_INFO( "=== Running Python checks and tests ===");
+            if (!run_python()) {
+                nob_log(NOB_ERROR, "Python checks or tests failed");
                 return 1;
             }
             LOG_INFO( "Python bindings built and tested successfully!");
@@ -1324,22 +1318,15 @@ int main(int argc, char **argv) {
         all_ok = false;
     }
 
-    /* Phase 3: Static checks */
-    LOG_INFO( "=== Running checks ===");
-    if (!run_checks()) {
-        nob_log(NOB_ERROR, "Checks failed");
-        all_ok = false;
-    }
-
-    /* Phase 4: Python tests */
-    LOG_INFO( "=== Running Python tests ===");
-    if (!run_python_tests()) {
-        nob_log(NOB_ERROR, "Python tests failed");
+    /* Phase 3: Python checks and CPython's pathlib tests */
+    LOG_INFO( "=== Running Python checks and tests ===");
+    if (!run_python()) {
+        nob_log(NOB_ERROR, "Python checks or tests failed");
         all_ok = false;
     }
 
 #ifndef _WIN32
-    /* Phase 5: Valgrind (must be sequential, slow) */
+    /* Phase 4: Valgrind (must be sequential, slow) */
     if (all_ok) {
         LOG_INFO( "=== Running valgrind ===");
         if (!run_valgrind("./test_gcc")) {
@@ -1349,7 +1336,7 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    /* Phase 6: Run demo to show it works */
+    /* Phase 5: Run demo to show it works */
     LOG_INFO( "=== Running demo ===");
     if (!run_test_async(demo_config.output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
