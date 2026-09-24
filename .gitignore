@@ -9,7 +9,7 @@ build/test_gpp
 build/test_clangpp
 build/test_fluent_gcc
 build/test_fluent_clang
-build/python_harness/libsnakepath.so
+build/libsnakepath.so
 api_demo
 *.o
 *.dSYM/
@@ -27,7 +27,7 @@ api_demo
 # Python
 __pycache__/
 *.pyc
-build/python_harness/cpython_tests/
+build/cpython_tests/
 
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp

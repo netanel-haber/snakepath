@@ -56,7 +56,7 @@ Use `./build/nob clean` before baseline comparisons or when local build artifact
 ```bash
 gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath build/test.c && ./test_snakepath
 g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp build/test.c && ./test_cpp
-cd build/python_harness && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c -I../.. && python run_cpython_tests.py
+cd build && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c -I.. && python run_cpython_tests.py
 ```
 
 **g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
@@ -93,9 +93,9 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
-- New functionality goes in `snakepath.h` first; then mirror wrappers in `build/python_harness/snakepath_lib.c` and `build/python_harness/snakepath.py`, plus tests in `build/test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
+- New functionality goes in `snakepath.h` first; then mirror wrappers in `build/snakepath_lib.c` and `build/snakepath.py`, plus tests in `build/test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
 - When API examples change, update `api_demo.c` first, then sync `README.md` and `docs/index.html`, and record any new learnings here. `nob` fails (`build/check.py`) if their code blocks drift apart.
-- `build/python_harness/snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
+- `build/snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
 - `build/nob.h` is upstream nob trimmed to what `build/nob.c` uses (see its header). If `nob.c` needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
 - Public API call depth is now enforced by `build/check.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.

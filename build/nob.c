@@ -195,12 +195,12 @@ static const char *all_artifacts[] = {
     /* PDB and obj files from MSVC */
     "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "../api_demo.pdb",
     "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "../api_demo.obj",
-    "python_harness/snakepath.dll",
+    "snakepath.dll",
 #else
     "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
     "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
     "../api_demo",
-    "python_harness/libsnakepath.so",
+    "libsnakepath.so",
 #endif
     NULL
 };
@@ -213,22 +213,22 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
     if (compiler == COMPILER_MSVC) {
         nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
         nob_cmd_append(&cmd, "/W4", "/I..");
-        nob_cmd_append(&cmd, "/Fe:python_harness/snakepath.dll");
-        nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
+        nob_cmd_append(&cmd, "/Fe:snakepath.dll");
+        nob_cmd_append(&cmd, "snakepath_lib.c");
     } else {
         nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
         nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2", "-I..");
         nob_cmd_append(&cmd, "-fvisibility=hidden");
-        nob_cmd_append(&cmd, "-o", "python_harness/snakepath.dll");
-        nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
+        nob_cmd_append(&cmd, "-o", "snakepath.dll");
+        nob_cmd_append(&cmd, "snakepath_lib.c");
     }
 #else
     const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
     nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2", "-I..");
     nob_cmd_append(&cmd, "-Wall", "-Wextra");
     nob_cmd_append(&cmd, "-fvisibility=hidden");
-    nob_cmd_append(&cmd, "-o", "python_harness/libsnakepath.so");
-    nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
+    nob_cmd_append(&cmd, "-o", "libsnakepath.so");
+    nob_cmd_append(&cmd, "snakepath_lib.c");
 #endif
 
     return nob_cmd_run(&cmd, .async = procs);
@@ -253,7 +253,7 @@ static bool run_checks(void) {
 
 static bool run_python_tests(void) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "python_harness/run_cpython_tests.py");
+    nob_cmd_append(&cmd, find_python(), "run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
