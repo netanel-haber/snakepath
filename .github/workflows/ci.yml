@@ -9,6 +9,7 @@ on:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -35,6 +36,7 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository

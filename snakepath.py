@@ -1097,7 +1097,8 @@ TEST_DIR = THIS_DIR / "cpython_tests"
 # files in that package only test Python-only machinery (pathlib.types protocols, zip/local backends).
 CPYTHON_BRANCH = "3.15"
 TEST_URL = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test/test_pathlib/test_pathlib.py"
-TEST_FILE = "test_pathlib_3_15.py"  # cached under a versioned name
+TEST_FILE = "test_pathlib_3_15.py"
+CLASS_TIMEOUT = 600  # seconds a test class may run before its worker dumps tracebacks and exits  # cached under a versioned name
 
 # Tests expected to fail with specific error messages
 # Format: {expected_error_substring: [(class_name, test_name), ...]}
@@ -1308,6 +1309,10 @@ def run_single_class(class_info):
     import shutil
 
     class_name, module_name = class_info
+    # A crash or hang in the C library shows up as a traceback instead of a silent stall
+    import faulthandler
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(CLASS_TIMEOUT, exit=True)
 
     # Create unique temp directory for this class
     unique_tmp = os.path.join(tempfile.gettempdir(), f'test_pathlib_{class_name}_{os.getpid()}')
@@ -1359,6 +1364,7 @@ def run_single_class(class_info):
 def run_tests():
     """Run CPython tests against snakepath."""
     import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
     import os
 
     setup_tests()
@@ -1396,9 +1402,9 @@ def run_tests():
 
     # Run test classes in parallel using spawn context for clean isolation
     num_workers = min(len(test_classes), os.cpu_count() or 4)
-    ctx = multiprocessing.get_context('spawn')
-    with ctx.Pool(num_workers) as pool:
-        results_list = pool.map(run_single_class, test_classes)
+    # Unlike multiprocessing.Pool, the executor raises BrokenProcessPool if a worker dies instead of waiting forever
+    with ProcessPoolExecutor(num_workers, mp_context=multiprocessing.get_context('spawn')) as pool:
+        results_list = list(pool.map(run_single_class, test_classes))
 
     # Aggregate (class_name, method_name, traceback) tuples from all classes
     tests_run, failures, errors, skipped = 0, [], [], []
