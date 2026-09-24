@@ -174,24 +174,26 @@ static bool run_test_async(const char *exe, Nob_Procs *procs) {
 #ifndef _WIN32
 static bool run_valgrind(const char *exe) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "valgrind");
-    nob_cmd_append(&cmd, "--leak-check=full");
-    nob_cmd_append(&cmd, "--error-exitcode=1");
-    nob_cmd_append(&cmd, "--track-origins=yes");
-    nob_cmd_append(&cmd, exe);
-    bool result = nob_cmd_run(&cmd);
-    return result;
+    nob_cmd_append(&cmd, "valgrind", "--leak-check=full", "--error-exitcode=1", "--track-origins=yes", exe);
+    return nob_cmd_run(&cmd);
 }
 #endif
 
+/* SNAKEPATH_SKIP_GCC (Termux, where gcc is clang) keeps only the clang builds, without sanitizers;
+ * otherwise sanitizer builds need SNAKEPATH_SANITIZE */
+static bool skip_gcc, use_sanitizers;
+
+static bool config_enabled(BuildConfig cfg) {
+    if (skip_gcc && (cfg.compiler == COMPILER_GCC || cfg.compiler == COMPILER_GPP)) return false;
+    return !cfg.sanitizers || (use_sanitizers && !skip_gcc);
+}
+
 static const char *all_artifacts[] = {
 #ifdef _WIN32
-    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "../demo.exe",
+    "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "../api_demo.exe",
     /* PDB and obj files from MSVC */
-    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "../demo.pdb",
+    "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "../api_demo.pdb",
     "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "../api_demo.obj",
-    /* Legacy obj files in root (clean these up too) */
-    "../test.obj", "../test_fluent_api.obj",
     "python_harness/snakepath.dll",
 #else
     "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
@@ -233,32 +235,30 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
 
 /* Run Python tests */
 static const char *find_python(void) {
-    const char *python = NULL;
 #ifdef _WIN32
-    python = "python";
+    return "python";
 #else
-    if (nob_file_exists("/usr/bin/python3")) {
-        python = "python3";
-    } else if (nob_file_exists("/usr/bin/python")) {
-        python = "python";
-    } else {
-        python = "python3";
-    }
+    /* python3 unless only /usr/bin/python exists */
+    return !nob_file_exists("/usr/bin/python3") && nob_file_exists("/usr/bin/python") ? "python" : "python3";
 #endif
-    return python;
 }
 
 static bool run_call_depth_tests(void) {
     Nob_Cmd cmd = {0};
-    const char *python = find_python();
-    nob_cmd_append(&cmd, python, "test_call_depth.py", "../snakepath.h", "3");
+    nob_cmd_append(&cmd, find_python(), "test_call_depth.py", "../snakepath.h", "3");
+    return nob_cmd_run(&cmd);
+}
+
+/* README.md and docs/index.html must embed the same code as api_demo.c */
+static bool run_docs_check(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, find_python(), "check_docs.py");
     return nob_cmd_run(&cmd);
 }
 
 static bool run_python_tests(void) {
     Nob_Cmd cmd = {0};
-    const char *python = find_python();
-    nob_cmd_append(&cmd, python, "python_harness/run_cpython_tests.py");
+    nob_cmd_append(&cmd, find_python(), "python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -331,18 +331,17 @@ int main(int argc, char **argv) {
         {COMPILER_MSVC,     false, "MSVC (C)",   "test_msvc.exe"},
         {COMPILER_MSVC_CPP, false, "MSVC (C++)", "test_msvc_cpp.exe"},
     };
-    size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
     BuildConfig fluent_configs[] = {
         {COMPILER_MSVC, false, "MSVC Fluent", "test_fluent_msvc.exe"},
     };
     BuildConfig demo_config = {COMPILER_MSVC, false, "Demo", "../api_demo.exe"};
-    const char *demo_output = "../api_demo.exe";
 #else
-    bool use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
-    bool skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;  /* For Termux where gcc is clang */
+    skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;
+    use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
+    if (skip_gcc) LOG_INFO( "SNAKEPATH_SKIP_GCC set - using clang only");
+    else if (use_sanitizers) LOG_INFO( "SNAKEPATH_SANITIZE set - including sanitizer builds");
 
-    /* Full configs with sanitizers */
-    BuildConfig test_configs_full[] = {
+    BuildConfig test_configs[] = {
         {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
         {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
         {COMPILER_GCC,     true,  "GCC + sanitizers",   "./test_gcc_san"},
@@ -350,63 +349,26 @@ int main(int argc, char **argv) {
         {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
         {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
     };
-    /* No sanitizers */
-    BuildConfig test_configs_no_san[] = {
-        {COMPILER_GCC,     false, "GCC",                "./test_gcc"},
-        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
-        {COMPILER_GPP,     false, "G++ (C++)",          "./test_gpp"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
-    };
-    /* Clang-only (for Termux where gcc is clang) */
-    BuildConfig test_configs_clang_only[] = {
-        {COMPILER_CLANG,   false, "Clang",              "./test_clang"},
-        {COMPILER_CLANGPP, false, "Clang++ (C++)",      "./test_clangpp"},
-    };
-
-    BuildConfig *test_configs;
-    size_t test_count;
-    if (skip_gcc) {
-        test_configs = test_configs_clang_only;
-        test_count = sizeof(test_configs_clang_only) / sizeof(test_configs_clang_only[0]);
-        LOG_INFO( "SNAKEPATH_SKIP_GCC set - using clang only");
-    } else if (use_sanitizers) {
-        test_configs = test_configs_full;
-        test_count = sizeof(test_configs_full) / sizeof(test_configs_full[0]);
-        LOG_INFO( "SNAKEPATH_SANITIZE set - including sanitizer builds");
-    } else {
-        test_configs = test_configs_no_san;
-        test_count = sizeof(test_configs_no_san) / sizeof(test_configs_no_san[0]);
-    }
-
-    BuildConfig fluent_configs_full[] = {
+    BuildConfig fluent_configs[] = {
         {COMPILER_GCC,   false, "GCC Fluent",   "./test_fluent_gcc"},
         {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
     };
-    BuildConfig fluent_configs_clang[] = {
-        {COMPILER_CLANG, false, "Clang Fluent", "./test_fluent_clang"},
-    };
-    BuildConfig *fluent_configs = skip_gcc ? fluent_configs_clang : fluent_configs_full;
-    BuildConfig demo_config = skip_gcc
-        ? (BuildConfig){COMPILER_CLANG, false, "Demo", "../api_demo"}
-        : (BuildConfig){COMPILER_GCC, false, "Demo", "../api_demo"};
-    const char *demo_output = "../api_demo";
+    BuildConfig demo_config = {skip_gcc ? COMPILER_CLANG : COMPILER_GCC, false, "Demo", "../api_demo"};
 #endif
-
-#ifdef _WIN32
+    size_t test_count = sizeof(test_configs) / sizeof(test_configs[0]);
     size_t fluent_count = sizeof(fluent_configs) / sizeof(fluent_configs[0]);
-#else
-    size_t fluent_count = skip_gcc ? 1 : 2;
-#endif
 
     /* Phase 1: Build everything in parallel */
     LOG_INFO( "=== Building all targets ===");
 
     for (size_t i = 0; i < test_count; i++) {
+        if (!config_enabled(test_configs[i])) continue;
         LOG_INFO( "  Starting build: %s", test_configs[i].name);
         build_source_async(test_configs[i], "test.c", NULL, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
+        if (!config_enabled(fluent_configs[i])) continue;
         LOG_INFO( "  Starting build: %s", fluent_configs[i].name);
         build_source_async(fluent_configs[i], "test_fluent_api.c", NULL, &procs);
     }
@@ -434,11 +396,13 @@ int main(int argc, char **argv) {
     LOG_INFO( "=== Running all tests ===");
 
     for (size_t i = 0; i < test_count; i++) {
+        if (!config_enabled(test_configs[i])) continue;
         LOG_INFO( "  Starting test: %s", test_configs[i].name);
         run_test_async(test_configs[i].output, &procs);
     }
 
     for (size_t i = 0; i < fluent_count; i++) {
+        if (!config_enabled(fluent_configs[i])) continue;
         LOG_INFO( "  Starting test: %s", fluent_configs[i].name);
         run_test_async(fluent_configs[i].output, &procs);
     }
@@ -448,10 +412,15 @@ int main(int argc, char **argv) {
         all_ok = false;
     }
 
-    /* Phase 3: Public call-depth tests */
+    /* Phase 3: Static checks - public call depth, docs in lockstep with api_demo.c */
     LOG_INFO( "=== Running call-depth tests ===");
     if (!run_call_depth_tests()) {
         nob_log(NOB_ERROR, "Call-depth tests failed");
+        all_ok = false;
+    }
+    LOG_INFO( "=== Checking docs ===");
+    if (!run_docs_check()) {
+        nob_log(NOB_ERROR, "Docs check failed");
         all_ok = false;
     }
 
@@ -475,7 +444,7 @@ int main(int argc, char **argv) {
 
     /* Phase 6: Run demo to show it works */
     LOG_INFO( "=== Running demo ===");
-    if (!run_test_async(demo_output, NULL)) {
+    if (!run_test_async(demo_config.output, NULL)) {
         nob_log(NOB_ERROR, "Demo failed");
         all_ok = false;
     }

@@ -28,7 +28,6 @@ if _lib is None:
 # Get structure sizes from library
 SP_PATH_MAX = _lib.sp_path_max()
 SP_MAX_SUFFIXES = _lib.sp_max_suffixes()
-_sizeof_path = _lib.sp_sizeof_path()
 _sizeof_parts_iter = _lib.sp_sizeof_parts_iter()
 _sizeof_parents_iter = _lib.sp_sizeof_parents_iter()
 
@@ -37,31 +36,19 @@ SP_FLAVOR_NATIVE = 0
 SP_FLAVOR_POSIX = 1
 SP_FLAVOR_WINDOWS = 2
 
-# Error codes (from C library)
-SP_ERR_NONE = _lib.sp_err_none()
-SP_ERR_NOT_RELATIVE = _lib.sp_err_not_relative()
+# Result and error codes (from C library)
+SP_OK = _lib.sp_ok()
+SP_ERR_EXISTS = _lib.sp_err_exists()
+SP_ERR_NOT_FOUND = _lib.sp_err_not_found()
+SP_ERR_NOT_DIR = _lib.sp_err_not_dir()
+SP_ERR_PERMISSION = _lib.sp_err_permission()
+SP_ERR_EXISTS_NOT_DIR = _lib.sp_err_exists_not_dir()
+SP_ERR_OPEN = _lib.sp_err_open()
 SP_ERR_NO_NAME = _lib.sp_err_no_name()
 SP_ERR_INVALID_ARG = _lib.sp_err_invalid_arg()
 SP_MATCH_YES = _lib.sp_match_yes()
-SP_MATCH_NO = _lib.sp_match_no()
 SP_MATCH_ERR_EMPTY = _lib.sp_match_err_empty()
 SP_MATCH_ERR_INVALID = _lib.sp_match_err_invalid()
-
-# mkdir result codes
-SP_MKDIR_OK = _lib.sp_mkdir_ok()
-SP_MKDIR_ERR_EXISTS = _lib.sp_mkdir_err_exists()
-SP_MKDIR_ERR_NOT_FOUND = _lib.sp_mkdir_err_not_found()
-SP_MKDIR_ERR_NOT_DIR = _lib.sp_mkdir_err_not_dir()
-SP_MKDIR_ERR_PERMISSION = _lib.sp_mkdir_err_permission()
-SP_MKDIR_ERR_OTHER = _lib.sp_mkdir_err_other()
-SP_MKDIR_ERR_EXISTS_NOT_DIR = _lib.sp_mkdir_err_exists_not_dir()
-
-# I/O result codes
-SP_IO_OK = _lib.sp_io_ok()
-SP_IO_ERR_OPEN = _lib.sp_io_err_open()
-SP_IO_ERR_READ = _lib.sp_io_err_read()
-SP_IO_ERR_WRITE = _lib.sp_io_err_write()
-SP_IO_ERR_TOO_LARGE = _lib.sp_io_err_too_large()
 
 # Case sensitivity options for glob/match
 SP_CASE_PLATFORM_DEFAULT = _lib.sp_case_platform_default()
@@ -138,11 +125,10 @@ for n in ['drive', 'root', 'anchor', 'name', 'stem', 'suffix']:
 for n in ['parent', 'absolute']:
     _sig(f'sp_{n}_wrap', [_PP, _PP])
 
-for n in ['with_name', 'with_stem', 'with_suffix', 'join_one']:
+for n in ['with_name', 'with_stem', 'with_suffix']:
     _sig(f'sp_{n}_wrap', [_PP, c_char_p, _PP])
 
-for n in ['joinpath', 'relative_to', 'relative_to_walk_up']:
-    _sig(f'sp_{n}_wrap', [_PP, _PP, _PP])
+_sig('sp_joinpath_wrap', [_PP, _PP, _PP])
 
 for n in ['is_absolute', 'is_reserved', 'is_file', 'is_dir', 'exists',
           'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
@@ -150,14 +136,11 @@ for n in ['is_absolute', 'is_reserved', 'is_file', 'is_dir', 'exists',
           'path_is_error', 'path_error_code', 'relative_to_is_error']:
     _sig(f'sp_{n}_wrap', [_PP], c_int)
 
-for n in ['is_relative_to', 'path_eq']:
-    _sig(f'sp_{n}_wrap', [_PP, _PP], c_int)
+_sig('sp_path_eq_wrap', [_PP, _PP], c_int)
 
-for n in ['path_hash', 'parts_count', 'parents_count']:
-    _sig(f'sp_{n}_wrap', [_PP], ctypes.c_ulong if n == 'path_hash' else c_size_t)
+_sig('sp_path_hash_wrap', [_PP], ctypes.c_ulong)
 
 # Remaining signatures
-_sig('sp_path_new_wrap', [c_char_p, c_int, _PP])
 _sig('sp_path_new_len_wrap', [POINTER(ctypes.c_char), c_size_t, c_int, _PP])
 _sig('sp_path_convert_wrap', [c_char_p, c_int, c_int, _PP])
 _sig('sp_path_copy_wrap', [_PP, _PP])
@@ -175,7 +158,6 @@ _sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
 _sig('sp_as_posix_wrap', [_PP, c_char_p, c_size_t])
 _sig('sp_cwd_wrap', [c_int, _PP])
 _sig('sp_path_cmp_wrap', [_PP, _PP], c_int)
-_sig('sp_match_wrap', [_PP, c_char_p], c_int)
 _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_lstat_wrap', [_PP, _PStat])
@@ -196,7 +178,6 @@ _sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
 _sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
 _sig('sp_glob_next_wrap', [_PGlobIter, _PP], c_int)
 _sig('sp_glob_end_wrap', [_PGlobIter])
-_sig('sp_glob_depth_wrap', [_PGlobIter], c_int)
 # File/directory modification operations
 _sig('sp_touch_wrap', [_PP, ctypes.c_uint, c_int], c_int)
 _sig('sp_unlink_wrap', [_PP, c_int], c_int)
@@ -213,8 +194,8 @@ _sig('sp_expanduser_wrap', [_PP, _PP])
 # User/group info (SpTerm-based, buffer API) - not available on Windows builds
 _HAS_OWNER_GROUP = hasattr(_lib, 'sp_owner_wrap') and hasattr(_lib, 'sp_group_wrap')
 if _HAS_OWNER_GROUP:
-    _sig('sp_owner_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
-    _sig('sp_group_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)], c_int)
+    for n in ['owner', 'group']:
+        _sig(f'sp_{n}_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)])
 # iterdir iterator
 _sizeof_iterdir_iter = _lib.sp_sizeof_iterdir_iter()
 class _SpIterdirIter(Structure):
@@ -229,18 +210,23 @@ _sig('sp_iterdir_done_wrap', [_PIterdirIter], c_int)
 
 # ============ Property descriptors ============
 
+_TERM_BUF_SIZE = 256  # matches SP_TERM_MAX
+
+def _term(func, sp):
+    """Decode the SpTerm that func writes for sp ('' when empty)"""
+    buf = create_string_buffer(_TERM_BUF_SIZE)
+    length = c_size_t()
+    func(byref(sp), buf, _TERM_BUF_SIZE, byref(length))
+    return buf.value[:length.value].decode('utf-8') if length.value else ''
+
+
 class _TermProp:
     """Descriptor for SpTerm properties (drive, root, anchor, name, stem, suffix)"""
     __slots__ = ('_func',)
-    _TERM_BUF_SIZE = 256  # matches SP_TERM_MAX
     def __init__(self, name):
         self._func = getattr(_lib, f'sp_{name}_wrap')
     def __get__(self, obj, objtype=None):
-        if obj is None: return self
-        buf = ctypes.create_string_buffer(self._TERM_BUF_SIZE)
-        length = c_size_t()
-        self._func(byref(obj._sp), buf, self._TERM_BUF_SIZE, byref(length))
-        return '' if not length.value else buf.value[:length.value].decode('utf-8')
+        return self if obj is None else _term(self._func, obj._sp)
 
 
 class _PathProp:
@@ -255,14 +241,13 @@ class _PathProp:
         return obj._from_sp(out)
 
 
-class _BoolProp:
-    """Descriptor for boolean properties"""
-    __slots__ = ('_func',)
-    def __init__(self, name):
-        self._func = getattr(_lib, f'sp_{name}_wrap')
-    def __get__(self, obj, objtype=None):
-        if obj is None: return self
-        return bool(self._func(byref(obj._sp)))
+def _bool_method(name):
+    """Method returning the C predicate sp_<name>_wrap as a bool"""
+    func = getattr(_lib, f'sp_{name}_wrap')
+    def method(self):
+        return bool(func(byref(self._sp)))
+    method.__name__ = name
+    return method
 
 
 # ============ Helper functions ============
@@ -286,6 +271,17 @@ def _encode_buf(s):
 def _decode(b):
     """Decode bytes from C library to string"""
     return '' if b is None else (b.decode('utf-8', errors='surrogatepass') if isinstance(b, bytes) else b)
+
+
+def _parts_array(args, what):
+    """NULL-terminated C string array of path arguments (for the *_parts C functions)"""
+    if not args:
+        raise TypeError(f"{what}() requires at least 1 argument")
+    for arg in args:
+        if isinstance(arg, bytes):
+            raise TypeError("argument should be a str or os.PathLike object, not bytes")
+    parts = [_encode(os.fspath(a)) for a in args] + [None]
+    return (c_char_p * len(parts))(*parts)
 
 
 def _get_pathlib_flavor(obj):
@@ -367,68 +363,34 @@ class PurePath:
                     "argument should be a str or an os.PathLike object "
                     "where __fspath__ returns a str, not 'bytes'"
                 )
+        self._load(args[0] if args else '', self._sp)
+        self._join_into(self._sp, args[1:])
 
-        if not args:
-            _lib.sp_path_new_len_wrap(_encode_buf(b''), 0, self._flavor, byref(self._sp))
-        elif len(args) == 1:
-            arg = args[0]
-            if isinstance(arg, PurePath):
-                if arg._flavor == self._flavor:
-                    _lib.sp_path_copy_wrap(byref(arg._sp), byref(self._sp))
-                else:
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(self._sp))
-                return
-            src_flavor = _get_pathlib_flavor(arg)
-            if src_flavor is not None:
-                _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(self._sp))
-            else:
-                path_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
-                _lib.sp_path_new_len_wrap(path_buf, len(path_buf.raw), self._flavor, byref(self._sp))
+    def _load(self, arg, out):
+        """Parse one path argument into out, converting from another flavor if needed"""
+        if isinstance(arg, PurePath) and arg._flavor == self._flavor:
+            _lib.sp_path_copy_wrap(byref(arg._sp), byref(out))
+            return
+        src_flavor = arg._flavor if isinstance(arg, PurePath) else _get_pathlib_flavor(arg)
+        if src_flavor is not None:
+            _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(out))
         else:
-            self._init_multi(args)
+            buf = _encode_buf(os.fspath(arg))
+            _lib.sp_path_new_len_wrap(buf, len(buf.raw), self._flavor, byref(out))
 
-    def _init_multi(self, args):
-        """Initialize from multiple path segments"""
-        first = args[0]
-        if isinstance(first, PurePath):
-            if first._flavor == self._flavor:
-                _lib.sp_path_copy_wrap(byref(first._sp), byref(self._sp))
+    def _join_into(self, sp, others):
+        """Join each argument onto sp in place; plain strings are joined as raw text"""
+        for other in others:
+            if isinstance(other, PurePath) or _get_pathlib_flavor(other) is not None:
+                tmp = _SpPath()
+                self._load(other, tmp)
+                _lib.sp_joinpath_wrap(byref(sp), byref(tmp), byref(sp))
             else:
-                _lib.sp_path_convert_wrap(_encode(str(first)), first._flavor, self._flavor, byref(self._sp))
-        else:
-            src_flavor = _get_pathlib_flavor(first)
-            if src_flavor is not None:
-                _lib.sp_path_convert_wrap(_encode(str(first)), src_flavor, self._flavor, byref(self._sp))
-            else:
-                first_buf = _encode_buf(os.fspath(first) if hasattr(os, 'fspath') else str(first))
-                _lib.sp_path_new_len_wrap(first_buf, len(first_buf.raw), self._flavor, byref(self._sp))
-
-        for arg in args[1:]:
-            if isinstance(arg, PurePath):
-                if arg._flavor == self._flavor:
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(arg._sp), byref(self._sp))
-                else:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), arg._flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
-            else:
-                src_flavor = _get_pathlib_flavor(arg)
-                if src_flavor is not None:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(self._sp), byref(tmp), byref(self._sp))
-                else:
-                    arg_buf = _encode_buf(os.fspath(arg) if hasattr(os, 'fspath') else str(arg))
-                    _lib.sp_join_one_len_wrap(byref(self._sp), arg_buf, len(arg_buf.raw), byref(self._sp))
+                buf = _encode_buf(os.fspath(other))
+                _lib.sp_join_one_len_wrap(byref(sp), buf, len(buf.raw), byref(sp))
 
     def with_segments(self, *pathsegments):
         """Construct a new path object from any number of path-like objects."""
-        for arg in pathsegments:
-            if isinstance(arg, bytes):
-                raise TypeError(
-                    "argument should be a str or an os.PathLike object "
-                    "where __fspath__ returns a str, not 'bytes'"
-                )
         parts = [_encode(os.fspath(a)) for a in pathsegments]
         parts_arr = (c_char_p * len(parts))(*parts) if parts else None
         out = _SpPath()
@@ -528,37 +490,18 @@ class PurePath:
             raise ValueError("relative path can't be expressed as a file URI")
         return buf.value.decode('utf-8')
 
-    def is_absolute(self):
-        return bool(_lib.sp_is_absolute_wrap(byref(self._sp)))
+    is_absolute = _bool_method('is_absolute')
+    is_reserved = _bool_method('is_reserved')
 
     def is_relative_to(self, *args):
-        if not args:
-            raise TypeError("is_relative_to() requires at least 1 argument")
-        for arg in args:
-            if isinstance(arg, bytes):
-                raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        parts = [_encode(os.fspath(a)) for a in args]
-        parts.append(None)
-        parts_arr = (c_char_p * len(parts))(*parts)
-        return bool(_lib.sp_is_relative_to_parts_wrap(byref(self._sp), parts_arr))
+        return bool(_lib.sp_is_relative_to_parts_wrap(byref(self._sp), _parts_array(args, 'is_relative_to')))
 
     def relative_to(self, *args, walk_up=False):
-        if not args:
-            raise TypeError("relative_to() requires at least 1 argument")
-        for arg in args:
-            if isinstance(arg, bytes):
-                raise TypeError("argument should be a str or os.PathLike object, not bytes")
-
-        parts = [_encode(os.fspath(a)) for a in args]
-        parts.append(None)
-        parts_arr = (c_char_p * len(parts))(*parts)
-
         out = _SpPath()
-        _lib.sp_relative_to_parts_wrap(byref(self._sp), parts_arr, 1 if walk_up else 0, byref(out))
-
+        parts = _parts_array(args, 'relative_to')
+        _lib.sp_relative_to_parts_wrap(byref(self._sp), parts, 1 if walk_up else 0, byref(out))
         if _lib.sp_relative_to_is_error_wrap(byref(out)):
-            other_str = str(self.with_segments(*args))
-            raise ValueError(f"{str(self)!r} is not relative to {other_str!r}")
+            raise ValueError(f"{str(self)!r} is not relative to {str(self.with_segments(*args))!r}")
         return self._from_sp(out)
 
     def joinpath(self, *others):
@@ -570,31 +513,14 @@ class PurePath:
                 )
         out = _SpPath()
         _lib.sp_path_copy_wrap(byref(self._sp), byref(out))
-
-        for other in others:
-            if isinstance(other, PurePath):
-                if other._flavor == self._flavor:
-                    _lib.sp_joinpath_wrap(byref(out), byref(other._sp), byref(out))
-                else:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(other)), other._flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(out), byref(tmp), byref(out))
-            else:
-                src_flavor = _get_pathlib_flavor(other)
-                if src_flavor is not None:
-                    tmp = _SpPath()
-                    _lib.sp_path_convert_wrap(_encode(str(other)), src_flavor, self._flavor, byref(tmp))
-                    _lib.sp_joinpath_wrap(byref(out), byref(tmp), byref(out))
-                else:
-                    other_buf = _encode_buf(os.fspath(other))
-                    _lib.sp_join_one_len_wrap(byref(out), other_buf, len(other_buf.raw), byref(out))
+        self._join_into(out, others)
         return self._from_sp(out)
 
-    def _with_field(self, func_name, value, type_name, err_no_name, err_invalid):
+    def _with_field(self, type_name, value):
         if not isinstance(value, str):
             raise TypeError(f"expected str, not {type(value).__name__}")
         out = _SpPath()
-        getattr(_lib, f'sp_{func_name}_wrap')(byref(self._sp), _encode(value), byref(out))
+        getattr(_lib, f'sp_with_{type_name}_wrap')(byref(self._sp), _encode(value), byref(out))
         err = _lib.sp_path_error_code_wrap(byref(out))
         if err == SP_ERR_NO_NAME:
             raise ValueError(f"{self!r} has an empty name")
@@ -603,13 +529,13 @@ class PurePath:
         return self._from_sp(out)
 
     def with_name(self, name):
-        return self._with_field('with_name', name, 'name', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
+        return self._with_field('name', name)
 
     def with_stem(self, stem):
-        return self._with_field('with_stem', stem, 'stem', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
+        return self._with_field('stem', stem)
 
     def with_suffix(self, suffix):
-        return self._with_field('with_suffix', suffix, 'suffix', SP_ERR_NO_NAME, SP_ERR_INVALID_ARG)
+        return self._with_field('suffix', suffix)
 
     def match(self, pattern, *, case_sensitive=None):
         if isinstance(pattern, bytes):
@@ -622,9 +548,6 @@ class PurePath:
             raise ValueError(f"Invalid pattern: {pattern!r}")
         return result == SP_MATCH_YES
 
-    def is_reserved(self):
-        return bool(_lib.sp_is_reserved_wrap(byref(self._sp)))
-
 
 class PurePosixPath(PurePath):
     """Pure path with POSIX semantics."""
@@ -632,18 +555,12 @@ class PurePosixPath(PurePath):
     _flavor = SP_FLAVOR_POSIX
     parser = __import__('posixpath')
 
-    def __new__(cls, *args, **kwargs):
-        return object.__new__(cls)
-
 
 class PureWindowsPath(PurePath):
     """Pure path with Windows semantics."""
     __slots__ = ()
     _flavor = SP_FLAVOR_WINDOWS
     parser = __import__('ntpath')
-
-    def __new__(cls, *args, **kwargs):
-        return object.__new__(cls)
 
 
 # ============ Concrete Path classes ============
@@ -669,35 +586,16 @@ class Path(PurePath):
         _lib.sp_absolute_wrap(byref(self._sp), byref(out))
         return self._from_sp(out)
 
-    def is_file(self):
-        return bool(_lib.sp_is_file_wrap(byref(self._sp)))
-
-    def is_dir(self):
-        return bool(_lib.sp_is_dir_wrap(byref(self._sp)))
-
-    def exists(self):
-        return bool(_lib.sp_exists_wrap(byref(self._sp)))
-
-    def is_symlink(self):
-        return bool(_lib.sp_is_symlink_wrap(byref(self._sp)))
-
-    def is_block_device(self):
-        return bool(_lib.sp_is_block_device_wrap(byref(self._sp)))
-
-    def is_char_device(self):
-        return bool(_lib.sp_is_char_device_wrap(byref(self._sp)))
-
-    def is_fifo(self):
-        return bool(_lib.sp_is_fifo_wrap(byref(self._sp)))
-
-    def is_socket(self):
-        return bool(_lib.sp_is_socket_wrap(byref(self._sp)))
-
-    def is_mount(self):
-        return bool(_lib.sp_is_mount_wrap(byref(self._sp)))
-
-    def is_junction(self):
-        return bool(_lib.sp_is_junction_wrap(byref(self._sp)))
+    is_file = _bool_method('is_file')
+    is_dir = _bool_method('is_dir')
+    exists = _bool_method('exists')
+    is_symlink = _bool_method('is_symlink')
+    is_block_device = _bool_method('is_block_device')
+    is_char_device = _bool_method('is_char_device')
+    is_fifo = _bool_method('is_fifo')
+    is_socket = _bool_method('is_socket')
+    is_mount = _bool_method('is_mount')
+    is_junction = _bool_method('is_junction')
 
     def stat(self, *, follow_symlinks=True):
         result = _SpStatResult()
@@ -729,30 +627,23 @@ class Path(PurePath):
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return self._from_sp(out)
 
+    def _sp_of(self, other):
+        """C path for a PurePath or path-like argument (parsed in this path's flavor)"""
+        if isinstance(other, PurePath):
+            return other._sp
+        sp = _SpPath()
+        buf = _encode_buf(os.fspath(other))
+        _lib.sp_path_new_len_wrap(buf, len(buf.raw), self._flavor, byref(sp))
+        return sp
+
     def symlink_to(self, target, target_is_directory=False):
         """Make this path a symlink pointing to target."""
-        if isinstance(target, PurePath):
-            target_sp = target._sp
-        else:
-            target_path = self.__class__.__new__(self.__class__)
-            target_path._sp = _SpPath()
-            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
-            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
-            target_sp = target_path._sp
-        if not _lib.sp_symlink_to_wrap(byref(self._sp), byref(target_sp), 1 if target_is_directory else 0):
+        if not _lib.sp_symlink_to_wrap(byref(self._sp), byref(self._sp_of(target)), 1 if target_is_directory else 0):
             raise OSError(1, "Operation not permitted", str(self))
 
     def hardlink_to(self, target):
         """Make this path a hard link pointing to target."""
-        if isinstance(target, PurePath):
-            target_sp = target._sp
-        else:
-            target_path = self.__class__.__new__(self.__class__)
-            target_path._sp = _SpPath()
-            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
-            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
-            target_sp = target_path._sp
-        if not _lib.sp_hardlink_to_wrap(byref(self._sp), byref(target_sp)):
+        if not _lib.sp_hardlink_to_wrap(byref(self._sp), byref(self._sp_of(target))):
             raise OSError(1, "Operation not permitted", str(self))
 
     def samefile(self, other_path):
@@ -760,71 +651,49 @@ class Path(PurePath):
         # First check that both paths exist (Python raises FileNotFoundError if either doesn't exist)
         if not self.exists():
             raise FileNotFoundError(2, "No such file or directory", str(self))
-        if isinstance(other_path, PurePath):
-            other_sp = other_path._sp
-            if not _lib.sp_exists_wrap(byref(other_sp)):
-                raise FileNotFoundError(2, "No such file or directory", str(other_path))
-        else:
-            other = self.__class__.__new__(self.__class__)
-            other._sp = _SpPath()
-            other_buf = _encode_buf(os.fspath(other_path) if hasattr(os, 'fspath') else str(other_path))
-            _lib.sp_path_new_len_wrap(other_buf, len(other_buf.raw), self._flavor, byref(other._sp))
-            other_sp = other._sp
-            if not _lib.sp_exists_wrap(byref(other_sp)):
-                raise FileNotFoundError(2, "No such file or directory", str(other_path))
+        other_sp = self._sp_of(other_path)
+        if not _lib.sp_exists_wrap(byref(other_sp)):
+            raise FileNotFoundError(2, "No such file or directory", str(other_path))
         return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other_sp)))
 
     def mkdir(self, mode=0o777, parents=False, exist_ok=False):
         result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0)
-        if result == SP_MKDIR_OK:
+        if result == SP_OK:
             return
         path_str = str(self)
-        if result == SP_MKDIR_ERR_EXISTS or result == SP_MKDIR_ERR_EXISTS_NOT_DIR:
+        if result == SP_ERR_EXISTS or result == SP_ERR_EXISTS_NOT_DIR:
             raise FileExistsError(17, "File exists", path_str)
-        elif result == SP_MKDIR_ERR_NOT_FOUND:
+        elif result == SP_ERR_NOT_FOUND:
             raise FileNotFoundError(2, "No such file or directory", path_str)
-        elif result == SP_MKDIR_ERR_NOT_DIR:
+        elif result == SP_ERR_NOT_DIR:
             raise NotADirectoryError(20, "Not a directory", path_str)
-        elif result == SP_MKDIR_ERR_PERMISSION:
+        elif result == SP_ERR_PERMISSION:
             raise PermissionError(13, "Permission denied", path_str)
         else:
             raise OSError(0, "Unknown error", path_str)
 
-    def glob(self, pattern, *, case_sensitive=None):
-        """Iterate over this subtree and yield all existing files matching pattern."""
+    def _glob(self, begin, pattern, case_sensitive):
         if isinstance(pattern, bytes):
             raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        pattern_str = str(pattern)
-        if not pattern_str:
-            raise ValueError("Unacceptable pattern: ''")
-
         cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
-
         results = []
         it = _SpGlobIter()
         match = _SpPath()
-        _lib.sp_glob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
+        begin(byref(self._sp), _encode(str(pattern)), cs, byref(it))
         while _lib.sp_glob_next_wrap(byref(it), byref(match)):
             results.append(self._from_sp(match))
         _lib.sp_glob_end_wrap(byref(it))
         return iter(results)
+
+    def glob(self, pattern, *, case_sensitive=None):
+        """Iterate over this subtree and yield all existing files matching pattern."""
+        if not isinstance(pattern, bytes) and not str(pattern):
+            raise ValueError("Unacceptable pattern: ''")
+        return self._glob(_lib.sp_glob_begin_wrap, pattern, case_sensitive)
 
     def rglob(self, pattern, *, case_sensitive=None):
         """Recursively yield all existing files matching pattern."""
-        if isinstance(pattern, bytes):
-            raise TypeError("argument should be a str or os.PathLike object, not bytes")
-        pattern_str = str(pattern)
-
-        cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
-
-        results = []
-        it = _SpGlobIter()
-        match = _SpPath()
-        _lib.sp_rglob_begin_wrap(byref(self._sp), _encode(pattern_str), cs, byref(it))
-        while _lib.sp_glob_next_wrap(byref(it), byref(match)):
-            results.append(self._from_sp(match))
-        _lib.sp_glob_end_wrap(byref(it))
-        return iter(results)
+        return self._glob(_lib.sp_rglob_begin_wrap, pattern, case_sensitive)
 
     def touch(self, mode=0o666, exist_ok=True):
         """Create file or update timestamps."""
@@ -841,39 +710,20 @@ class Path(PurePath):
         if not _lib.sp_rmdir_wrap(byref(self._sp)):
             raise OSError(1, "Operation not permitted", str(self))
 
-    def rename(self, target):
-        """Rename this file/directory to the given target."""
-        if isinstance(target, PurePath):
-            target_sp = target._sp
-        else:
-            target_path = self.__class__.__new__(self.__class__)
-            target_path._sp = _SpPath()
-            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
-            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
-            target_sp = target_path._sp
-
+    def _move(self, func, target):
         out = _SpPath()
-        _lib.sp_rename_wrap(byref(self._sp), byref(target_sp), byref(out))
+        func(byref(self._sp), byref(self._sp_of(target)), byref(out))
         if _lib.sp_path_is_error_wrap(byref(out)):
             raise OSError(1, "Operation not permitted", str(self), str(target))
         return self._from_sp(out)
+
+    def rename(self, target):
+        """Rename this file/directory to the given target."""
+        return self._move(_lib.sp_rename_wrap, target)
 
     def replace(self, target):
         """Replace target with this file (atomic operation)."""
-        if isinstance(target, PurePath):
-            target_sp = target._sp
-        else:
-            target_path = self.__class__.__new__(self.__class__)
-            target_path._sp = _SpPath()
-            target_buf = _encode_buf(os.fspath(target) if hasattr(os, 'fspath') else str(target))
-            _lib.sp_path_new_len_wrap(target_buf, len(target_buf.raw), self._flavor, byref(target_path._sp))
-            target_sp = target_path._sp
-
-        out = _SpPath()
-        _lib.sp_replace_wrap(byref(self._sp), byref(target_sp), byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise OSError(1, "Operation not permitted", str(self), str(target))
-        return self._from_sp(out)
+        return self._move(_lib.sp_replace_wrap, target)
 
     def chmod(self, mode):
         """Change the file mode (permissions)."""
@@ -891,9 +741,9 @@ class Path(PurePath):
         error_out = c_int()
         _lib.sp_read_file_wrap(byref(self._sp), buf, size, byref(bytes_out), byref(error_out))
         err = error_out.value
-        if err == SP_IO_ERR_OPEN:
+        if err == SP_ERR_OPEN:
             raise FileNotFoundError(2, "No such file or directory", str(self))
-        if err != SP_IO_OK:
+        if err != SP_OK:
             raise OSError(5, "I/O error", str(self))
         return buf.raw[:bytes_out.value]
 
@@ -906,9 +756,9 @@ class Path(PurePath):
         error_out = c_int()
         _lib.sp_write_file_wrap(byref(self._sp), data, len(data), byref(bytes_out), byref(error_out))
         err = error_out.value
-        if err == SP_IO_ERR_OPEN:
+        if err == SP_ERR_OPEN:
             raise FileNotFoundError(2, "No such file or directory", str(self))
-        if err != SP_IO_OK:
+        if err != SP_OK:
             raise OSError(5, "I/O error", str(self))
         return bytes_out.value
 
@@ -926,8 +776,7 @@ class Path(PurePath):
             if newline != '':
                 data = data.replace('\n', newline)
         else:
-            import os as _os
-            data = data.replace('\n', _os.linesep)
+            data = data.replace('\n', os.linesep)
         encoded = data.encode(encoding or 'utf-8', errors or 'strict')
         return self.write_bytes(encoded)
 
@@ -954,31 +803,21 @@ class Path(PurePath):
             raise RuntimeError("Could not expand user")
         return self._from_sp(out)
 
+    def _id_name(self, which):
+        if not _HAS_OWNER_GROUP:
+            raise NotImplementedError(f"Path.{which}() is unsupported on this system")
+        name = _term(getattr(_lib, f'sp_{which}_wrap'), self._sp)
+        if not name:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return name
+
     def owner(self):
         """Return the file owner name."""
-        if not _HAS_OWNER_GROUP:
-            raise NotImplementedError("Path.owner() is unsupported on this system")
-        buf = ctypes.create_string_buffer(256)
-        length = c_size_t()
-        result = _lib.sp_owner_wrap(byref(self._sp), buf, 256, byref(length))
-        if result == -1:
-            raise NotImplementedError("Path.owner() is unsupported on this system")
-        if result != 0 or not length.value:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        return buf.value[:length.value].decode('utf-8')
+        return self._id_name('owner')
 
     def group(self):
         """Return the file group name."""
-        if not _HAS_OWNER_GROUP:
-            raise NotImplementedError("Path.group() is unsupported on this system")
-        buf = ctypes.create_string_buffer(256)
-        length = c_size_t()
-        result = _lib.sp_group_wrap(byref(self._sp), buf, 256, byref(length))
-        if result == -1:
-            raise NotImplementedError("Path.group() is unsupported on this system")
-        if result != 0 or not length.value:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        return buf.value[:length.value].decode('utf-8')
+        return self._id_name('group')
 
     def iterdir(self):
         """Yield path objects of directory contents."""
@@ -1052,14 +891,10 @@ class Path(PurePath):
 
 class PosixPath(Path, PurePosixPath):
     __slots__ = ()
-    def __new__(cls, *args, **kwargs):
-        return object.__new__(cls)
 
 
 class WindowsPath(Path, PureWindowsPath):
     __slots__ = ()
-    def __new__(cls, *args, **kwargs):
-        return object.__new__(cls)
 
 
 __all__ = [
