@@ -1793,21 +1793,12 @@ static int sp_priv_last_error(void) {
     return SP_ERR_OTHER;
 }
 
-static int sp_priv_mkdir_parents(const SpPath *p, unsigned int parent_mode) {
-    SpPath parent = sp_parent(p);
-    if (sp_path_eq(&parent, p) || parent.len == 0) return SP_OK;
-    int r = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
-    return (r == SP_ERR_EXISTS_NOT_DIR) ? SP_ERR_NOT_DIR : r;
-}
-
+/* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
+ * failure is fine with exist_ok when the path is a directory (Windows reports some of those as access denied) */
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode) {
     const char *path_str;
     if (mode == 0) mode = SP_MKDIR_DEF_MODE;
     if (!sp_priv_path_cstr(p, &path_str)) return SP_ERR_OTHER_OP;
-    if (parents) {
-        int r = sp_priv_mkdir_parents(p, parent_mode);
-        if (r != SP_OK) return r;
-    }
 #ifdef SP_WINDOWS
     (void)mode;
     if (CreateDirectoryA(path_str, NULL)) return SP_OK;
@@ -1815,8 +1806,13 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, un
     if (mkdir(path_str, SP_PRIV_CAST(mode_t, mode)) == 0) return SP_OK;
 #endif
     int err = sp_priv_last_error();
-    if (err != SP_ERR_EXISTS) return err;
-    return sp_is_dir(p, true) ? (exist_ok ? SP_OK : SP_ERR_EXISTS) : SP_ERR_EXISTS_NOT_DIR;
+    SpPath parent = sp_parent(p);
+    if (err == SP_ERR_NOT_FOUND && parents && !sp_path_eq(&parent, p)) {
+        err = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
+        return err == SP_OK ? sp_mkdir(p, mode, false, exist_ok, parent_mode) : err;
+    }
+    if (exist_ok && sp_is_dir(p, true)) return SP_OK;
+    return err == SP_ERR_EXISTS && !sp_is_dir(p, true) ? SP_ERR_EXISTS_NOT_DIR : err;
 }
 
 bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
