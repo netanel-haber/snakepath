@@ -56,7 +56,7 @@ Use `./nob clean` before baseline comparisons or when local build artifacts may 
 ```bash
 gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath test.c && ./test_snakepath
 g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp test.c && ./test_cpp
-gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c && python run_cpython_tests.py
+gcc -shared -fPIC -DSP_FFI -o libsnakepath.so test.c && python snakepath.py
 ```
 
 **g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
@@ -65,7 +65,7 @@ gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c && python run_cpython_tests
 
 ## EXPECTED_FAILURES
 
-Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verifies failure reasons, reports wrong-reason and unexpected-success. When adding methods, tests cascade between reason groups — run locally and update.
+Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tuples. Runner verifies failure reasons, reports wrong-reason and unexpected-success. When adding methods, tests cascade between reason groups — run locally and update.
 
 ## Git & CI
 
@@ -93,9 +93,9 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
-- New functionality goes in `snakepath.h` first; then mirror wrappers in `snakepath_lib.c` and `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
-- When API examples change, update `api_demo.c` first, then its copy in `README.md` (GitHub Pages renders that file as the website through `_layouts/default.html`), and record any new learnings here. `nob` fails (`check.py`) if the copy drifts.
-- `snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
+- New functionality goes in `snakepath.h` first; then mirror wrappers in the `SP_FFI` section of `test.c` and in `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
+- When API examples change, update `api_demo.c` first, then its copy in `README.md` (GitHub Pages renders that file as the website through `_layouts/default.html`), and record any new learnings here. `nob` fails (`snakepath.py`) if the copy drifts.
+- The `SP_FFI` section of `test.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
 - `nob.h` is the build script plus upstream nob trimmed to what it uses (see its header). If it needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
-- Public API call depth is now enforced by `check.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
+- Public API call depth is now enforced by `snakepath.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
