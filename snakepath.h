@@ -1093,14 +1093,14 @@ static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, boo
     SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
     size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2); /* anchor first, if any */
     size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
-    bool o_anchored = sp_priv_anchor_len(other->buf, other->len, other->flavor) > 0;
-    bool same_anchoring = (sp_priv_anchor_len(p->buf, p->len, p->flavor) > 0) == o_anchored;
+    size_t o_anchor_parts = sp_priv_anchor_len(other->buf, other->len, other->flavor) > 0 ? 1 : 0;
+    bool same_anchoring = (sp_priv_anchor_len(p->buf, p->len, p->flavor) > 0) == (o_anchor_parts == 1);
     size_t ups = 0, k = o_count;
     for (;; k--) {
         size_t same = 0;
         while (same < k && same < p_count && sp_priv_sv_eq_flavor(p_parts[same], o_parts[same], p->flavor)) same++;
         if (same_anchoring && same == k) break;
-        if (!walk_up || k == o_anchored || (o_parts[k - 1].len == 2 && memcmp(o_parts[k - 1].data, "..", 2) == 0))
+        if (!walk_up || k == o_anchor_parts || (o_parts[k - 1].len == 2 && memcmp(o_parts[k - 1].data, "..", 2) == 0))
             return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
         ups++;
     }
@@ -1281,7 +1281,7 @@ int sp_path_cmp(const SpPath *a, const SpPath *b) {
         while (eb < lb && sb[eb] != sep) eb++;
         int c = sp_priv_str_cmp_flavor(sa + i, ea - i, sb + j, eb - j, a->flavor);
         if (c != 0) return c;
-        if (ea == la || eb == lb) return (eb == lb) - (ea == la); /* the path with fewer parts sorts first */
+        if (ea == la || eb == lb) return ea < la ? 1 : eb < lb ? -1 : 0; /* the path with fewer parts sorts first */
         i = ea + 1;
         j = eb + 1;
     }
