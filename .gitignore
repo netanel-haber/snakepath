@@ -1,16 +1,16 @@
 # Build outputs (POSIX binaries have no extension)
-build/nob
-build/nob.old
-build/test_gcc
-build/test_clang
-build/test_gcc_san
-build/test_clang_san
-build/test_gpp
-build/test_clangpp
-build/test_fluent_gcc
-build/test_fluent_clang
-build/libsnakepath.so
-api_demo
+/nob
+/nob.old
+/test_gcc
+/test_clang
+/test_gcc_san
+/test_clang_san
+/test_gpp
+/test_clangpp
+/test_fluent_gcc
+/test_fluent_clang
+/libsnakepath.so
+/api_demo
 *.o
 *.dSYM/
 
@@ -27,7 +27,7 @@ api_demo
 # Python
 __pycache__/
 *.pyc
-build/cpython_tests/
+/cpython_tests/
 
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp

@@ -1,2 +1,3 @@
 kramdown:
   smart_quotes: apos,apos,quot,quot
+exclude: [AGENTS.md, "*.c", "*.h", "*.py"]

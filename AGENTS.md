@@ -28,12 +28,12 @@ Required behavior:
 - Stop when the next change would save lines only by hiding code structure, adding slot-order coupling, or making the expanded code harder to follow.
 
 Required workflow:
-1. Read `docs/README.md` and `snakepath.h` in full before editing, then read the target in full.
+1. Read `README.md` and `snakepath.h` in full before editing, then read the target in full.
 2. Identify the largest repeated or wrapper-heavy regions.
 3. If macros are involved, inspect the preprocessed view of the touched region.
 4. Make only the changes that are simpler in both source and expanded form.
 5. Verify with `nob`.
-6. If a failure may be local-environment noise, baseline against clean `main` with `./build/nob clean` before calling it a regression.
+6. If a failure may be local-environment noise, baseline against clean `main` with `./nob clean` before calling it a regression.
 
 Required final report:
 - Net LOC delta for the target file.
@@ -45,18 +45,18 @@ Required final report:
 **Default local runner:**
 
 ```bash
-cc -DSNAKEPATH_QUIET -o build/nob build/nob.c
-env SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./build/nob
+cc -x c -DSNAKEPATH_QUIET -o nob nob.h
+env SNAKEPATH_SKIP_GCC=1 SNAKEPATH_NO_NRVO=1 ./nob
 ```
 
-Use `./build/nob clean` before baseline comparisons or when local build artifacts may be stale.
+Use `./nob clean` before baseline comparisons or when local build artifacts may be stale.
 
 **Direct commands for focused debugging:**
 
 ```bash
-gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath build/test.c && ./test_snakepath
-g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp build/test.c && ./test_cpp
-cd build && gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c -I.. && python run_cpython_tests.py
+gcc -std=c99 -I. -Wall -Wextra -Werror -o test_snakepath test.c && ./test_snakepath
+g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o test_cpp test.c && ./test_cpp
+gcc -shared -fPIC -o libsnakepath.so snakepath_lib.c && python run_cpython_tests.py
 ```
 
 **g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
@@ -88,14 +88,14 @@ Dict mapping error substrings → `(class_name, test_name)` tuples. Runner verif
 - If a macro refactor only hides repetition in the source file but expands back to the same wrapper boilerplate, it is not simplification; it is indirection.
 - Use the preprocessed view (`cc -E -P`) to judge macro refactors. Keep a macro only if the expanded code is still obviously simpler than the handwritten alternative.
 - Public API sections should stay concrete. If repetition remains, prefer tiny implementation-local helper macros over public X-macro inventories.
-- Before treating a local filesystem/fluent failure as a regression, stash the patch, run `./build/nob clean`, verify clean `main`, then compare against that baseline.
+- Before treating a local filesystem/fluent failure as a regression, stash the patch, run `./nob clean`, verify clean `main`, then compare against that baseline.
 - Python bindings should use `os.fspath()` directly (no `str()` fallback) so non-pathlike types raise `TypeError`.
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
-- New functionality goes in `snakepath.h` first; then mirror wrappers in `build/snakepath_lib.c` and `build/snakepath.py`, plus tests in `build/test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
-- When API examples change, update `api_demo.c` first, then its copy in `docs/README.md` (GitHub Pages renders that file as the website through `docs/_layouts/default.html`), and record any new learnings here. `nob` fails (`build/check.py`) if the copy drifts.
-- `build/snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
-- `build/nob.h` is upstream nob trimmed to what `build/nob.c` uses (see its header). If `nob.c` needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
-- Public API call depth is now enforced by `build/check.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
+- New functionality goes in `snakepath.h` first; then mirror wrappers in `snakepath_lib.c` and `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
+- When API examples change, update `api_demo.c` first, then its copy in `README.md` (GitHub Pages renders that file as the website through `_layouts/default.html`), and record any new learnings here. `nob` fails (`check.py`) if the copy drifts.
+- `snakepath_lib.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
+- `nob.h` is the build script plus upstream nob trimmed to what it uses (see its header). If it needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
+- Public API call depth is now enforced by `check.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
