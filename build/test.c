@@ -295,7 +295,14 @@ int main(void) {
     
     SpPath ej1 = sp_path_f("a/b", P); ASSERT_PATH(sp_join_one(&ej1, ""), "a/b");
     SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
-    
+
+    /* Failed path results are described by sp_error_str (their codes must not collide with SP_ERR_*) */
+    SpPath er1 = sp_path_f("/", P), er2 = sp_path_f("/a/b", P), er3 = sp_path_f("/c", P);
+    SpPath ee1 = sp_with_name(&er1, "x"), ee2 = sp_with_name(&er2, ""), ee3 = sp_relative_to(&er2, &er3);
+    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee1)), "Path has an empty name") == 0);
+    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee2)), "Invalid argument") == 0);
+    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee3)), "Path is not relative to the other path") == 0);
+
     printf("  Edge cases OK\n");
 
     printf("\nis_file Tests:\n");
@@ -469,6 +476,7 @@ int main(void) {
     SpPath resolve_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
     SpPath resolved_nonexist = sp_resolve(&resolve_nonexist, true);
     ASSERT(sp_path_is_error(&resolved_nonexist));
+    ASSERT(strcmp(sp_error_str(sp_path_error_code(&resolved_nonexist)), "Operation failed") == 0);
 
     printf("  resolve tests OK\n");
 

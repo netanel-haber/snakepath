@@ -396,6 +396,10 @@ int main(void) {
     ASSERT_STR(sp_error_str(SP_ERR_WRITE), "Write failed");
     ASSERT_STR(sp_error_str(SP_ERR_TOO_LARGE), "File too large for buffer");
     ASSERT_STR(sp_error_str(SP_ERR_OTHER_OP), "Unknown error");
+    ASSERT_STR(sp_error_str(SP_ERR_NOT_RELATIVE), "Path is not relative to the other path");
+    ASSERT_STR(sp_error_str(SP_ERR_NO_NAME), "Path has an empty name");
+    ASSERT_STR(sp_error_str(SP_ERR_INVALID_ARG), "Invalid argument");
+    ASSERT_STR(sp_error_str(SP_ERR_OTHER), "Operation failed");
     ASSERT_STR(sp_error_str(9999), "Unknown error");
 
     /* ============ is_reserved (fluent) ============ */
