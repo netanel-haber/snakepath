@@ -185,14 +185,14 @@ int main(void) {
     printf("  (fluent)        %d\n", SPF_PATH(p)->is_relative_to(&base));
 
     /* .relative_to https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.relative_to */
-    tmp = sp_relative_to(&p, &base);
+    tmp = sp_relative_to(&p, &base, false);
     printf("  relative_to:    %s\n", sp_str(&tmp));
-    tmp = SPF_PATH(p)->relative_to(&base)->path();
+    tmp = SPF_PATH(p)->relative_to(&base, false)->path();
     printf("  (fluent)        %s\n", sp_str(&tmp));
 
     /* .relative_to(walk_up=True) */
     SpPath sibling = sp_path("/home/other/file.txt");
-    tmp = sp_relative_to_walk_up(&sibling, &base);
+    tmp = sp_relative_to(&sibling, &base, true);
     printf("  walk_up:        %s\n", sp_str(&tmp));
 
     /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
@@ -201,8 +201,6 @@ int main(void) {
     /* .full_match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.full_match */
     printf("  full_match:     %d\n", sp_full_match(&p, "/**/*.gz", -1));
     printf("  (fluent)        %d\n", SPF_PATH(p)->full_match("/**/*.gz"));
-
-    printf("  is_reserved:    %d\n", sp_is_reserved(&p));
 
     /* ── Comparison ────────────────────────────────────────────── */
     section("Comparison");
