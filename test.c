@@ -1054,6 +1054,7 @@ int main(void) {
     ASSERT(sp_parts_next(&it1, &part)); ASSERT_SV(part, "a");
     ASSERT(sp_parts_next(&it1, &part)); ASSERT_SV(part, "b");
     ASSERT(!sp_parts_next(&it1, &part));
+    ASSERT_SV(part, "b"); /* Exhaustion must leave the output untouched. */
     
     SpPath pp2 = sp_path_f("/a/b", P); SpPartsIter it2 = sp_parts_begin(&pp2);
     ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "/");
@@ -1548,6 +1549,13 @@ int main(void) {
         ASSERT(!sp_full_match(&p, "*.py", -1));
         ASSERT(sp_full_match(&p, "/[a-c]/?/[!x]*", -1));
         ASSERT(sp_full_match(&empty, "**", -1));
+        ASSERT(!sp_full_match(&empty, "*", -1));
+        ASSERT(sp_full_match(&empty, "***", -1));
+        ASSERT(sp_full_match(&p, "**/**/**/c.py", -1));
+        ASSERT(!sp_full_match(&p, "**/**/**/absent", -1));
+        SpPath rooted = sp_path_f("/a", SP_FLAVOR_POSIX);
+        ASSERT(sp_full_match(&rooted, "[!x]a", -1)); /* Classes, unlike '*' and '?', may match a separator. */
+        ASSERT(!sp_full_match(&rooted, "?a", -1));
         SpPath w = sp_path_f("c:/a/B.Py", SP_FLAVOR_WINDOWS);
         ASSERT(sp_full_match(&w, "C:/A/*.pY", -1));
         ASSERT(!sp_full_match(&w, "C:/A/*.pY", 1));
@@ -1564,6 +1572,43 @@ int main(void) {
         ASSERT(sp_path_cmp(&dot, &star) > 0);                     /* compares "." with "*", part by part */
         SpPath protected_drive = sp_path_f("./c:", SP_FLAVOR_WINDOWS);
         ASSERT_PATH(sp_parent(&protected_drive), ".");
+        SpPath drive_child = sp_join_one(&protected_drive, "x"), win_empty = sp_path_f("", SP_FLAVOR_WINDOWS);
+        ASSERT(sp_parts_count(&drive_child) == 2);
+        ASSERT(sp_match_ex(&drive_child, "./c:/*", -1) == SP_MATCH_YES);
+        ASSERT(sp_match_ex(&drive_child, "c:/*", -1) == SP_MATCH_NO);
+        ASSERT_PATH(sp_relative_to(&drive_child, &protected_drive, false), "x");
+        ASSERT_PATH(sp_relative_to(&drive_child, &win_empty, false), ".\\c:\\x");
+    }
+    {
+        /* readlink can return unnormalized paths; both directions of parts traversal must skip empty parts. */
+        SpPath raw = sp_path_f("", SP_FLAVOR_POSIX), base = sp_path_f("a", SP_FLAVOR_POSIX);
+        memcpy(raw.buf, "a///b//", 8);
+        raw.len = 7;
+        ASSERT(sp_parts_count(&raw) == 2);
+        ASSERT(sp_match_ex(&raw, "a/b", -1) == SP_MATCH_YES);
+        ASSERT(sp_match_ex(&raw, "b", -1) == SP_MATCH_YES);
+        ASSERT(sp_full_match(&raw, "a/**/b/**", -1));
+        ASSERT_PATH(sp_relative_to(&raw, &base, false), "b");
+        SpPath above = sp_path_f("a/../c", SP_FLAVOR_POSIX), result = sp_relative_to(&raw, &above, true);
+        ASSERT(sp_path_error_code(&result) == SP_ERR_NOT_RELATIVE);
+    }
+    {
+        /* Oversized joined pieces are skipped whole, including when a rooted join keeps a Windows drive. */
+        char full[SP_PATH_MAX];
+        memset(full, 'x', sizeof(full) - 1);
+        full[sizeof(full) - 1] = '\0';
+        SpPath base = sp_path_f("a", SP_FLAVOR_POSIX);
+        ASSERT_PATH(sp_join_one(&base, full), "a");
+        full[0] = '/';
+        base = sp_path_f("C:/base", SP_FLAVOR_WINDOWS);
+        ASSERT_PATH(sp_join_one(&base, full), "C:");
+        /* Exercise streaming comparisons with the maximum number of parts. */
+        for (size_t i = 0; i + 1 < sizeof(full); i++) full[i] = i % 2 ? '/' : 'a';
+        SpPath deep = sp_path_f(full, SP_FLAVOR_POSIX), empty = sp_path_f("", SP_FLAVOR_POSIX);
+        SpPath relative = sp_relative_to(&deep, &empty, false);
+        ASSERT(sp_path_eq(&relative, &deep));
+        ASSERT(sp_match_ex(&deep, "a/a/a", -1) == SP_MATCH_YES);
+        ASSERT(!sp_full_match(&deep, "**/**/**/**/absent", -1));
     }
     {
         char buf[SP_PATH_MAX * 3];
@@ -1598,17 +1643,33 @@ int main(void) {
         ASSERT(sp_touch(&txt, 0644, true) && sp_touch(&hidden, 0644, true) && sp_touch(&sub_txt, 0644, true));
         ASSERT(sp_is_dir(&sub, false) && !sp_is_file(&sub, false) && sp_exists(&txt, false));
 
-        struct { const char *pattern; bool rglob; int count; } globs[] = {
-            {"*", false, 3}, /* hidden files match too */
-            {"*/", false, 1}, {"sub/../a.txt", false, 1}, {"**", false, 5}, {"*.txt", true, 2}, {"", true, 2},
+        struct { const char *pattern; bool rglob; int count, follow_count; } globs[] = {
+            {"*", false, 3, 3}, /* hidden files match too */
+            {"*/", false, 1, 1}, {"sub/../a.txt", false, 1, 1}, {"**", false, 5, 5}, {"*.txt", true, 2, 2}, {"", true, 2, 2},
+            {"**/**", false, 5, 5}, {"**/**/sub/**", false, 2, 1}, {"sub//./*.txt", false, 1, 1}, {"sub/", false, 1, 1},
         };
         for (size_t i = 0; i < ARRAY_LEN(globs); i++) {
-            SpGlobIter it = (globs[i].rglob ? sp_rglob_begin : sp_glob_begin)(&root, globs[i].pattern, SP_CASE_PLATFORM_DEFAULT, false);
-            int n = 0;
-            for (SpPath m; sp_glob_next(&it, &m);) n++;
-            sp_glob_end(&it);
-            ASSERT(it.error == SP_OK && n == globs[i].count);
+            for (int follow = 0; follow < 2; follow++) {
+                SpGlobIter it = (globs[i].rglob ? sp_rglob_begin : sp_glob_begin)(&root, globs[i].pattern, SP_CASE_PLATFORM_DEFAULT, follow != 0);
+                int n = 0;
+                for (SpPath m; sp_glob_next(&it, &m);) n++;
+                sp_glob_end(&it);
+                ASSERT(it.error == SP_OK && n == (follow ? globs[i].follow_count : globs[i].count));
+            }
         }
+        /* A trailing slash beyond the copied pattern limit still requires a directory. */
+        char full_pattern[SP_GLOB_PATTERN_MAX + 1];
+        memset(full_pattern, '*', sizeof(full_pattern) - 2);
+        full_pattern[sizeof(full_pattern) - 2] = '/';
+        full_pattern[sizeof(full_pattern) - 1] = '\0';
+        SpGlobIter bounded = sp_glob_begin(&root, full_pattern, SP_CASE_PLATFORM_DEFAULT, true);
+        int bounded_count = 0;
+        for (SpPath m; sp_glob_next(&bounded, &m);) {
+            ASSERT(sp_path_eq(&m, &sub));
+            bounded_count++;
+        }
+        sp_glob_end(&bounded);
+        ASSERT(bounded_count == 1);
         SpGlobIter bad = sp_glob_begin(&root, "", SP_CASE_PLATFORM_DEFAULT, false);
         ASSERT(bad.error == SP_ERR_INVALID_ARG);
         bad = sp_glob_begin(&root, "/x", SP_CASE_PLATFORM_DEFAULT, false);
@@ -1906,13 +1967,13 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpPath), SP_PATH_MAX + 16);
     ASSERT_SIZE(sizeof(SpTerm), SP_TERM_MAX + 8);
     ASSERT_SIZE(sizeof(SpStr), 16);
-    ASSERT_SIZE(sizeof(SpPartsIter), 24);
+    ASSERT_SIZE(sizeof(SpPartsIter), 32);
     ASSERT_SIZE(sizeof(SpParentsIter), 16);
     ASSERT_SIZE(sizeof(SpSuffixes), 264);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 16);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
-    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 2328);
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 1560);
 #endif
 
     printf("  struct size tests OK\n");

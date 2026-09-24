@@ -109,8 +109,7 @@ typedef struct {
 
 typedef struct {
     const SpPath *path;
-    size_t pos;
-    bool anchor_done;
+    size_t pos, end, anchor;
 } SpPartsIter;
 
 typedef struct {
@@ -155,16 +154,14 @@ typedef struct {
     int error; /* SP_OK, SP_ERR_INVALID_ARG (pattern has no parts) or SP_ERR_UNSUPPORTED (anchored pattern) */
     struct {
         char pattern_buf[SP_GLOB_PATTERN_MAX];
-        size_t seg_offsets[SP_GLOB_MAX_SEGMENTS];
-        size_t seg_count;
+        size_t pattern_len;
         bool case_insensitive;
         bool case_pedantic; /* explicit case sensitivity: literal parts are matched against listings too */
         bool recurse_symlinks;
         bool pending;       /* path is the next match */
         SpPath path;        /* each frame's directory is a prefix of it */
-        /* A frame lists the directory path[0..path_len) for wildcard part `seg`, or (walk) for the '**' parts
-           [from, seg), matched against paths below path[0..root_len) */
-        struct { void *handle; size_t path_len, seg, from, root_len; bool walk; } stack[SP_GLOB_MAX_DEPTH];
+        /* Each frame matches pattern[from..to) below path[0..root_len), listing path[0..path_len). */
+        struct { void *handle; size_t path_len, from, to, root_len; } stack[SP_GLOB_MAX_DEPTH];
     } priv_;
 } SpGlobIter;
 
@@ -590,16 +587,15 @@ static int sp_priv_str_cmp_flavor(const char *a, size_t alen, const char *b, siz
     return sp_priv_str_cmp_case(a, alen, b, blen, sp_priv_is_windows_flavor(flavor));
 }
 
-/* Path-building helpers */
-static inline void sp_priv_append_sep(SpPath *r) {
-    if (r->len > 0 && !sp_priv_is_sep(r->buf[r->len - 1], r->flavor) && r->len + 1 < SP_PATH_MAX)
+/* Append one bounded piece, optionally separated; an oversized piece is skipped as a whole. */
+static void sp_priv_append(SpPath *r, const char *s, size_t len, bool separated) {
+    if (separated && r->len > 0 && !sp_priv_is_sep(r->buf[r->len - 1], r->flavor) && r->len + 1 < SP_PATH_MAX)
         r->buf[r->len++] = sp_priv_sep(r->flavor);
-}
-static inline void sp_priv_append_cstr(SpPath *r, const char *s, size_t len) {
     if (r->len + len < SP_PATH_MAX) {
         memcpy(r->buf + r->len, s, len);
         r->len += len;
     }
+    r->buf[r->len] = '\0';
 }
 static inline void sp_priv_terminate(SpPath *p) { p->buf[p->len] = '\0'; }
 static inline SpPath sp_priv_path_from_raw(const char *s, size_t len, SpFlavor flavor) {
@@ -837,30 +833,38 @@ SpPartsIter sp_parts_begin(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPartsIter it = SP_PRIV_ZERO;
     it.path = p;
-    it.anchor_done = sp_priv_anchor_len(p->buf, p->len, p->flavor) == 0;
+    it.anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
+    it.end = p->len > it.anchor ? p->len : it.anchor;
+    /* The leading '.' in '.\c:' protects a drive-like part, but is not itself a part. */
+    size_t next = sp_priv_skip_seps(p->buf, p->len, 1, p->flavor);
+    if (it.anchor == 0 && p->len > 1 && p->buf[0] == '.' && next > 1 &&
+        sp_priv_has_drive(p->buf + next, p->len - next, p->flavor)) it.pos = next;
     return it;
 }
 
-bool sp_parts_next(SpPartsIter *it, SpStr *out) {
+/* Consume either end of the same bounded view; anchors remain one indivisible part. */
+static bool sp_priv_parts_take(SpPartsIter *it, SpStr *out, bool reverse) {
     const SpPath *p = it->path;
-    size_t anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
-    if (!it->anchor_done) {
-        *out = SP_PRIV_STR(p->buf, anchor);
-        it->anchor_done = true;
-        it->pos = anchor;
-        return true;
+    size_t start = it->pos, end = it->end;
+    if (reverse) {
+        while (end > it->anchor && end > start && sp_priv_is_sep(p->buf[end - 1], p->flavor)) end--;
+        start = end <= it->anchor ? start : sp_priv_rfind_sep(p->buf, end, start > it->anchor ? start : it->anchor, p->flavor);
+        it->end = start;
+    } else {
+        if (start == 0 && it->anchor > 0) end = it->anchor;
+        else {
+            start = sp_priv_skip_seps(p->buf, end, start, p->flavor);
+            end = sp_priv_find_sep(p->buf, end, start, p->flavor);
+        }
+        it->pos = end;
     }
-    for (;;) {
-        size_t start = sp_priv_skip_seps(p->buf, p->len, it->pos, p->flavor);
-        if (start >= p->len) return false;
-        it->pos = sp_priv_find_sep(p->buf, p->len, start, p->flavor);
-        /* A leading '.' protecting a drive-like part ('.\c:') is not a part of its own */
-        size_t next = sp_priv_skip_seps(p->buf, p->len, it->pos, p->flavor);
-        if (start == 0 && it->pos == 1 && p->buf[0] == '.' && sp_priv_has_drive(p->buf + next, p->len - next, p->flavor))
-            continue;
-        *out = SP_PRIV_STR(p->buf + start, it->pos - start);
-        return true;
-    }
+    if (end <= start) return false;
+    *out = SP_PRIV_STR(p->buf + start, end - start);
+    return true;
+}
+
+bool sp_parts_next(SpPartsIter *it, SpStr *out) {
+    return sp_priv_parts_take(it, out, false);
 }
 
 size_t sp_parts_count(const SpPath *p) {
@@ -889,44 +893,29 @@ bool sp_parents_next(SpParentsIter *it, SpPath *out) {
     return true;
 }
 
-/* Append other to r (optionally separator-delimited), then terminate and normalize */
-static SpPath sp_priv_join_finish(SpPath r, const char *s, size_t len, bool add_sep) {
-    if (add_sep) sp_priv_append_sep(&r);
-    sp_priv_append_cstr(&r, s, len);
-    sp_priv_terminate(&r);
-    sp_priv_normalize(r.buf, &r.len, r.flavor);
-    return r;
-}
-
 /* Internal length-aware join - handles embedded nulls correctly */
 static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t olen) {
     SpFlavor flavor = base->flavor;
     size_t root, drive = sp_priv_split_anchor(base->buf, base->len, flavor, &root);
     /* ntpath.join puts no separator after a rootless drive ending in ':' (like "c:") */
-    bool bare_drive = drive > 0 && drive == base->len && root == 0 && base->buf[drive - 1] == ':';
-
-    /* Check if other has root */
+    bool add_sep = !(drive > 0 && drive == base->len && root == 0 && base->buf[drive - 1] == ':');
+    SpPath r = *base;
     if (olen > 0 && sp_priv_is_sep(other[0], flavor)) {
         if (sp_priv_is_unc(other, olen, flavor) || drive == 0) return sp_path_from_n(other, olen, flavor);
-        /* Root only - keep drive from base */
-        return sp_priv_join_finish(sp_priv_path_from_raw(base->buf, drive, flavor), other, olen, false);
-    }
-
-    /* Check if other has drive */
-    if (sp_priv_has_drive(other, olen, flavor)) {
-        char od = other[0];
-        bool same = sp_priv_has_drive(base->buf, base->len, flavor) && sp_priv_tolower(od) == sp_priv_tolower(base->buf[0]);
+        r = sp_priv_path_from_raw(base->buf, drive, flavor); /* Root only: keep the base drive. */
+        add_sep = false;
+    } else if (sp_priv_has_drive(other, olen, flavor)) {
+        bool same = sp_priv_has_drive(base->buf, base->len, flavor) && sp_priv_tolower(other[0]) == sp_priv_tolower(base->buf[0]);
         if (!same || (olen > 2 && sp_priv_is_sep(other[2], flavor)))
             return sp_path_from_n(other, olen, flavor);
-        /* Same drive: keep base path, adopt other's drive-letter case */
-        SpPath r = sp_path_copy(base);
-        r.buf[0] = od;
+        r.buf[0] = other[0]; /* Same drive: keep the base path, adopting the other's case. */
         if (olen == 2) return r;
-        return sp_priv_join_finish(r, other + 2, olen - 2, !bare_drive);
+        other += 2;
+        olen -= 2;
     }
-
-    /* Relative path - simple join */
-    return sp_priv_join_finish(sp_path_copy(base), other, olen, !bare_drive);
+    sp_priv_append(&r, other, olen, add_sep);
+    sp_priv_normalize(r.buf, &r.len, r.flavor);
+    return r;
 }
 
 SpPath sp_join_one(const SpPath *base, const char *other) {
@@ -975,9 +964,7 @@ static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
         return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
     SpPath r = sp_parent(p);
     if (r.len == 0 && sp_priv_has_drive(name, len, p->flavor)) r.buf[r.len++] = '.'; /* keep "c:" from parsing as a drive */
-    sp_priv_append_sep(&r);
-    sp_priv_append_cstr(&r, name, len);
-    sp_priv_terminate(&r);
+    sp_priv_append(&r, name, len, true);
     return r;
 }
 
@@ -1026,49 +1013,43 @@ SpPath sp_absolute(const SpPath *p) {
     return sp_priv_absolute_path(p);
 }
 
-static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
-    SpPartsIter it = sp_parts_begin(p);
-    size_t n = 0;
-    while (n < max && sp_parts_next(&it, &out[n])) n++;
-    return n;
+/* Leave both cursors at their first differing part; an anchor may never be walked out of. */
+static bool sp_priv_common_parts(SpPartsIter *a, SpPartsIter *b) {
+    if ((a->anchor > 0) != (b->anchor > 0)) return false;
+    for (;;) {
+        SpPartsIter next_a = *a, next_b = *b;
+        SpStr pa, pb;
+        if (!sp_parts_next(&next_a, &pa) || !sp_parts_next(&next_b, &pb) ||
+            sp_priv_str_cmp_flavor(pa.data, pa.len, pb.data, pb.len, a->path->flavor) != 0) break;
+        *a = next_a;
+        *b = next_b;
+    }
+    return b->pos >= b->anchor;
 }
 
 /* CPython walks `other` and its parents up to the first that is p or one of p's parents, stepping out with ".."
  * (walk_up only, and never over a ".." part). The result is p's remaining parts. */
 SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-    SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
-    size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2); /* anchor first, if any */
-    size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
-    size_t o_anchor_parts = sp_priv_anchor_len(other->buf, other->len, other->flavor) > 0 ? 1 : 0;
-    bool same_anchoring = (sp_priv_anchor_len(p->buf, p->len, p->flavor) > 0) == (o_anchor_parts == 1);
-    size_t ups = 0, k = o_count;
-    for (;; k--) {
-        size_t same = 0;
-        while (same < k && same < p_count &&
-               sp_priv_str_cmp_flavor(p_parts[same].data, p_parts[same].len, o_parts[same].data, o_parts[same].len, p->flavor) == 0)
-            same++;
-        if (same_anchoring && same == k) break;
-        if (!walk_up || k == o_anchor_parts || (o_parts[k - 1].len == 2 && memcmp(o_parts[k - 1].data, "..", 2) == 0))
-            return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
-        ups++;
-    }
-    /* Parts joined by separators, behind a "." if the first would parse as a drive */
+    SpPartsIter path = sp_parts_begin(p), base = sp_parts_begin(other);
+    if (!sp_priv_common_parts(&path, &base)) return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
     SpPath r = sp_priv_empty_path(p->flavor);
-    if (ups == 0 && k < p_count && sp_priv_has_drive(p_parts[k].data, p_parts[k].len, p->flavor)) r.buf[r.len++] = '.';
-    for (size_t i = 0; i < ups + p_count - k; i++) {
-        SpStr part = i < ups ? SP_PRIV_STR("..", 2) : p_parts[k + i - ups];
-        sp_priv_append_sep(&r);
-        sp_priv_append_cstr(&r, part.data, part.len);
+    SpStr part;
+    while (sp_parts_next(&base, &part)) {
+        if (!walk_up || (part.len == 2 && memcmp(part.data, "..", 2) == 0))
+            return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
+        sp_priv_append(&r, "..", 2, true);
     }
-    sp_priv_terminate(&r);
+    while (sp_parts_next(&path, &part)) {
+        if (r.len == 0 && sp_priv_has_drive(part.data, part.len, p->flavor)) r.buf[r.len++] = '.';
+        sp_priv_append(&r, part.data, part.len, true);
+    }
     return r;
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
-    SpPath r = sp_relative_to(p, other, false);
-    return !sp_path_is_error(&r);
+    SpPartsIter path = sp_parts_begin(p), base = sp_parts_begin(other);
+    SpStr part;
+    return sp_priv_common_parts(&path, &base) && !sp_parts_next(&base, &part);
 }
 
 /* urllib.parse.quote: percent-encode all but letters, digits, "_.-~" and `safe`; false if buf is too small */
@@ -1270,64 +1251,58 @@ static int sp_priv_fnmatch_class(const char *pat, size_t plen, size_t *pi, unsig
     return hit != negate;
 }
 
-/* fnmatch: * ? [seq] [!seq], code point aware. As in CPython's glob.translate(), '*' and '?' never match a
- * separator, but a bracket expression like [!a] can. */
-static bool sp_priv_fnmatch(const char *pat, size_t plen, const char *s, size_t slen, bool ci, SpFlavor flavor) {
+/* One code-point matcher for names and paths. '*' and '?' stop at separators; a whole-part '*' also requires
+ * a non-empty part. Recursive '**' consumes whole parts, while bracket expressions may match separators. */
+static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size_t slen, bool ci, bool recursive,
+                               SpFlavor flavor) {
     size_t pi = 0, si = 0;
     while (pi < plen) {
         if (pat[pi] == '*') {
+            size_t start = pi;
             while (pi < plen && pat[pi] == '*') pi++;
-            for (size_t k = si;; sp_priv_utf8_next(s, slen, &k)) {
-                if (sp_priv_fnmatch(pat + pi, plen - pi, s + k, slen - k, ci, flavor)) return true;
+            bool whole = (start == 0 || sp_priv_is_sep(pat[start - 1], flavor)) &&
+                         (pi == plen || sp_priv_is_sep(pat[pi], flavor));
+            bool walk = recursive && whole && pi - start == 2;
+            while (walk && pi + 3 <= plen && pat[pi + 1] == '*' && pat[pi + 2] == '*' &&
+                   (pi + 3 == plen || sp_priv_is_sep(pat[pi + 3], flavor))) pi += 3;
+            if (walk && pi == plen) return true;
+            size_t k = si;
+            if (whole && pi - start == 1) {
                 if (k == slen || sp_priv_is_sep(s[k], flavor)) return false;
+                sp_priv_utf8_next(s, slen, &k);
+            }
+            if (walk) pi++; /* Skip the separator too: recursive stars may consume no parts. */
+            for (;;) {
+                if (sp_priv_match_path(pat + pi, plen - pi, s + k, slen - k, ci, recursive, flavor)) return true;
+                if (walk) {
+                    k = sp_priv_find_sep(s, slen, k == si ? k + 1 : k, flavor);
+                    if (k >= slen) return false;
+                    k++;
+                    continue;
+                }
+                if (k == slen || sp_priv_is_sep(s[k], flavor)) return false;
+                sp_priv_utf8_next(s, slen, &k);
             }
         }
         if (si == slen) return false;
         bool sep = sp_priv_is_sep(s[si], flavor);
         unsigned long c = sp_priv_utf8_next(s, slen, &si);
         size_t npi = pi + 1;
-        int cls = pat[pi] == '[' ? sp_priv_fnmatch_class(pat, plen, &npi, c, ci) : -1;
+        int cls = pat[pi] == '[' ? sp_priv_fnmatch_class(pat, sp_priv_find_sep(pat, plen, pi, flavor), &npi, c, ci) : -1;
         if (cls >= 0) {
             if (!cls) return false;
             pi = npi;
         } else if (pat[pi] == '?') {
             if (sep) return false;
             pi++;
+        } else if (sp_priv_is_sep(pat[pi], flavor)) {
+            if (!sep) return false;
+            pi++;
         } else if (!sp_priv_char_eq(sp_priv_utf8_next(pat, plen, &pi), c, ci)) {
             return false;
         }
     }
     return si == slen;
-}
-
-#define SP_PRIV_IS_DOUBLESTAR(p, l) ((l) == 2 && (p)[0] == '*' && (p)[1] == '*')
-
-/* Match a whole path string against a pattern like CPython's glob.translate() regex (include_hidden): each pattern
- * part is followed by a separator, '*' alone needs a non-empty segment, and when recursive, '**' spans any number
- * of segments. */
-static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size_t slen, bool ci, bool recursive,
-                               SpFlavor flavor) {
-    size_t pe = sp_priv_find_sep(pat, plen, 0, flavor);
-    bool last = pe == plen;
-    const char *rest = pat + pe + 1;
-    size_t rlen = last ? 0 : plen - pe - 1;
-    if (recursive && SP_PRIV_IS_DOUBLESTAR(pat, pe)) {
-        if (last) return true;
-        /* A '**' followed by another '**' adds nothing; otherwise it consumes zero or more leading segments */
-        if (sp_priv_match_path(rest, rlen, s, slen, ci, recursive, flavor)) return true;
-        if (SP_PRIV_IS_DOUBLESTAR(rest, sp_priv_find_sep(rest, rlen, 0, flavor))) return false;
-        for (size_t q = 1; q < slen; q++)
-            if (sp_priv_is_sep(s[q], flavor) && sp_priv_match_path(rest, rlen, s + q + 1, slen - q - 1, ci, recursive, flavor))
-                return true;
-        return false;
-    }
-    for (size_t k = last ? slen : 0; k <= slen; k++) {
-        if (!last && (k == slen || !sp_priv_is_sep(s[k], flavor))) continue;
-        if ((pe != 1 || pat[0] != '*' || k > 0) && sp_priv_fnmatch(pat, pe, s, k, ci, flavor) &&
-            (last || sp_priv_match_path(rest, rlen, s + k + 1, slen - k - 1, ci, recursive, flavor)))
-            return true;
-    }
-    return false;
 }
 
 static bool sp_priv_case_insensitive(int case_sensitive, SpFlavor flavor) {
@@ -1344,18 +1319,14 @@ bool sp_full_match(const SpPath *p, const char *pattern, int case_sensitive) {
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath pat = sp_path_new(pattern, p->flavor);
-    SpStr path_parts[SP_PATH_MAX / 2], pat_parts[SP_PATH_MAX / 2];
-    size_t path_count = sp_priv_collect_parts(p, path_parts, SP_PATH_MAX / 2); /* anchor first, if any */
-    size_t pat_count = sp_priv_collect_parts(&pat, pat_parts, SP_PATH_MAX / 2);
-    if (pat_count == 0) return SP_MATCH_ERR_EMPTY;
-    if (path_count < pat_count || (path_count > pat_count && sp_priv_anchor_len(pat.buf, pat.len, pat.flavor) > 0))
-        return SP_MATCH_NO;
+    SpPartsIter path = sp_parts_begin(p), pattern_parts = sp_parts_begin(&pat);
+    if (pattern_parts.pos == pattern_parts.end) return SP_MATCH_ERR_EMPTY;
     bool ci = sp_priv_case_insensitive(case_sensitive, p->flavor);
-    for (size_t i = 1; i <= pat_count; i++) {
-        SpStr pp = pat_parts[pat_count - i], sp = path_parts[path_count - i];
-        if (!sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor)) return SP_MATCH_NO;
-    }
-    return SP_MATCH_YES;
+    SpStr pp, sp;
+    while (sp_priv_parts_take(&pattern_parts, &pp, true))
+        if (!sp_priv_parts_take(&path, &sp, true) ||
+            !sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor)) return SP_MATCH_NO;
+    return pattern_parts.anchor > 0 && sp_priv_parts_take(&path, &sp, true) ? SP_MATCH_NO : SP_MATCH_YES;
 }
 
 static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
@@ -1921,14 +1892,17 @@ static int sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlink
     return err == SP_OK && preserve_metadata ? sp_priv_copy_metadata(src, dst, follow_symlinks) : err;
 }
 
-SpPath sp_copy(const SpPath *p, const SpPath *target, bool follow_symlinks, bool preserve_metadata) {
+static SpPath sp_priv_copy(const SpPath *p, const SpPath *target, bool follow_symlinks, bool preserve_metadata) {
     SP_ASSERT_PATH_INVARIANT(p);
     SP_ASSERT_PATH_INVARIANT(target);
-    SpPath inside = sp_relative_to(target, p, false); /* lexically the same path, or below it */
-    if (!sp_path_is_error(&inside)) return sp_priv_error_path(target->flavor, SP_ERR_INVALID_ARG);
+    if (sp_is_relative_to(target, p)) return sp_priv_error_path(target->flavor, SP_ERR_INVALID_ARG);
     SpPath dst = *target;
     int err = sp_priv_copy_tree(p, &dst, follow_symlinks, preserve_metadata);
     return err == SP_OK ? *target : sp_priv_error_path(target->flavor, err);
+}
+
+SpPath sp_copy(const SpPath *p, const SpPath *target, bool follow_symlinks, bool preserve_metadata) {
+    return sp_priv_copy(p, target, follow_symlinks, preserve_metadata);
 }
 
 /* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
@@ -1960,7 +1934,7 @@ static SpPath sp_priv_move(const SpPath *p, const SpPath *target, bool allow_rep
     bool cross_device = errno == EXDEV;
 #endif
     if (!cross_device || !move) return sp_priv_error_path(target->flavor, sp_priv_last_error());
-    SpPath r = sp_copy(p, target, false, true);
+    SpPath r = sp_priv_copy(p, target, false, true);
     int err = sp_path_is_error(&r) ? SP_OK : sp_priv_delete(p);
     return err == SP_OK ? r : sp_priv_error_path(target->flavor, err);
 }
@@ -1977,7 +1951,7 @@ static SpPath sp_priv_into(const SpPath *p, const SpPath *target_dir) {
 
 SpPath sp_copy_into(const SpPath *p, const SpPath *target_dir, bool follow_symlinks, bool preserve_metadata) {
     SpPath target = sp_priv_into(p, target_dir);
-    return sp_path_is_error(&target) ? target : sp_copy(p, &target, follow_symlinks, preserve_metadata);
+    return sp_path_is_error(&target) ? target : sp_priv_copy(p, &target, follow_symlinks, preserve_metadata);
 }
 
 SpPath sp_move(const SpPath *p, const SpPath *target) { return sp_priv_move(p, target, true, true); }
@@ -1987,62 +1961,54 @@ SpPath sp_move_into(const SpPath *p, const SpPath *target_dir) {
     return sp_path_is_error(&target) ? target : sp_priv_move(p, &target, true, true);
 }
 
-static const char *sp_priv_glob_part(const SpGlobIter *it, size_t seg) {
-    return it->priv_.pattern_buf + it->priv_.seg_offsets[seg];
+static SpStr sp_priv_glob_part(const SpGlobIter *it, size_t pos) {
+    const char *buf = it->priv_.pattern_buf;
+    return SP_PRIV_STR(buf + pos, sp_priv_find_sep(buf, it->priv_.pattern_len, pos, it->priv_.path.flavor) - pos);
 }
 
-static void sp_priv_glob_push(SpGlobIter *it, size_t seg, size_t from, size_t root_len, bool walk) {
+static bool sp_priv_part_is(SpStr part, const char *s) {
+    return part.len == strlen(s) && memcmp(part.data, s, part.len) == 0;
+}
+
+static bool sp_priv_glob_special(SpStr part) {
+    return part.len == 0 || sp_priv_part_is(part, "..");
+}
+
+static void sp_priv_glob_push(SpGlobIter *it, size_t from, size_t to, size_t root_len) {
     if (it->depth + 1 >= SP_GLOB_MAX_DEPTH) return;
     it->depth++;
     it->priv_.stack[it->depth].handle = SP_PRIV_NULL;
     it->priv_.stack[it->depth].path_len = it->priv_.path.len;
-    it->priv_.stack[it->depth].seg = seg;
     it->priv_.stack[it->depth].from = from;
+    it->priv_.stack[it->depth].to = to;
     it->priv_.stack[it->depth].root_len = root_len;
-    it->priv_.stack[it->depth].walk = walk;
 }
 
-/* Whether the path below its first root_len bytes matches the '**' parts [from, to) joined into one pattern */
-static bool sp_priv_glob_walk_match(const SpGlobIter *it, size_t from, size_t to, const SpPath *path, size_t root_len) {
-    char pat[SP_GLOB_PATTERN_MAX];
-    size_t n = 0;
-    for (size_t i = from; i < to; i++) {
-        if (i > from) pat[n++] = sp_priv_sep(path->flavor);
-        n += sp_priv_copy_trunc(pat + n, sizeof(pat) - n, sp_priv_glob_part(it, i), strlen(sp_priv_glob_part(it, i)));
-    }
-    if (root_len < path->len && sp_priv_is_sep(path->buf[root_len], path->flavor)) root_len++;
-    return sp_priv_match_path(pat, n, path->buf + root_len, path->len - root_len, it->priv_.case_insensitive, true,
-                              path->flavor);
-}
-
-/* CPython's glob selector chain from part `seg` on it->priv_.path: literal and special ('..', trailing '') parts
- * extend the path, wildcard and '**' parts push a frame. `trailing` marks a path ending in a separator (so it must
- * be a directory) and `exists` one already known to exist. Returns true when the path itself is a match. */
+/* Literal parts extend the path without a directory listing. Wildcards and recursive groups share one frame;
+ * only recursive groups can also match the current path, before any children are listed. */
 static bool sp_priv_glob_select(SpGlobIter *it, size_t seg, bool exists, bool trailing) {
     SpPath *path = &it->priv_.path;
-    for (; seg < it->priv_.seg_count; seg++) {
-        const char *part = sp_priv_glob_part(it, seg);
-        size_t len = strlen(part);
-        bool special = len == 0 || strcmp(part, "..") == 0;
-        if (SP_PRIV_IS_DOUBLESTAR(part, len)) {
-            while (seg + 1 < it->priv_.seg_count && strcmp(sp_priv_glob_part(it, seg + 1), "**") == 0) seg++;
-            /* Following symlinks, the walk matches all following non-special parts at once */
-            size_t from = seg++;
-            while (it->priv_.recurse_symlinks && seg < it->priv_.seg_count && strlen(sp_priv_glob_part(it, seg)) > 0 &&
-                   strcmp(sp_priv_glob_part(it, seg), "..") != 0)
-                seg++;
-            sp_priv_glob_push(it, seg, from, path->len, true);
-            if (!sp_priv_glob_walk_match(it, from, seg, path, path->len)) return false;
-            seg--;
-            continue;
+    while (seg <= it->priv_.pattern_len) {
+        SpStr part = sp_priv_glob_part(it, seg);
+        size_t end = seg + part.len;
+        bool special = sp_priv_glob_special(part), walk = sp_priv_part_is(part, "**");
+        if (walk || (!special && (it->priv_.case_pedantic || memchr(part.data, '*', part.len) ||
+                                 memchr(part.data, '?', part.len) || memchr(part.data, '[', part.len)))) {
+            /* Group recursive selectors to avoid duplicate visits when following symlinks. */
+            while (walk && end < it->priv_.pattern_len) {
+                SpStr next = sp_priv_glob_part(it, end + 1);
+                if (sp_priv_glob_special(next) || (!it->priv_.recurse_symlinks && !sp_priv_part_is(next, "**"))) break;
+                end += 1 + next.len;
+            }
+            sp_priv_glob_push(it, seg, end, path->len);
+            if (!walk || !sp_priv_match_path(part.data, end - seg, "", 0, it->priv_.case_insensitive, true, path->flavor))
+                return false;
+        } else {
+            if (part.len > 0) *path = sp_priv_join_len(path, part.data, part.len);
+            exists = exists && special;
+            trailing = part.len == 0 || end < it->priv_.pattern_len;
         }
-        if (!special && (it->priv_.case_pedantic || strpbrk(part, "*?[") != SP_PRIV_NULL)) {
-            sp_priv_glob_push(it, seg, seg, 0, false);
-            return false;
-        }
-        if (len > 0) *path = sp_priv_join_len(path, part, len);
-        exists = exists && special;
-        trailing = len == 0 || seg + 1 < it->priv_.seg_count; /* a separator follows unless this part ends the pattern */
+        seg = end + 1;
     }
     return exists || (trailing ? sp_priv_has_type(path, S_IFDIR, true) : sp_lstat(path).valid);
 }
@@ -2058,23 +2024,26 @@ SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitiv
         it.error = SP_ERR_UNSUPPORTED;
         return it;
     }
-    /* Parts without empty and '.' ones; a trailing separator adds a final empty part */
+    /* Compact once, keeping separators so recursive groups are contiguous pattern slices. */
     char *buf = it.priv_.pattern_buf;
     bool trailing_sep = len > 0 && sp_priv_is_sep(pattern[len - 1], flavor);
     len = sp_priv_copy_trunc(buf, SP_GLOB_PATTERN_MAX, pattern, len);
-    size_t n = 0;
-    for (size_t pos = 0; n < SP_GLOB_MAX_SEGMENTS && (pos = sp_priv_skip_seps(buf, len, pos, flavor)) < len;) {
+    size_t n = 0, count = 0;
+    for (size_t pos = 0; count < SP_GLOB_MAX_SEGMENTS && (pos = sp_priv_skip_seps(buf, len, pos, flavor)) < len;) {
         size_t end = sp_priv_find_sep(buf, len, pos, flavor);
-        if (end - pos != 1 || buf[pos] != '.') it.priv_.seg_offsets[n++] = pos;
-        buf[end] = '\0';
+        if (end - pos != 1 || buf[pos] != '.') {
+            if (count++) buf[n++] = sp_priv_sep(flavor);
+            memmove(buf + n, buf + pos, end - pos);
+            n += end - pos;
+        }
         pos = end + 1;
     }
     if (n == 0) {
         it.error = SP_ERR_INVALID_ARG;
         return it;
     }
-    if (trailing_sep && n < SP_GLOB_MAX_SEGMENTS) it.priv_.seg_offsets[n++] = len;
-    it.priv_.seg_count = n;
+    if (trailing_sep && count < SP_GLOB_MAX_SEGMENTS) buf[n++] = sp_priv_sep(flavor);
+    it.priv_.pattern_len = n;
     it.priv_.case_insensitive = cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_PLATFORM_DEFAULT && sp_priv_is_windows_flavor(flavor));
     it.priv_.case_pedantic = cs != SP_CASE_PLATFORM_DEFAULT;
     it.priv_.recurse_symlinks = recurse_symlinks;
@@ -2086,9 +2055,10 @@ SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitiv
 bool sp_glob_next(SpGlobIter *it, SpPath *out) {
     SpPath *path = &it->priv_.path;
     while (!it->priv_.pending && it->depth >= 0) {
-        size_t seg = it->priv_.stack[it->depth].seg, from = it->priv_.stack[it->depth].from;
+        size_t from = it->priv_.stack[it->depth].from, to = it->priv_.stack[it->depth].to;
         size_t root_len = it->priv_.stack[it->depth].root_len;
-        bool walk = it->priv_.stack[it->depth].walk;
+        bool walk = sp_priv_part_is(sp_priv_glob_part(it, from), "**");
+        bool last = to == it->priv_.pattern_len;
         path->len = it->priv_.stack[it->depth].path_len;
         sp_priv_terminate(path);
         SpPath entry;
@@ -2097,23 +2067,18 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             it->depth--;
             continue;
         }
+        bool is_dir = (walk || !last) && sp_priv_has_type(&entry, S_IFDIR, !walk || it->priv_.recurse_symlinks);
+        if (!last && !is_dir) continue;
+        *path = entry;
+        if (walk && is_dir) sp_priv_glob_push(it, from, to, root_len);
+        SpStr subject = sp_priv_name_sv(&entry);
         if (walk) {
-            /* '**': every descendant (directories only if parts follow), each fed to the parts after it */
-            bool is_dir = sp_priv_has_type(&entry, S_IFDIR, it->priv_.recurse_symlinks);
-            if (!is_dir && seg < it->priv_.seg_count) continue;
-            *path = entry;
-            if (is_dir) sp_priv_glob_push(it, seg, from, root_len, true);
-            if (!sp_priv_glob_walk_match(it, from, seg, &entry, root_len)) continue;
-            it->priv_.pending = seg == it->priv_.seg_count || sp_priv_glob_select(it, seg, true, true);
-        } else {
-            const char *part = sp_priv_glob_part(it, seg);
-            SpStr name = sp_priv_name_sv(&entry);
-            if (!sp_priv_fnmatch(part, strlen(part), name.data, name.len, it->priv_.case_insensitive, entry.flavor)) continue;
-            bool last = seg + 1 == it->priv_.seg_count;
-            if (!last && !sp_priv_has_type(&entry, S_IFDIR, true)) continue;
-            *path = entry;
-            it->priv_.pending = last || sp_priv_glob_select(it, seg + 1, true, true);
+            if (root_len < entry.len && sp_priv_is_sep(entry.buf[root_len], entry.flavor)) root_len++;
+            subject = SP_PRIV_STR(entry.buf + root_len, entry.len - root_len);
         }
+        if (sp_priv_match_path(it->priv_.pattern_buf + from, to - from, subject.data, subject.len,
+                               it->priv_.case_insensitive, walk, entry.flavor))
+            it->priv_.pending = last || sp_priv_glob_select(it, to + 1, true, true);
     }
     if (!it->priv_.pending) return false;
     it->priv_.pending = false;
