@@ -191,7 +191,7 @@ SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor)
 static inline SpPath sp_path_copy(const SpPath *p) { SP_ASSERT_PATH_INVARIANT(p); return *p; }
 
 const char *sp_str(const SpPath *p);
-void sp_as_posix(const SpPath *p, char *out, size_t out_size);
+size_t sp_as_posix(const SpPath *p, char *out, size_t out_size);
 
 SpTerm sp_drive(const SpPath *p);
 SpTerm sp_root(const SpPath *p);
@@ -219,8 +219,7 @@ SpPath sp_with_name(const SpPath *p, const char *name);
 SpPath sp_with_stem(const SpPath *p, const char *stem);
 SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 
-SpPath sp_relative_to(const SpPath *p, const SpPath *other);
-SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
+SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
 
 bool sp_is_absolute(const SpPath *p);
@@ -235,7 +234,6 @@ unsigned long sp_path_hash(const SpPath *p);
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive); /* Returns SP_MATCH_* codes */
 #define SP_MATCH(p, pattern) sp_match_ex((p), (pattern), -1)
 bool sp_full_match(const SpPath *p, const char *pattern, int case_sensitive); /* case_sensitive: -1 = flavor default */
-bool sp_is_reserved(const SpPath *p);
 #define SP_FILE_TYPE_QUERIES(X)        \
     X(symlink, S_IFLNK, false)         \
     X(block_device, S_IFBLK, true)     \
@@ -405,7 +403,7 @@ extern "C" {
 
 typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
 
-#define SP_F_TERMINATOR_METHODS(X_TERM, X_PROC)                                                                        \
+#define SP_F_TERMINATOR_METHODS(X_TERM)                                                                                \
     X_TERM(SpPath, path, (void), sp_priv_f_ctx)                                                                        \
     X_TERM(SpTerm, name, (void), sp_name(&sp_priv_f_ctx))                                                             \
     X_TERM(SpTerm, stem, (void), sp_stem(&sp_priv_f_ctx))                                                             \
@@ -428,7 +426,6 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(bool, is_socket, (void), sp_is_socket(&sp_priv_f_ctx))                                                     \
     X_TERM(bool, is_mount, (void), sp_is_mount(&sp_priv_f_ctx))                                                       \
     X_TERM(bool, is_junction, (void), sp_is_junction(&sp_priv_f_ctx))                                                 \
-    X_TERM(bool, is_reserved, (void), sp_is_reserved(&sp_priv_f_ctx))                                                 \
     X_TERM(SpStatResult, stat, (void), sp_stat(&sp_priv_f_ctx))                                                       \
     X_TERM(SpStatResult, lstat, (void), sp_lstat(&sp_priv_f_ctx))                                                     \
     X_TERM(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))                                                \
@@ -436,7 +433,7 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(bool, samefile, (const SpPath *o), sp_samefile(&sp_priv_f_ctx, o))                                         \
     X_TERM(SpIOResult, read_file, (char *buf, size_t buf_size), sp_read_file(&sp_priv_f_ctx, buf, buf_size))         \
     X_TERM(SpIOResult, write_file, (const char *data, size_t data_len), sp_write_file(&sp_priv_f_ctx, data, data_len)) \
-    X_PROC(as_posix, (char *out, size_t out_size), sp_as_posix(&sp_priv_f_ctx, out, out_size))                       \
+    X_TERM(size_t, as_posix, (char *out, size_t out_size), sp_as_posix(&sp_priv_f_ctx, out, out_size))               \
     X_TERM(size_t, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))                   \
     X_TERM(int, match, (const char *pattern), sp_match_ex(&sp_priv_f_ctx, pattern, -1))                              \
     X_TERM(bool, full_match, (const char *pattern), sp_full_match(&sp_priv_f_ctx, pattern, -1))                        \
@@ -461,8 +458,7 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X(with_suffix, (const char *s), sp_with_suffix(&sp_priv_f_ctx, s))                                                 \
     X(absolute, (void), sp_absolute(&sp_priv_f_ctx))                                                                   \
     X(expanduser, (void), sp_expanduser(&sp_priv_f_ctx))                                                               \
-    X(relative_to, (const SpPath *o), sp_relative_to(&sp_priv_f_ctx, o))                                               \
-    X(relative_to_walk_up, (const SpPath *o), sp_relative_to_walk_up(&sp_priv_f_ctx, o))                              \
+    X(relative_to, (const SpPath *o, bool walk_up), sp_relative_to(&sp_priv_f_ctx, o, walk_up))                        \
     X(readlink, (void), sp_readlink(&sp_priv_f_ctx))                                                                   \
     X(resolve, (bool strict), sp_resolve(&sp_priv_f_ctx, strict))                                                      \
     X(rename, (const SpPath *target), sp_rename(&sp_priv_f_ctx, target))                                               \
@@ -477,9 +473,7 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
 struct sp_fluent_ {
     /* Terminators - end chain and return value */
 #define SP_F_TERM_FIELD(ret, name, params, expr) ret (*name) params;
-#define SP_F_PROC_FIELD(name, params, expr) void (*name) params;
-    SP_F_TERMINATOR_METHODS(SP_F_TERM_FIELD, SP_F_PROC_FIELD)
-#undef SP_F_PROC_FIELD
+    SP_F_TERMINATOR_METHODS(SP_F_TERM_FIELD)
 #undef SP_F_TERM_FIELD
     /* Chainable - return pointer to avoid stack copies */
 #define SP_F_CHAIN_FIELD(name, params, expr) SpPrivDontUseThisDirectly_ *(*name) params;
@@ -608,11 +602,6 @@ static int sp_priv_str_cmp_flavor(const char *a, size_t alen, const char *b, siz
     return sp_priv_str_cmp_case(a, alen, b, blen, sp_priv_is_windows_flavor(flavor));
 }
 
-/* Flavor-aware string view comparison (case-insensitive for Windows) */
-static inline bool sp_priv_sv_eq_flavor(SpStr a, SpStr b, SpFlavor flavor) {
-    return sp_priv_str_cmp_flavor(a.data, a.len, b.data, b.len, flavor) == 0;
-}
-
 /* Path-building helpers */
 static inline void sp_priv_append_sep(SpPath *r) {
     if (r->len > 0 && r->len + 1 < SP_PATH_MAX) r->buf[r->len++] = sp_priv_sep(r->flavor);
@@ -685,11 +674,6 @@ static size_t sp_priv_split_anchor(const char *s, size_t len, SpFlavor flavor, s
     size_t drive = sp_priv_has_drive(s, len, flavor) ? 2 : 0;
     *root = (drive < len && sp_priv_is_sep(s[drive], flavor)) ? 1 : 0;
     return drive;
-}
-
-static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
-    size_t root;
-    return sp_priv_split_anchor(s, len, flavor, &root);
 }
 
 static size_t sp_priv_anchor_len(const char *s, size_t len, SpFlavor flavor) {
@@ -773,23 +757,18 @@ const char *sp_str(const SpPath *p) {
     return p->len == 0 ? "." : p->buf;
 }
 
-void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
+size_t sp_as_posix(const SpPath *p, char *out, size_t out_size) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (out_size == 0) return;
-    if (p->len == 0) {
-        sp_priv_copy_trunc(out, out_size, ".", 1);
-        return;
-    }
-    size_t n = p->len < out_size - 1 ? p->len : out_size - 1;
-    for (size_t i = 0; i < n; i++) {
-        out[i] = (p->buf[i] == sp_priv_sep(p->flavor)) ? '/' : p->buf[i];
-    }
-    out[n] = '\0';
+    size_t n = sp_priv_copy_trunc(out, out_size, sp_str(p), p->len > 0 ? p->len : 1);
+    for (size_t i = 0; i < n; i++)
+        if (out[i] == sp_priv_sep(p->flavor)) out[i] = '/';
+    return n;
 }
 
 SpTerm sp_drive(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
-    return sp_priv_term(p->buf, sp_priv_drive_len(p->buf, p->len, p->flavor));
+    size_t root;
+    return sp_priv_term(p->buf, sp_priv_split_anchor(p->buf, p->len, p->flavor, &root));
 }
 
 SpTerm sp_root(const SpPath *p) {
@@ -1010,20 +989,7 @@ SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count)
     return sp_priv_join_parts(sp_priv_empty_path(p->flavor), parts, parts_count, false);
 }
 
-static SpPath sp_priv_with_name_impl(const SpPath *p, const char *name, size_t nlen) {
-    SpPath r = sp_parent(p);
-
-    if (r.len == 0 && sp_priv_has_drive(name, nlen, p->flavor)) {
-        r.buf[r.len++] = '.';
-        r.buf[r.len++] = sp_priv_sep(p->flavor);
-    }
-    if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len - 1], p->flavor)) sp_priv_append_sep(&r);
-    sp_priv_append_cstr(&r, name, nlen);
-    sp_priv_terminate(&r);
-    return r;
-}
-
-/* with_name(head + tail), where the name must be non-empty, not "." and free of separators */
+/* with_name(head + tail): the parent plus a name that must be non-empty, not "." and free of separators */
 static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
     if (sp_priv_name_sv(p).len == 0) return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
     char name[SP_PATH_MAX];
@@ -1031,7 +997,12 @@ static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
     len += sp_priv_copy_trunc(name + len, SP_PATH_MAX - len, tail.data, tail.len);
     if (len == 0 || (len == 1 && name[0] == '.') || sp_priv_find_sep(name, len, 0, p->flavor) < len)
         return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-    return sp_priv_with_name_impl(p, name, len);
+    SpPath r = sp_parent(p);
+    if (r.len == 0 && sp_priv_has_drive(name, len, p->flavor)) r.buf[r.len++] = '.'; /* keep "c:" from parsing as a drive */
+    if (r.len > 0 && !sp_priv_is_sep(r.buf[r.len - 1], p->flavor)) sp_priv_append_sep(&r);
+    sp_priv_append_cstr(&r, name, len);
+    sp_priv_terminate(&r);
+    return r;
 }
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
@@ -1088,7 +1059,9 @@ static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
 
 /* CPython walks `other` and its parents up to the first that is p or one of p's parents, stepping out with ".."
  * (walk_up only, and never over a ".." part). The result is p's remaining parts. */
-static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, bool walk_up) {
+SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    SP_ASSERT_PATH_INVARIANT(other);
     SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
     size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2); /* anchor first, if any */
     size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
@@ -1097,7 +1070,9 @@ static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, boo
     size_t ups = 0, k = o_count;
     for (;; k--) {
         size_t same = 0;
-        while (same < k && same < p_count && sp_priv_sv_eq_flavor(p_parts[same], o_parts[same], p->flavor)) same++;
+        while (same < k && same < p_count &&
+               sp_priv_str_cmp_flavor(p_parts[same].data, p_parts[same].len, o_parts[same].data, o_parts[same].len, p->flavor) == 0)
+            same++;
         if (same_anchoring && same == k) break;
         if (!walk_up || k == o_anchor_parts || (o_parts[k - 1].len == 2 && memcmp(o_parts[k - 1].data, "..", 2) == 0))
             return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
@@ -1119,20 +1094,8 @@ static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, boo
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
-    SpPath r = sp_relative_to(p, other);
+    SpPath r = sp_relative_to(p, other, false);
     return !sp_path_is_error(&r);
-}
-
-SpPath sp_relative_to(const SpPath *p, const SpPath *other) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-    return sp_priv_relative_to_impl(p, other, false);
-}
-
-SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SP_ASSERT_PATH_INVARIANT(other);
-    return sp_priv_relative_to_impl(p, other, true);
 }
 
 /* urllib.parse.quote: percent-encode all but letters, digits, "_.-~" and `safe`; false if buf is too small */
@@ -1407,20 +1370,12 @@ bool sp_full_match(const SpPath *p, const char *pattern, int case_sensitive) {
                               true, p->flavor);
 }
 
-/* Parts of p with the anchor (if any) first */
-static size_t sp_priv_anchored_parts(const SpPath *p, SpStr *out, size_t max) {
-    size_t n = sp_priv_collect_parts(p, out, max);
-    if (n == 0 || out[0].len > 0) return n;
-    memmove(out, out + 1, (n - 1) * sizeof(*out));
-    return n - 1;
-}
-
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath pat = sp_path_new(pattern, SP_PRIV_OPTS(p->flavor));
     SpStr path_parts[SP_PATH_MAX / 2], pat_parts[SP_PATH_MAX / 2];
-    size_t path_count = sp_priv_anchored_parts(p, path_parts, SP_PATH_MAX / 2);
-    size_t pat_count = sp_priv_anchored_parts(&pat, pat_parts, SP_PATH_MAX / 2);
+    size_t path_count = sp_priv_collect_parts(p, path_parts, SP_PATH_MAX / 2); /* anchor first, if any */
+    size_t pat_count = sp_priv_collect_parts(&pat, pat_parts, SP_PATH_MAX / 2);
     if (pat_count == 0) return SP_MATCH_ERR_EMPTY;
     if (path_count < pat_count || (path_count > pat_count && sp_priv_anchor_len(pat.buf, pat.len, pat.flavor) > 0))
         return SP_MATCH_NO;
@@ -1430,35 +1385,6 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
         if (!sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor)) return SP_MATCH_NO;
     }
     return SP_MATCH_YES;
-}
-
-bool sp_is_reserved(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (!sp_priv_is_windows_flavor(p->flavor) || sp_priv_is_unc(p->buf, p->len, p->flavor)) return false;
-    SpStr name = sp_priv_name_sv(p);
-    if (name.len == 0 || name.len > 12) return false;
-    char upper[13];
-    size_t len = 0;
-    for (size_t i = 0; i < name.len && name.data[i] != '.' && name.data[i] != ':' && len < 12; i++) {
-        unsigned char c = SP_PRIV_CAST(unsigned char, name.data[i]);
-        if (c == 0xC2 && i + 1 < name.len) {
-            unsigned char c2 = SP_PRIV_CAST(unsigned char, name.data[i + 1]);
-            /* UTF-8 superscript digits: ¹(0xB9)→1, ²(0xB2)→2, ³(0xB3)→3 */
-            if (c2 == 0xB2 || c2 == 0xB3 || c2 == 0xB9) {
-                upper[len++] = (c2 == 0xB9) ? '1' : SP_PRIV_CAST(char, '0' + (c2 - 0xB0));
-                i++;
-                continue;
-            }
-        }
-        if (c != ' ') upper[len++] = SP_PRIV_CAST(char, (c >= 'a' && c <= 'z') ? c - 32 : c);
-    }
-    upper[len] = '\0';
-    static const char *const reserved[] = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"};
-    for (size_t i = 0; i < SP_ARRAY_LEN(reserved); i++)
-        if (strcmp(upper, reserved[i]) == 0) return true;
-    if (len == 4 && upper[3] >= '1' && upper[3] <= '9' &&
-        (memcmp(upper, "COM", 3) == 0 || memcmp(upper, "LPT", 3) == 0)) return true;
-    return false;
 }
 
 static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
@@ -1528,34 +1454,7 @@ bool sp_is_junction(const SpPath *p) {
 #endif
 }
 
-#ifndef SP_WINDOWS
-static void sp_priv_fill_stat_result(SpStatResult *r, const struct stat *st) {
-    r->sp_mode = SP_PRIV_CAST(unsigned int, st->st_mode);
-    r->sp_ino = SP_PRIV_CAST(unsigned long long, st->st_ino);
-    r->sp_dev = SP_PRIV_CAST(unsigned long long, st->st_dev);
-    r->sp_nlink = SP_PRIV_CAST(unsigned long long, st->st_nlink);
-    r->sp_uid = SP_PRIV_CAST(unsigned int, st->st_uid);
-    r->sp_gid = SP_PRIV_CAST(unsigned int, st->st_gid);
-    r->sp_size = SP_PRIV_CAST(long long, st->st_size);
-    r->sp_atime = SP_PRIV_CAST(double, st->st_atime);
-    r->sp_mtime = SP_PRIV_CAST(double, st->st_mtime);
-    r->sp_ctime = SP_PRIV_CAST(double, st->st_ctime);
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atimespec.tv_sec) * 1000000000LL + st->st_atimespec.tv_nsec;
-    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtimespec.tv_sec) * 1000000000LL + st->st_mtimespec.tv_nsec;
-    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctimespec.tv_sec) * 1000000000LL + st->st_ctimespec.tv_nsec;
-#else
-    r->sp_atime_ns = SP_PRIV_CAST(long long, st->st_atime) * 1000000000LL;
-    r->sp_mtime_ns = SP_PRIV_CAST(long long, st->st_mtime) * 1000000000LL;
-    r->sp_ctime_ns = SP_PRIV_CAST(long long, st->st_ctime) * 1000000000LL;
-#endif
-    r->valid = true;
-}
-#endif
-
 #ifdef SP_WINDOWS
-#define SP_FILETIME_TO_UNIX(ft) \
-    (((SP_PRIV_CAST(double, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime)) - 116444736000000000.0) / 10000000.0)
 #define SP_FILETIME_TO_NS(ft) \
     ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) - 116444736000000000LL) * 100LL)
 #endif
@@ -1608,23 +1507,35 @@ static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) |
                      SP_PRIV_CAST(long long, info.nFileSizeLow);
 
-    result.sp_atime = SP_FILETIME_TO_UNIX(info.ftLastAccessTime);
-    result.sp_mtime = SP_FILETIME_TO_UNIX(info.ftLastWriteTime);
-    result.sp_ctime = SP_FILETIME_TO_UNIX(info.ftCreationTime);
     result.sp_atime_ns = SP_FILETIME_TO_NS(info.ftLastAccessTime);
     result.sp_mtime_ns = SP_FILETIME_TO_NS(info.ftLastWriteTime);
     result.sp_ctime_ns = SP_FILETIME_TO_NS(info.ftCreationTime);
 
-    result.sp_uid = 0;
-    result.sp_gid = 0;
-    result.valid = true;
     CloseHandle(hFile);
 #else
     struct stat st;
-    if ((follow_symlinks ? stat(path_str, &st) : lstat(path_str, &st)) == 0) {
-        sp_priv_fill_stat_result(&result, &st);
-    }
+    if ((follow_symlinks ? stat(path_str, &st) : lstat(path_str, &st)) != 0) return result;
+    result.sp_mode = SP_PRIV_CAST(unsigned int, st.st_mode);
+    result.sp_ino = SP_PRIV_CAST(unsigned long long, st.st_ino);
+    result.sp_dev = SP_PRIV_CAST(unsigned long long, st.st_dev);
+    result.sp_nlink = SP_PRIV_CAST(unsigned long long, st.st_nlink);
+    result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
+    result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
+    result.sp_size = SP_PRIV_CAST(long long, st.st_size);
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
+#else
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL;
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL;
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL;
 #endif
+#endif
+    result.sp_atime = SP_PRIV_CAST(double, result.sp_atime_ns) / 1e9;
+    result.sp_mtime = SP_PRIV_CAST(double, result.sp_mtime_ns) / 1e9;
+    result.sp_ctime = SP_PRIV_CAST(double, result.sp_ctime_ns) / 1e9;
+    result.valid = true;
     return result;
 }
 
@@ -2500,19 +2411,15 @@ static SpPathOp sp_priv_f_pathop(int error) {
 
 #define SP_F_TERM(ret, name, params, expr) \
     static ret sp_priv_f_##name##_ params { sp_priv_f_ctx_active = false; return (expr); }
-#define SP_F_PROC(name, params, expr) \
-    static void sp_priv_f_##name##_ params { sp_priv_f_ctx_active = false; expr; }
 
-SP_F_TERMINATOR_METHODS(SP_F_TERM, SP_F_PROC)
+SP_F_TERMINATOR_METHODS(SP_F_TERM)
 
 #define SP_F_CHAIN_DECL(name, params, expr) static SpPrivDontUseThisDirectly_ *sp_priv_f_##name##_ params;
 SP_F_CHAIN_METHODS(SP_F_CHAIN_DECL)
 
 static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
 #define SP_F_TERM_INIT(ret, name, params, expr) sp_priv_f_##name##_,
-#define SP_F_PROC_INIT(name, params, expr) sp_priv_f_##name##_,
-    SP_F_TERMINATOR_METHODS(SP_F_TERM_INIT, SP_F_PROC_INIT)
-#undef SP_F_PROC_INIT
+    SP_F_TERMINATOR_METHODS(SP_F_TERM_INIT)
 #undef SP_F_TERM_INIT
 #define SP_F_CHAIN_INIT(name, params, expr) sp_priv_f_##name##_,
     SP_F_CHAIN_METHODS(SP_F_CHAIN_INIT)
@@ -2530,7 +2437,6 @@ SP_F_CHAIN_METHODS(SP_F_CHAIN)
 
 #undef SP_F_CHAIN
 #undef SP_F_CHAIN_DECL
-#undef SP_F_PROC
 #undef SP_F_TERM
 #undef SP_F_CHAIN_METHODS
 #undef SP_F_TERMINATOR_METHODS

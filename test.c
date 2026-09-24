@@ -74,7 +74,7 @@ SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t
 }
 
 SP_EXPORT void sp_relative_to_wrap(const SpPath *p, const SpPath *other, int walk_up, SpPath *out) {
-    *out = walk_up ? sp_relative_to_walk_up(p, other) : sp_relative_to(p, other);
+    *out = sp_relative_to(p, other, walk_up != 0);
 }
 
 SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
@@ -100,7 +100,6 @@ SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_se
 SP_EXPORT int sp_full_match_wrap(const SpPath *p, const char *pattern, int case_sensitive) {
     return sp_full_match(p, pattern, case_sensitive) ? 1 : 0;
 }
-WRAP_BOOL_UNARY(is_reserved)
 WRAP_BOOL_FOLLOW(is_file)
 WRAP_BOOL_FOLLOW(is_dir)
 WRAP_BOOL_FOLLOW(exists)
@@ -607,17 +606,15 @@ static void test_fluent_api(void) {
 
     /* >>> PurePosixPath('/etc/passwd').relative_to('/') -> PurePosixPath('etc/passwd') */
     { SpPath base = sp_path_f("/", SP_FLAVOR_POSIX);
-      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base), "etc/passwd"); }
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base, false), "etc/passwd"); }
 
     /* >>> PurePosixPath('/etc/passwd').relative_to('/etc') -> PurePosixPath('passwd') */
     { SpPath base = sp_path_f("/etc", SP_FLAVOR_POSIX);
-      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base), "passwd"); }
-
-    /* ============ relative_to_walk_up (fluent chainable) ============ */
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base, false), "passwd"); }
 
     /* >>> PurePosixPath('/etc/passwd').relative_to('/usr', walk_up=True) -> '../etc/passwd' */
     { SpPath base = sp_path_f("/usr", SP_FLAVOR_POSIX);
-      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to_walk_up(&base), "../etc/passwd"); }
+      ASSERT_FLUENT(SPF_P("/etc/passwd")->relative_to(&base, true), "../etc/passwd"); }
 
     /* ============ absolute (fluent chainable) ============ */
 
@@ -742,13 +739,6 @@ static void test_fluent_api(void) {
     ASSERT_STR(sp_error_str(SP_ERR_INVALID_ARG), "Invalid argument");
     ASSERT_STR(sp_error_str(SP_ERR_OTHER), "Operation failed");
     ASSERT_STR(sp_error_str(9999), "Unknown error");
-
-    /* ============ is_reserved (fluent) ============ */
-
-    /* On POSIX, nothing is reserved */
-    ASSERT(SPF_P("CON")->is_reserved() == false);
-    /* On Windows flavor, CON is reserved */
-    ASSERT(SPF_W("CON")->is_reserved() == true);
 
     /* ============ stat / lstat (fluent) ============ */
 
@@ -1086,8 +1076,8 @@ int main(void) {
     
     SpPath pr1 = sp_path_f("a/b", P), po1 = sp_path_f("a", P); ASSERT(sp_is_relative_to(&pr1, &po1));
     SpPath pr2 = sp_path_f("a/b", P), po2 = sp_path_f("c", P); ASSERT(!sp_is_relative_to(&pr2, &po2));
-    SpPath pr3 = sp_path_f("a/b/c", P), po3 = sp_path_f("a", P); ASSERT_PATH(sp_relative_to(&pr3, &po3), "b/c");
-    SpPath pr4 = sp_path_f("a/b", P), po4 = sp_path_f("a/b", P); ASSERT_PATH(sp_relative_to(&pr4, &po4), ".");  /* C returns "." for display, but Python returns "" */
+    SpPath pr3 = sp_path_f("a/b/c", P), po3 = sp_path_f("a", P); ASSERT_PATH(sp_relative_to(&pr3, &po3, false), "b/c");
+    SpPath pr4 = sp_path_f("a/b", P), po4 = sp_path_f("a/b", P); ASSERT_PATH(sp_relative_to(&pr4, &po4, false), ".");  /* C returns "." for display, but Python returns "" */
     
     ASSERT_PATH(sp_path_f("a//b", P), "a/b");
     ASSERT_PATH(sp_path_f("a/b/", P), "a/b");
@@ -1169,7 +1159,7 @@ int main(void) {
     sp_as_posix(&wap, wbuf, sizeof(wbuf)); ASSERT(strcmp(wbuf, "C:/a/b/c") == 0);
     
     SpPath wr1 = sp_path_f("C:/a/b/c", W), wo1 = sp_path_f("C:/a", W);
-    ASSERT_PATH(sp_relative_to(&wr1, &wo1), "b\\c");
+    ASSERT_PATH(sp_relative_to(&wr1, &wo1, false), "b\\c");
     
     SpPath wr2 = sp_path_f("C:/a/b", W), wo2 = sp_path_f("D:/a", W);
     ASSERT(!sp_is_relative_to(&wr2, &wo2));
@@ -1200,7 +1190,7 @@ int main(void) {
 
     /* Failed path results are described by sp_error_str (their codes must not collide with SP_ERR_*) */
     SpPath er1 = sp_path_f("/", P), er2 = sp_path_f("/a/b", P), er3 = sp_path_f("/c", P);
-    SpPath ee1 = sp_with_name(&er1, "x"), ee2 = sp_with_name(&er2, ""), ee3 = sp_relative_to(&er2, &er3);
+    SpPath ee1 = sp_with_name(&er1, "x"), ee2 = sp_with_name(&er2, ""), ee3 = sp_relative_to(&er2, &er3, false);
     ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee1)), "Path has an empty name") == 0);
     ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee2)), "Invalid argument") == 0);
     ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee3)), "Path is not relative to the other path") == 0);
@@ -1570,7 +1560,7 @@ int main(void) {
         ASSERT_PATH(sp_with_suffix(&dotted, "."), "a/x.");
         { char posix[16]; sp_as_posix(&back, posix, sizeof(posix)); ASSERT(strcmp(posix, "a\\b") == 0); }
         SpPath dotdot = sp_path_f("../a/b", SP_FLAVOR_POSIX), up = sp_path_f("../c", SP_FLAVOR_POSIX);
-        ASSERT_PATH(sp_relative_to_walk_up(&dotdot, &up), "../a/b"); /* ".." shared by both is not walked */
+        ASSERT_PATH(sp_relative_to(&dotdot, &up, true), "../a/b"); /* ".." shared by both is not walked */
         SpPath dot = sp_path_f("", SP_FLAVOR_POSIX), star = sp_path_f("*", SP_FLAVOR_POSIX);
         ASSERT(sp_path_cmp(&dot, &star) > 0);                     /* compares "." with "*", part by part */
         SpPath protected_drive = sp_path_f("./c:", SP_FLAVOR_WINDOWS);

@@ -141,7 +141,7 @@ _sig('sp_joinpath_wrap', [_PP, _PP, _PP])
 for n in ['is_file', 'is_dir', 'exists']:
     _sig(f'sp_{n}_wrap', [_PP, c_int], c_int)
 
-for n in ['is_absolute', 'is_reserved',
+for n in ['is_absolute',
           'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
           'is_socket', 'is_mount', 'is_junction',
           'path_is_error', 'path_error_code']:
@@ -517,7 +517,6 @@ class PurePath:
         return buf.value.decode('utf-8')
 
     is_absolute = _bool_method('is_absolute')
-    is_reserved = _bool_method('is_reserved')
 
     def _other(self, other):
         """C path for another path argument, parsed (or converted) in this path's flavor"""
