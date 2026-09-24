@@ -17,7 +17,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15'
+          allow-prereleases: true
 
       - name: Install dependencies
         run: |
@@ -42,7 +43,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15'
+          allow-prereleases: true
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1

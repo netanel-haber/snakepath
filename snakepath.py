@@ -5,10 +5,11 @@ Import it for PurePath/PurePosixPath/PureWindowsPath/Path/PosixPath/WindowsPath,
 Python's pathlib and backed by the C library (test.c built with -DSP_FFI).
 
 Run it (nob does: python snakepath.py) to check public call depth in snakepath.h and that
-README.md embeds api_demo.c verbatim, then run CPython 3.12's own pathlib tests on these classes.
+README.md embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these classes.
 """
 
 import ctypes
+import errno
 import os
 import pathlib
 import re
@@ -53,9 +54,9 @@ SP_ERR_EXISTS_NOT_DIR = _lib.sp_err_exists_not_dir()
 SP_ERR_OPEN = _lib.sp_err_open()
 SP_ERR_NO_NAME = _lib.sp_err_no_name()
 SP_ERR_INVALID_ARG = _lib.sp_err_invalid_arg()
+SP_ERR_UNSUPPORTED = _lib.sp_err_unsupported()
 SP_MATCH_YES = _lib.sp_match_yes()
 SP_MATCH_ERR_EMPTY = _lib.sp_match_err_empty()
-SP_MATCH_ERR_INVALID = _lib.sp_match_err_invalid()
 
 # Case sensitivity options for glob/match
 SP_CASE_PLATFORM_DEFAULT = _lib.sp_case_platform_default()
@@ -137,7 +138,10 @@ for n in ['with_name', 'with_stem', 'with_suffix']:
 
 _sig('sp_joinpath_wrap', [_PP, _PP, _PP])
 
-for n in ['is_absolute', 'is_reserved', 'is_file', 'is_dir', 'exists',
+for n in ['is_file', 'is_dir', 'exists']:
+    _sig(f'sp_{n}_wrap', [_PP, c_int], c_int)
+
+for n in ['is_absolute', 'is_reserved',
           'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
           'is_socket', 'is_mount', 'is_junction',
           'path_is_error', 'path_error_code', 'relative_to_is_error']:
@@ -162,10 +166,13 @@ _sig('sp_with_segments_wrap', [_PP, POINTER(c_char_p), c_size_t, _PP])
 _sig('sp_is_relative_to_parts_wrap', [_PP, POINTER(c_char_p)], c_int)
 _sig('sp_relative_to_parts_wrap', [_PP, POINTER(c_char_p), c_int, _PP])
 _sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
+_sig('sp_from_uri_wrap', [c_char_p, c_int, _PP])
 _sig('sp_as_posix_wrap', [_PP, c_char_p, c_size_t])
 _sig('sp_cwd_wrap', [c_int, _PP])
 _sig('sp_path_cmp_wrap', [_PP, _PP], c_int)
 _sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
+_sig('sp_full_match_wrap', [_PP, c_char_p, c_int], c_int)
+_sig('sp_error_str_wrap', [c_int], c_char_p)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_lstat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
@@ -181,16 +188,21 @@ _sizeof_glob_iter = _lib.sp_sizeof_glob_iter()
 class _SpGlobIter(Structure):
     _fields_ = [('_opaque', ctypes.c_char * _sizeof_glob_iter)]
 _PGlobIter = POINTER(_SpGlobIter)
-_sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
-_sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, _PGlobIter])
+_sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int, c_int, _PGlobIter])
+_sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, c_int, _PGlobIter])
 _sig('sp_glob_next_wrap', [_PGlobIter, _PP], c_int)
 _sig('sp_glob_end_wrap', [_PGlobIter])
+_sig('sp_glob_error_wrap', [_PGlobIter], c_int)
 # File/directory modification operations
 _sig('sp_touch_wrap', [_PP, ctypes.c_uint, c_int], c_int)
 _sig('sp_unlink_wrap', [_PP, c_int], c_int)
 _sig('sp_rmdir_wrap', [_PP], c_int)
 _sig('sp_rename_wrap', [_PP, _PP, _PP])
 _sig('sp_replace_wrap', [_PP, _PP, _PP])
+_sig('sp_copy_wrap', [_PP, _PP, c_int, c_int, _PP])
+_sig('sp_copy_into_wrap', [_PP, _PP, c_int, c_int, _PP])
+_sig('sp_move_wrap', [_PP, _PP, _PP])
+_sig('sp_move_into_wrap', [_PP, _PP, _PP])
 _sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
 # File I/O
 _sig('sp_read_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(c_int)])
@@ -255,6 +267,24 @@ def _bool_method(name):
         return bool(func(byref(self._sp)))
     method.__name__ = name
     return method
+
+
+def _follow_method(name):
+    """Method returning the C predicate sp_<name>_wrap(follow_symlinks) as a bool"""
+    func = getattr(_lib, f'sp_{name}_wrap')
+    def method(self, *, follow_symlinks=True):
+        return bool(func(byref(self._sp), 1 if follow_symlinks else 0))
+    method.__name__ = name
+    return method
+
+
+def _raise_for(err, source, target):
+    """Raise the OSError subclass (or ValueError) for an SP_ERR_* code from a copy or move"""
+    if err == SP_ERR_NO_NAME:
+        raise ValueError(f"{source!r} has an empty name")
+    code = {SP_ERR_NOT_FOUND: errno.ENOENT, SP_ERR_EXISTS: errno.EEXIST, SP_ERR_PERMISSION: errno.EACCES,
+            SP_ERR_NOT_DIR: errno.ENOTDIR, SP_ERR_INVALID_ARG: errno.EINVAL}.get(err, errno.EIO)
+    raise OSError(code, _decode(_lib.sp_error_str_wrap(err)), str(source), None, str(target))  # OSError picks the subclass
 
 
 # ============ Helper functions ============
@@ -362,7 +392,7 @@ class PurePath:
             cls = PurePosixPath if os.name != 'nt' else PureWindowsPath
         return object.__new__(cls)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args):
         self._sp = _SpPath()
         for arg in args:
             if isinstance(arg, bytes):
@@ -433,19 +463,19 @@ class PurePath:
         return _lib.sp_path_hash_wrap(byref(self._sp))
 
     def __lt__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
+        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) < 0
 
     def __le__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
+        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) <= 0
 
     def __gt__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
+        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) > 0
 
     def __ge__(self, other):
-        if not isinstance(other, PurePath): return NotImplemented
+        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
         return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
 
     def __truediv__(self, other):
@@ -544,15 +574,15 @@ class PurePath:
     def with_suffix(self, suffix):
         return self._with_field('suffix', suffix)
 
-    def match(self, pattern, *, case_sensitive=None):
-        if isinstance(pattern, bytes):
-            raise TypeError("argument should be a str or os.PathLike object, not bytes")
+    def full_match(self, pattern, *, case_sensitive=None):
         cs_value = -1 if case_sensitive is None else (1 if case_sensitive else 0)
-        result = _lib.sp_match_ex_wrap(byref(self._sp), _encode(str(pattern)), cs_value)
+        return bool(_lib.sp_full_match_wrap(byref(self._sp), _encode(os.fspath(pattern)), cs_value))
+
+    def match(self, path_pattern, *, case_sensitive=None):
+        cs_value = -1 if case_sensitive is None else (1 if case_sensitive else 0)
+        result = _lib.sp_match_ex_wrap(byref(self._sp), _encode(os.fspath(path_pattern)), cs_value)
         if result == SP_MATCH_ERR_EMPTY:
             raise ValueError("empty pattern")
-        if result == SP_MATCH_ERR_INVALID:
-            raise ValueError(f"Invalid pattern: {pattern!r}")
         return result == SP_MATCH_YES
 
 
@@ -593,9 +623,9 @@ class Path(PurePath):
         _lib.sp_absolute_wrap(byref(self._sp), byref(out))
         return self._from_sp(out)
 
-    is_file = _bool_method('is_file')
-    is_dir = _bool_method('is_dir')
-    exists = _bool_method('exists')
+    is_file = _follow_method('is_file')
+    is_dir = _follow_method('is_dir')
+    exists = _follow_method('exists')
     is_symlink = _bool_method('is_symlink')
     is_block_device = _bool_method('is_block_device')
     is_char_device = _bool_method('is_char_device')
@@ -659,7 +689,7 @@ class Path(PurePath):
         if not self.exists():
             raise FileNotFoundError(2, "No such file or directory", str(self))
         other_sp = self._sp_of(other_path)
-        if not _lib.sp_exists_wrap(byref(other_sp)):
+        if not _lib.sp_exists_wrap(byref(other_sp), 1):
             raise FileNotFoundError(2, "No such file or directory", str(other_path))
         return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other_sp)))
 
@@ -679,28 +709,29 @@ class Path(PurePath):
         else:
             raise OSError(0, "Unknown error", path_str)
 
-    def _glob(self, begin, pattern, case_sensitive):
-        if isinstance(pattern, bytes):
-            raise TypeError("argument should be a str or os.PathLike object, not bytes")
+    def _glob(self, begin, pattern, case_sensitive, recurse_symlinks):
         cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
-        results = []
         it = _SpGlobIter()
+        begin(byref(self._sp), _encode(os.fspath(pattern)), cs, 1 if recurse_symlinks else 0, byref(it))
+        err = _lib.sp_glob_error_wrap(byref(it))
+        if err == SP_ERR_UNSUPPORTED:
+            raise NotImplementedError("Non-relative patterns are unsupported")
+        if err != SP_OK:
+            raise ValueError(f"Unacceptable pattern: {os.fspath(pattern)!r}")
+        results = []
         match = _SpPath()
-        begin(byref(self._sp), _encode(str(pattern)), cs, byref(it))
         while _lib.sp_glob_next_wrap(byref(it), byref(match)):
             results.append(self._from_sp(match))
         _lib.sp_glob_end_wrap(byref(it))
         return iter(results)
 
-    def glob(self, pattern, *, case_sensitive=None):
+    def glob(self, pattern, *, case_sensitive=None, recurse_symlinks=False):
         """Iterate over this subtree and yield all existing files matching pattern."""
-        if not isinstance(pattern, bytes) and not str(pattern):
-            raise ValueError("Unacceptable pattern: ''")
-        return self._glob(_lib.sp_glob_begin_wrap, pattern, case_sensitive)
+        return self._glob(_lib.sp_glob_begin_wrap, pattern, case_sensitive, recurse_symlinks)
 
-    def rglob(self, pattern, *, case_sensitive=None):
+    def rglob(self, pattern, *, case_sensitive=None, recurse_symlinks=False):
         """Recursively yield all existing files matching pattern."""
-        return self._glob(_lib.sp_rglob_begin_wrap, pattern, case_sensitive)
+        return self._glob(_lib.sp_rglob_begin_wrap, pattern, case_sensitive, recurse_symlinks)
 
     def touch(self, mode=0o666, exist_ok=True):
         """Create file or update timestamps."""
@@ -723,6 +754,39 @@ class Path(PurePath):
         if _lib.sp_path_is_error_wrap(byref(out)):
             raise OSError(1, "Operation not permitted", str(self), str(target))
         return self._from_sp(out)
+
+    def _transfer(self, func, target, *flags):
+        out = _SpPath()
+        func(byref(self._sp), byref(self._sp_of(target)), *flags, byref(out))
+        if _lib.sp_path_is_error_wrap(byref(out)):
+            _raise_for(_lib.sp_path_error_code_wrap(byref(out)), self, target)
+        return self._from_sp(out)
+
+    def copy(self, target, *, follow_symlinks=True, preserve_metadata=False):
+        """Recursively copy this file or directory tree to the given destination."""
+        return self._transfer(_lib.sp_copy_wrap, target, 1 if follow_symlinks else 0, 1 if preserve_metadata else 0)
+
+    def copy_into(self, target_dir, *, follow_symlinks=True, preserve_metadata=False):
+        """Copy this file or directory tree into the given existing directory."""
+        return self._transfer(_lib.sp_copy_into_wrap, target_dir, 1 if follow_symlinks else 0, 1 if preserve_metadata else 0)
+
+    def move(self, target):
+        """Recursively move this file or directory tree to the given destination."""
+        return self._transfer(_lib.sp_move_wrap, target)
+
+    def move_into(self, target_dir):
+        """Move this file or directory tree into the given existing directory."""
+        return self._transfer(_lib.sp_move_into_wrap, target_dir)
+
+    @classmethod
+    def from_uri(cls, uri):
+        """Return a new path from the given 'file' URI."""
+        result = cls.__new__(cls)
+        result._sp = _SpPath()
+        _lib.sp_from_uri_wrap(_encode(uri), result._flavor, byref(result._sp))
+        if _lib.sp_path_is_error_wrap(byref(result._sp)):
+            raise ValueError(f"URI is not absolute: {uri!r}")
+        return result
 
     def rename(self, target):
         """Rename this file/directory to the given target."""
@@ -1029,150 +1093,59 @@ def check_call_depth(header_path: pathlib.Path, max_depth: int) -> int:
 
 THIS_DIR = pathlib.Path(__file__).resolve().parent
 TEST_DIR = THIS_DIR / "cpython_tests"
-# Use Python 3.12 branch to match our Python version
-CPYTHON_BRANCH = "3.12"
-CPYTHON_RAW = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test"
-
-# Test file to download (Python 3.12 has single test_pathlib.py)
-TEST_FILE = "test_pathlib.py"
+# CPython's own pathlib tests: the 3.15 branch's Lib/test/test_pathlib/test_pathlib.py. The other
+# files in that package only test Python-only machinery (pathlib.types protocols, zip/local backends).
+CPYTHON_BRANCH = "3.15"
+TEST_URL = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test/test_pathlib/test_pathlib.py"
+TEST_FILE = "test_pathlib_3_15.py"  # cached under a versioned name
 
 # Tests expected to fail with specific error messages
 # Format: {expected_error_substring: [(class_name, test_name), ...]}
-# These document known limitations and unimplemented features
+# These exercise Python-only pathlib machinery with no C counterpart. Both flavors are listed where the host
+# decides the flavor (PurePath, Path); the other flavor's tests are skipped, which counts as not passing.
+_PURE = ["PurePathTest", "PurePosixPathTest", "PureWindowsPathTest", "PurePathSubclassTest"]
+_PATH = ["PathTest", "PathSubclassTest", "PosixPathTest", "WindowsPathTest"]
 EXPECTED_FAILURES = {
-    # =========================================================================
-    # Python's warnings.warn() system does not exist in C
-    # These tests check that DeprecationWarning is emitted for multi-arg calls
-    # =========================================================================
+    # PurePath.as_uri() is deprecated in favor of Path.as_uri() - a warnings.warn() about Python classes
     "DeprecationWarning not triggered": [
-        ("PurePosixPathTest", "test_is_relative_to_common"),
-        ("PurePosixPathTest", "test_relative_to_common"),
-        ("PureWindowsPathTest", "test_is_relative_to_common"),
-        ("PureWindowsPathTest", "test_relative_to_common"),
-        ("PurePathTest", "test_is_relative_to_common"),
-        ("PurePathTest", "test_relative_to_common"),
-        ("PurePathSubclassTest", "test_is_relative_to_common"),
-        ("PurePathSubclassTest", "test_relative_to_common"),
-        ("PosixPathAsPureTest", "test_is_relative_to_common"),
-        ("PosixPathAsPureTest", "test_relative_to_common"),
-        ("WindowsPathAsPureTest", "test_is_relative_to_common"),
-        ("WindowsPathAsPureTest", "test_relative_to_common"),
-        ("PathSubclassTest", "test_passing_kwargs_deprecated"),
-        ("PathTest", "test_passing_kwargs_deprecated"),
-        ("PosixPathTest", "test_passing_kwargs_deprecated"),
-        ("WindowsPathTest", "test_passing_kwargs_deprecated"),
+        (cls, test) for cls in ["PurePathTest", "PurePosixPathTest", "PurePathSubclassTest"]
+        for test in ["test_as_uri_posix", "test_as_uri_non_ascii", "test_as_uri_windows"]
+    ] + [("PureWindowsPathTest", "test_as_uri_windows")],
+
+    # Private CPython hooks: _parse_path (parser internals) and _delete (shutil.rmtree wrapper)
+    "has no attribute '_parse_path'": [
+        (cls, test) for cls in _PURE + _PATH
+        for test in ["test_parse_path_common", "test_parse_path_posix", "test_parse_path_windows"]
+    ],
+    "has no attribute '_delete'": [
+        (cls, f"test_delete_{what}") for cls in _PATH
+        for what in ["dir", "file", "missing", "on_named_pipe", "does_not_choke_on_failing_lstat"]
     ],
 
-    # =========================================================================
-    # Cross-flavor ordering comparison requires Python-level type checking
-    # C library doesn't implement TypeError for comparing PosixPath < WindowsPath
-    # =========================================================================
-    "TypeError": [
-        ("PurePathTest", "test_different_flavours_unordered"),
+    # Path.info (a caching PathInfo object), pathlib.types protocols and pathlib.UnsupportedOperation
+    "has no attribute 'info'": [
+        (cls, test) for cls in _PATH
+        for test in ["test_info_exists_caching", "test_info_is_dir_caching", "test_info_is_file_caching",
+                     "test_glob_posix"]
+    ],
+    "has no attribute 'types'": [(cls, "test_matches_writablepath_docstrings") for cls in _PATH],
+    "has no attribute 'UnsupportedOperation'": [
+        (cls, "test_hardlink_to_unsupported") for cls in _PATH
+    ] + [("UnsupportedOperationTest", "test_is_notimplemented")],
+
+    # Pickling: C-backed objects with __slots__, and the pathlib._local module path of 3.13 pickles
+    "cannot be pickled": [("PurePathSubclassTest", "test_pickling_common")],
+    "pathlib._local": [(cls, "test_unpicking_3_13") for cls in _PURE + _PATH],
+
+    # Mocks of Python functions the C library never calls: parser.isjunction, os.getcwd, fast-copy syscalls
+    "MagicMock": [(cls, "test_is_junction_true") for cls in _PATH],
+    "!=": [(cls, "test_absolute_common") for cls in _PATH],
+    "FileNotFoundError not raised": [
+        (cls, "test_copy_error_handling") for cls in ["PathTest", "PathSubclassTest", "PosixPathTest"]
     ],
 
-    # =========================================================================
-    # Turkish I case folding requires Unicode NFKC normalization
-    # C library uses simple ASCII case folding, not full Unicode
-    # =========================================================================
-    "PureWindowsPath('İ')": [
-        ("PureWindowsPathTest", "test_eq"),
-    ],
-
-    # =========================================================================
-    # with_suffix() tuple argument validation differs from Python
-    # C library raises TypeError, Python raises ValueError for tuple suffix
-    # =========================================================================
-    "expected str, not tuple": [
-        ("PosixPathAsPureTest", "test_with_suffix_common"),
-        ("PurePathSubclassTest", "test_with_suffix_common"),
-        ("PurePathTest", "test_with_suffix_common"),
-        ("PurePosixPathTest", "test_with_suffix_common"),
-        ("PureWindowsPathTest", "test_with_suffix_common"),
-        ("WindowsPathAsPureTest", "test_with_suffix_common"),
-    ],
-
-    # =========================================================================
-    # Pickling not implemented - would require __getstate__/__setstate__
-    # C-backed objects with __slots__ cannot be pickled without explicit support
-    # =========================================================================
-    "cannot be pickled": [
-        ("PurePathSubclassTest", "test_pickling_common"),
-    ],
-
-
-    # =========================================================================
-    # test_parts_interning - Python interns string parts, C doesn't
-    # =========================================================================
-    "is not": [
-        ("PathSubclassTest", "test_parts_interning"),
-        ("PathTest", "test_parts_interning"),
-        ("PosixPathTest", "test_parts_interning"),
-        ("WindowsPathTest", "test_parts_interning"),
-    ],
-
-    "NotImplementedError": [
-        ("PathTest", "test_unsupported_flavour"),
-    ],
-
-    # =========================================================================
-    # expanduser tests use EnvironmentVarGuard mock which doesn't affect C
-    # =========================================================================
-    "has no attribute 'unset'": [
-        ("PosixPathTest", "test_expanduser"),
-        ("WindowsPathTest", "test_expanduser"),
-    ],
-
-    # =========================================================================
-    # test_is_junction tests Python's internal _flavour.isjunction delegation
-    # We implement is_junction directly in C, bypassing the mock pattern
-    # =========================================================================
-    "MagicMock": [
-        ("PathSubclassTest", "test_is_junction"),
-        ("PathTest", "test_is_junction"),
-        ("PosixPathTest", "test_is_junction"),
-        ("WindowsPathTest", "test_is_junction"),
-    ],
-
-    # =========================================================================
-    # test_with uses context manager protocol not implemented
-    # =========================================================================
-    "does not support the context manager protocol": [
-        ("PathSubclassTest", "test_with"),
-        ("PathTest", "test_with"),
-        ("PosixPathTest", "test_with"),
-        ("WindowsPathTest", "test_with"),
-    ],
-
-    # =========================================================================
-    # walk prune test modifies dirnames list, which Python bindings don't support
-    # (pruning works in C but Python bindings are read-only)
-    # =========================================================================
-    "!=": [
-        ("PathSubclassTest", "test_absolute_common"),
-        ("PathTest", "test_absolute_common"),
-        ("PosixPathTest", "test_absolute_common"),
-        ("WindowsPathTest", "test_absolute"),
-        ("WindowsPathTest", "test_absolute_common"),
-    ],
-
-    # =========================================================================
-    # WindowsPathAsPureTest - runs only on Windows, tests pure path operations
-    # =========================================================================
-    "WindowsPath": [
-        ("WindowsPathAsPureTest", "test_eq"),
-    ],
-
-    # =========================================================================
-    # link_to() is deprecated API - hardlink_to() replaced it
-    # Test expects NotImplementedError but we implement hardlink_to() directly
-    # =========================================================================
-    "Operation not permitted": [
-        ("PathSubclassTest", "test_link_to_not_implemented"),
-        ("PathTest", "test_link_to_not_implemented"),
-        ("PosixPathTest", "test_link_to_not_implemented"),
-    ],
-
+    # Turkish dotted I case folding needs full Unicode lowercasing; the C library folds ASCII only
+    "PureWindowsPath('İ')": [(cls, "test_eq_windows") for cls in ["PurePathTest", "PureWindowsPathTest"]],
 }
 
 # Build reverse lookup: (class_name, test_name) -> expected_error_substring
@@ -1204,8 +1177,7 @@ def setup_tests():
     if not dest.exists():
         print("Downloading CPython pathlib test...")
         print(f"  {TEST_FILE}")
-        url = f"{CPYTHON_RAW}/{TEST_FILE}"
-        download_file(url, dest)
+        download_file(TEST_URL, dest)
 
 
 def setup_pathlib_patch(testfn=None):
@@ -1233,6 +1205,10 @@ def setup_pathlib_patch(testfn=None):
     test_support.verbose = False
     test_support.cpython_only = lambda f: f
     test_support.is_android = False
+    test_support.is_wasm32 = False
+    is_root = hasattr(os, 'geteuid') and os.geteuid() == 0
+    test_support.requires_root_user = unittest.skipUnless(is_root, "requires root")
+    test_support.requires_non_root_user = unittest.skipIf(is_root, "requires non-root")
 
     # Context manager for recursion limit
     import contextlib
@@ -1246,10 +1222,20 @@ def setup_pathlib_patch(testfn=None):
             sys.setrecursionlimit(old)
     test_support.set_recursion_limit = set_recursion_limit
 
+    @contextlib.contextmanager
+    def infinite_recursion(max_depth=None):
+        with set_recursion_limit(max_depth or 150):
+            yield
+    test_support.infinite_recursion = infinite_recursion
+
     class ImportHelper:
         @staticmethod
         def import_module(name):
             return __import__(name)
+
+        @staticmethod
+        def ensure_lazy_imports(*args, **kwargs):
+            raise unittest.SkipTest("lazy imports: not meaningful in C")
     test_support.import_helper = ImportHelper()
     sys.modules['test.support'] = test_support
 
@@ -1266,12 +1252,47 @@ def setup_pathlib_patch(testfn=None):
     os_helper.FakePath = FakePath
     os_helper.can_symlink = lambda: False
     os_helper.fs_is_case_insensitive = lambda path: False
-    os_helper.rmtree = shutil.rmtree
+    def rmtree(path):
+        # Like CPython's os_helper.rmtree: tests leave unreadable dirs behind, so restore access and retry
+        def onexc(func, p, exc):
+            os.chmod(os.path.dirname(p) or '.', 0o700)
+            os.chmod(p, 0o700)
+            func(p) if func is not os.open else shutil.rmtree(p, onexc=onexc)
+        if os.path.lexists(path):
+            shutil.rmtree(path, onexc=onexc)
+    os_helper.rmtree = rmtree
     # Skip decorators
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")
     os_helper.skip_unless_working_chmod = unittest.skip("chmod not tested")
     os_helper.skip_unless_symlink = unittest.skip("symlink not tested")
     os_helper.skip_if_dac_override = lambda f: f
+    os_helper.skip_unless_hardlink = unittest.skip("hardlink not tested")
+    os_helper._longpath = lambda path: path
+
+    @contextlib.contextmanager
+    def change_cwd(path):
+        old = os.getcwd()
+        os.chdir(path)
+        try:
+            yield os.getcwd()
+        finally:
+            os.chdir(old)
+    os_helper.change_cwd = change_cwd
+
+    @contextlib.contextmanager
+    def temp_umask(umask):
+        old = os.umask(umask)
+        try:
+            yield
+        finally:
+            os.umask(old)
+    os_helper.temp_umask = temp_umask
+
+    @contextlib.contextmanager
+    def subst_drive(path):
+        raise unittest.SkipTest("subst drives not tested")
+        yield
+    os_helper.subst_drive = subst_drive
     class EnvironmentVarGuard:
         def __enter__(self): return {}
         def __exit__(self, *args): pass
@@ -1324,6 +1345,7 @@ def run_single_class(class_info):
 
     # Convert result to serializable dict
     def test_to_tuple(test, tb):
+        test = getattr(test, 'test_case', test)  # a failed subTest reports its parent test
         return (test.__class__.__name__, test._testMethodName, tb)
 
     return (class_name, {

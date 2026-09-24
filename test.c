@@ -39,6 +39,9 @@
 #define WRAP_BOOL_UNARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *p) { return sp_##fn(p) ? 1 : 0; }
 
+#define WRAP_BOOL_FOLLOW(fn) \
+    SP_EXPORT int sp_##fn##_wrap(const SpPath *p, int follow_symlinks) { return sp_##fn(p, follow_symlinks != 0) ? 1 : 0; }
+
 #define WRAP_BOOL_BINARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
 
@@ -82,6 +85,7 @@ SP_EXPORT void sp_relative_to_parts_wrap(const SpPath *p, const char **parts, in
     *out = sp_relative_to_parts(p, parts, walk_up != 0);
 }
 
+SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
 SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
     return sp_as_uri(p, buf, buf_size);
 }
@@ -100,10 +104,13 @@ WRAP_BOOL_BINARY(path_eq)
 SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
 SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
 SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_sensitive) { return sp_match_ex(p, pattern, case_sensitive); }
+SP_EXPORT int sp_full_match_wrap(const SpPath *p, const char *pattern, int case_sensitive) {
+    return sp_full_match(p, pattern, case_sensitive) ? 1 : 0;
+}
 WRAP_BOOL_UNARY(is_reserved)
-WRAP_BOOL_UNARY(is_file)
-WRAP_BOOL_UNARY(is_dir)
-WRAP_BOOL_UNARY(exists)
+WRAP_BOOL_FOLLOW(is_file)
+WRAP_BOOL_FOLLOW(is_dir)
+WRAP_BOOL_FOLLOW(exists)
 WRAP_BOOL_UNARY(is_symlink)
 WRAP_BOOL_UNARY(is_block_device)
 WRAP_BOOL_UNARY(is_char_device)
@@ -175,9 +182,10 @@ SP_EXPORT int sp_err_exists_not_dir(void) { return SP_ERR_EXISTS_NOT_DIR; }
 SP_EXPORT int sp_err_open(void) { return SP_ERR_OPEN; }
 SP_EXPORT int sp_err_no_name(void) { return SP_ERR_NO_NAME; }
 SP_EXPORT int sp_err_invalid_arg(void) { return SP_ERR_INVALID_ARG; }
+SP_EXPORT int sp_err_unsupported(void) { return SP_ERR_UNSUPPORTED; }
+SP_EXPORT const char *sp_error_str_wrap(int error) { return sp_error_str(error); }
 SP_EXPORT int sp_match_yes(void) { return SP_MATCH_YES; }
 SP_EXPORT int sp_match_err_empty(void) { return SP_MATCH_ERR_EMPTY; }
-SP_EXPORT int sp_match_err_invalid(void) { return SP_MATCH_ERR_INVALID; }
 
 /* mkdir */
 SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok) {
@@ -186,14 +194,15 @@ SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int
 
 /* glob iterator */
 SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
-SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int cs, SpGlobIter *out) {
-    *out = sp_glob_begin(p, pattern, (SpCaseSensitivity)cs);
+SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int cs, int recurse_symlinks, SpGlobIter *out) {
+    *out = sp_glob_begin(p, pattern, (SpCaseSensitivity)cs, recurse_symlinks != 0);
 }
-SP_EXPORT void sp_rglob_begin_wrap(const SpPath *p, const char *pattern, int cs, SpGlobIter *out) {
-    *out = sp_rglob_begin(p, pattern, (SpCaseSensitivity)cs);
+SP_EXPORT void sp_rglob_begin_wrap(const SpPath *p, const char *pattern, int cs, int recurse_symlinks, SpGlobIter *out) {
+    *out = sp_rglob_begin(p, pattern, (SpCaseSensitivity)cs, recurse_symlinks != 0);
 }
 SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) { return sp_glob_next(it, out) ? 1 : 0; }
 SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) { sp_glob_end(it); }
+SP_EXPORT int sp_glob_error_wrap(const SpGlobIter *it) { return it->error; }
 
 /* Case sensitivity enum values */
 SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }
@@ -216,6 +225,15 @@ SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, SpPath *out
 SP_EXPORT void sp_replace_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
     *out = sp_replace(p, target);
 }
+SP_EXPORT void sp_copy_wrap(const SpPath *p, const SpPath *target, int follow_symlinks, int preserve_metadata, SpPath *out) {
+    *out = sp_copy(p, target, follow_symlinks != 0, preserve_metadata != 0);
+}
+SP_EXPORT void sp_copy_into_wrap(const SpPath *p, const SpPath *target_dir, int follow_symlinks, int preserve_metadata,
+                                 SpPath *out) {
+    *out = sp_copy_into(p, target_dir, follow_symlinks != 0, preserve_metadata != 0);
+}
+SP_EXPORT void sp_move_wrap(const SpPath *p, const SpPath *target, SpPath *out) { *out = sp_move(p, target); }
+SP_EXPORT void sp_move_into_wrap(const SpPath *p, const SpPath *target_dir, SpPath *out) { *out = sp_move_into(p, target_dir); }
 SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
     return sp_chmod(p, mode) ? 1 : 0;
 }
@@ -667,29 +685,29 @@ static void test_fluent_api(void) {
     /* ============ is_file (fluent) ============ */
 
     /* Existing file should return true */
-    { SpPath p = SPF(__FILE__)->path(); ASSERT(sp_is_file(&p) == true); }
+    { SpPath p = SPF(__FILE__)->path(); ASSERT(sp_is_file(&p, true) == true); }
 
     /* Non-existent file should return false */
-    ASSERT(SPF("/nonexistent/file.txt")->is_file() == false);
+    ASSERT(SPF("/nonexistent/file.txt")->is_file(true) == false);
 
     /* ============ is_dir (fluent) ============ */
 
     /* Existing directory should return true */
-    { SpPath p = SPF(".")->path(); ASSERT(sp_is_dir(&p) == true); }
+    { SpPath p = SPF(".")->path(); ASSERT(sp_is_dir(&p, true) == true); }
 
     /* Non-existent directory should return false */
-    ASSERT(SPF("/nonexistent/dir")->is_dir() == false);
+    ASSERT(SPF("/nonexistent/dir")->is_dir(true) == false);
 
     /* ============ exists (fluent) ============ */
 
     /* Existing file should return true */
-    ASSERT(SPF(__FILE__)->exists() == true);
+    ASSERT(SPF(__FILE__)->exists(true) == true);
 
     /* Existing directory should return true */
-    ASSERT(SPF(".")->exists() == true);
+    ASSERT(SPF(".")->exists(true) == true);
 
     /* Non-existent path should return false */
-    ASSERT(SPF("/nonexistent/path")->exists() == false);
+    ASSERT(SPF("/nonexistent/path")->exists(true) == false);
 
     /* ============ read_file / write_file (fluent) ============ */
 
@@ -771,6 +789,8 @@ static void test_fluent_api(void) {
     ASSERT(SPF_P("/foo/bar.py")->match("*.py") == SP_MATCH_YES);
     ASSERT(SPF_P("/foo/bar.py")->match("*.txt") == SP_MATCH_NO);
     ASSERT(SPF_P("/foo/bar.py")->match("foo/*.py") == SP_MATCH_YES);
+    ASSERT(SPF_P("/foo/bar.py")->full_match("/**/*.py"));
+    ASSERT(!SPF_P("/foo/bar.py")->full_match("*.py"));
 
     /* ============ resolve (fluent chainable) ============ */
 
@@ -881,7 +901,7 @@ static void test_fluent_api(void) {
         ASSERT_STR(sp_str(&r.path), touch_path);
 
         /* Verify file exists */
-        ASSERT(SPF(touch_path)->exists() == true);
+        ASSERT(SPF(touch_path)->exists(true) == true);
 
         SpPath cleanup = sp_path(touch_path);
         sp_unlink(&cleanup, true);
@@ -1198,15 +1218,15 @@ int main(void) {
 
     /* Test is_file - existing file */
     SpPath existing_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    ASSERT(sp_is_file(&existing_file) == true);
+    ASSERT(sp_is_file(&existing_file, true) == true);
 
     /* Test is_file - nonexistent path */
     SpPath nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
-    ASSERT(sp_is_file(&nonexistent) == false);
+    ASSERT(sp_is_file(&nonexistent, true) == false);
 
     /* Test is_file - directory (not a file) */
     SpPath dir = sp_path_f(".", P);
-    ASSERT(sp_is_file(&dir) == false);
+    ASSERT(sp_is_file(&dir, true) == false);
 
     printf("  is_file tests OK\n");
 
@@ -1214,15 +1234,15 @@ int main(void) {
 
     /* Test is_dir - existing directory */
     SpPath existing_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
-    ASSERT(sp_is_dir(&existing_dir) == true);
+    ASSERT(sp_is_dir(&existing_dir, true) == true);
 
     /* Test is_dir - nonexistent path */
     SpPath nonexistent_dir = sp_path_f("/nonexistent/path/dir", P);
-    ASSERT(sp_is_dir(&nonexistent_dir) == false);
+    ASSERT(sp_is_dir(&nonexistent_dir, true) == false);
 
     /* Test is_dir - file (not a directory) */
     SpPath file_path = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    ASSERT(sp_is_dir(&file_path) == false);
+    ASSERT(sp_is_dir(&file_path, true) == false);
 
     printf("  is_dir tests OK\n");
 
@@ -1230,15 +1250,15 @@ int main(void) {
 
     /* Test exists - existing file */
     SpPath exists_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    ASSERT(sp_exists(&exists_file) == true);
+    ASSERT(sp_exists(&exists_file, true) == true);
 
     /* Test exists - existing directory */
     SpPath exists_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
-    ASSERT(sp_exists(&exists_dir) == true);
+    ASSERT(sp_exists(&exists_dir, true) == true);
 
     /* Test exists - nonexistent path */
     SpPath not_exists = sp_path_f("/nonexistent/path/file.txt", P);
-    ASSERT(sp_exists(&not_exists) == false);
+    ASSERT(sp_exists(&not_exists, true) == false);
 
     printf("  exists tests OK\n");
 
@@ -1296,7 +1316,7 @@ int main(void) {
     /* Test basic mkdir */
     int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
     ASSERT(mkdir_result == SP_OK);
-    ASSERT(sp_is_dir(&mkdir_test) == true);
+    ASSERT(sp_is_dir(&mkdir_test, true) == true);
 
     /* Test mkdir with exist_ok=false should fail when dir exists */
     mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false);
@@ -1316,7 +1336,7 @@ int main(void) {
     SpPath mkdir_nested = sp_path_f(nested_path, SP_FLAVOR_NATIVE);
     mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false);
     ASSERT(mkdir_result == SP_OK);
-    ASSERT(sp_is_dir(&mkdir_nested) == true);
+    ASSERT(sp_is_dir(&mkdir_nested, true) == true);
 
     /* Cleanup nested dirs */
     test_rmdir(nested_path);
@@ -1415,7 +1435,7 @@ int main(void) {
 
     /* Test basic glob *.txt using iterator */
     int txt_count = 0;
-    SpGlobIter git = sp_glob_begin(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT);
+    SpGlobIter git = sp_glob_begin(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT, false);
     SpPath gmatch;
     while (sp_glob_next(&git, &gmatch)) {
         if (strstr(sp_str(&gmatch), ".txt")) txt_count++;
@@ -1456,8 +1476,8 @@ int main(void) {
 
     /* Test touch creates new file */
     ASSERT(sp_touch(&touch_file, 0644, true) == true);
-    ASSERT(sp_exists(&touch_file) == true);
-    ASSERT(sp_is_file(&touch_file) == true);
+    ASSERT(sp_exists(&touch_file, true) == true);
+    ASSERT(sp_is_file(&touch_file, true) == true);
 
     /* Test touch with exist_ok=false on existing file fails */
     ASSERT(sp_touch(&touch_file, 0644, false) == false);
@@ -1473,7 +1493,7 @@ int main(void) {
 
     /* Test unlink */
     ASSERT(sp_unlink(&touch_file, false) == true);
-    ASSERT(sp_exists(&touch_file) == false);
+    ASSERT(sp_exists(&touch_file, true) == false);
 
     /* Test unlink with missing_ok=false on nonexistent file fails */
     ASSERT(sp_unlink(&touch_file, false) == false);
@@ -1498,15 +1518,15 @@ int main(void) {
     /* Test rename */
     SpPath rename_result = sp_rename(&rename_src, &rename_dst);
     ASSERT(!sp_path_is_error(&rename_result));
-    ASSERT(sp_exists(&rename_src) == false);
-    ASSERT(sp_exists(&rename_dst) == true);
+    ASSERT(sp_exists(&rename_src, true) == false);
+    ASSERT(sp_exists(&rename_dst, true) == true);
 
     /* Test replace (create src again, replace dst) */
     ASSERT(sp_touch(&rename_src, 0644, true) == true);
     SpPath replace_result = sp_replace(&rename_src, &rename_dst);
     ASSERT(!sp_path_is_error(&replace_result));
-    ASSERT(sp_exists(&rename_src) == false);
-    ASSERT(sp_exists(&rename_dst) == true);
+    ASSERT(sp_exists(&rename_src, true) == false);
+    ASSERT(sp_exists(&rename_dst, true) == true);
 
     /* Cleanup */
     sp_unlink(&rename_dst, true);
@@ -1522,16 +1542,115 @@ int main(void) {
 
     /* Create directory */
     ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false) == SP_OK);
-    ASSERT(sp_is_dir(&rmdir_dir) == true);
+    ASSERT(sp_is_dir(&rmdir_dir, true) == true);
 
     /* Test rmdir on empty directory */
     ASSERT(sp_rmdir(&rmdir_dir) == true);
-    ASSERT(sp_exists(&rmdir_dir) == false);
+    ASSERT(sp_exists(&rmdir_dir, true) == false);
 
     /* Test rmdir on nonexistent directory fails */
     ASSERT(sp_rmdir(&rmdir_dir) == false);
 
     printf("  rmdir tests OK\n");
+
+    /* Python 3.15 pathlib: match/full_match, URIs, Windows anchors, glob, copy/move */
+    printf("\npathlib 3.15 Tests:\n");
+    {
+        SpPath p = sp_path_f("/a/b/c.py", SP_FLAVOR_POSIX), empty = sp_path_f("", SP_FLAVOR_POSIX);
+        ASSERT(sp_match_ex(&p, "/**/*.py", -1) == SP_MATCH_NO); /* '**' is an ordinary wildcard in match() */
+        ASSERT(sp_match_ex(&p, "/a/**/*.py", -1) == SP_MATCH_YES);
+        ASSERT(sp_match_ex(&empty, "**", -1) == SP_MATCH_NO);
+        ASSERT(sp_match_ex(&p, ".", -1) == SP_MATCH_ERR_EMPTY);
+        ASSERT(sp_full_match(&p, "/a/**", -1));
+        ASSERT(sp_full_match(&p, "**/*.py", -1));
+        ASSERT(!sp_full_match(&p, "*.py", -1));
+        ASSERT(sp_full_match(&p, "/[a-c]/?/[!x]*", -1));
+        ASSERT(sp_full_match(&empty, "**", -1));
+        SpPath w = sp_path_f("c:/a/B.Py", SP_FLAVOR_WINDOWS);
+        ASSERT(sp_full_match(&w, "C:/A/*.pY", -1));
+        ASSERT(!sp_full_match(&w, "C:/A/*.pY", 1));
+        ASSERT(sp_match_ex(&w, "*:/*/*.py", -1) == SP_MATCH_YES);
+        ASSERT_PATH(sp_path_f("//a//b", SP_FLAVOR_WINDOWS), "\\\\a\\\\b"); /* //server/share with an empty share */
+    }
+    {
+        char buf[SP_PATH_MAX * 3];
+        const char *uris[][3] = {
+            {"/a/b%#c", "p", "file:///a/b%25%23c"},   {"//a/b", "p", "file:////a/b"},
+            {"c:/a b", "w", "file:///c:/a%20b"},       {"//some/share/a", "w", "file://some/share/a"},
+            {"//?/UNC/srv/sh/x", "w", "file://srv/sh/x"}, {"a/b", "p", ""},
+        };
+        for (size_t i = 0; i < ARRAY_LEN(uris); i++) {
+            SpPath u = sp_path_f(uris[i][0], uris[i][1][0] == 'p' ? SP_FLAVOR_POSIX : SP_FLAVOR_WINDOWS);
+            ASSERT(sp_as_uri(&u, buf, sizeof(buf)) == strlen(uris[i][2]));
+            ASSERT(strcmp(buf, uris[i][2]) == 0);
+        }
+        ASSERT_PATH(sp_from_uri("file:///foo/bar", SP_FLAVOR_POSIX), "/foo/bar");
+        ASSERT_PATH(sp_from_uri("file://localhost/foo", SP_FLAVOR_POSIX), "/foo");
+        ASSERT_PATH(sp_from_uri("file:////foo/bar", SP_FLAVOR_POSIX), "//foo/bar");
+        ASSERT_PATH(sp_from_uri("FILE:///a%20b?q#f", SP_FLAVOR_POSIX), "/a b");
+        ASSERT_PATH(sp_from_uri("file:///c|/x", SP_FLAVOR_WINDOWS), "c:\\x");
+        ASSERT_PATH(sp_from_uri("file://server/share/x", SP_FLAVOR_WINDOWS), "\\\\server\\share\\x");
+        const char *bad_uris[] = {"file://host/x", "file:foo", "http://x/y", "/foo"};
+        for (size_t i = 0; i < ARRAY_LEN(bad_uris); i++) {
+            SpPath u = sp_from_uri(bad_uris[i], SP_FLAVOR_POSIX);
+            ASSERT(sp_path_error_code(&u) == SP_ERR_INVALID_ARG);
+        }
+    }
+    {
+        char root_path[64];
+        snprintf(root_path, sizeof(root_path), "./test_315_%ld", pid);
+        SpPath root = sp_path(root_path), sub = sp_join_one(&root, "sub"), txt = sp_join_one(&root, "a.txt");
+        SpPath hidden = sp_join_one(&root, ".hidden"), sub_txt = sp_join_one(&sub, "b.txt");
+        ASSERT(sp_mkdir(&sub, 0755, true, false) == SP_OK);
+        ASSERT(sp_touch(&txt, 0644, true) && sp_touch(&hidden, 0644, true) && sp_touch(&sub_txt, 0644, true));
+        ASSERT(sp_is_dir(&sub, false) && !sp_is_file(&sub, false) && sp_exists(&txt, false));
+
+        struct { const char *pattern; bool rglob; int count; } globs[] = {
+            {"*", false, 3}, /* hidden files match too */
+            {"*/", false, 1}, {"sub/../a.txt", false, 1}, {"**", false, 5}, {"*.txt", true, 2}, {"", true, 2},
+        };
+        for (size_t i = 0; i < ARRAY_LEN(globs); i++) {
+            SpGlobIter it = (globs[i].rglob ? sp_rglob_begin : sp_glob_begin)(&root, globs[i].pattern, SP_CASE_PLATFORM_DEFAULT, false);
+            int n = 0;
+            for (SpPath m; sp_glob_next(&it, &m);) n++;
+            sp_glob_end(&it);
+            ASSERT(it.error == SP_OK && n == globs[i].count);
+        }
+        SpGlobIter bad = sp_glob_begin(&root, "", SP_CASE_PLATFORM_DEFAULT, false);
+        ASSERT(bad.error == SP_ERR_INVALID_ARG);
+        bad = sp_glob_begin(&root, "/x", SP_CASE_PLATFORM_DEFAULT, false);
+        ASSERT(bad.error == SP_ERR_UNSUPPORTED);
+
+        SpPath sub2 = sp_join_one(&root, "sub2"), sub3 = sp_join_one(&root, "sub3"), inside = sp_join_one(&sub, "x");
+        ASSERT_PATH(sp_copy(&sub, &sub2, true, true), sp_str(&sub2));
+        SpPath copied = sp_join_one(&sub2, "b.txt");
+        ASSERT(sp_is_file(&copied, true));
+        SpPath err = sp_copy(&sub, &inside, true, false);
+        ASSERT(sp_path_error_code(&err) == SP_ERR_INVALID_ARG);
+        err = sp_copy(&sub, &sub2, true, false);
+        ASSERT(sp_path_error_code(&err) == SP_ERR_EXISTS);
+        SpPath into = sp_copy_into(&txt, &sub, true, false);
+        ASSERT(!sp_path_is_error(&into) && sp_is_file(&into, true));
+        ASSERT_PATH(sp_move(&sub2, &sub3), sp_str(&sub3));
+        ASSERT(!sp_exists(&sub2, false));
+        err = sp_move(&txt, &txt);
+        ASSERT(sp_path_error_code(&err) == SP_ERR_INVALID_ARG);
+        SpPath moved = sp_move_into(&sub3, &sub), moved_txt = sp_join_one(&moved, "b.txt");
+        ASSERT(sp_is_file(&moved_txt, true) && !sp_exists(&sub3, false));
+        SpPath nameless = sp_path_f("", SP_FLAVOR_NATIVE);
+        err = sp_move_into(&nameless, &sub);
+        ASSERT(sp_path_error_code(&err) == SP_ERR_NO_NAME);
+
+        sp_unlink(&moved_txt, false);
+        sp_rmdir(&moved);
+        sp_unlink(&into, false);
+        sp_unlink(&sub_txt, false);
+        sp_rmdir(&sub);
+        sp_unlink(&txt, false);
+        sp_unlink(&hidden, false);
+        ASSERT(sp_rmdir(&root));
+    }
+    printf("  pathlib 3.15 tests OK\n");
 
     /* read_file / write_file tests */
     printf("\nread_file/write_file Tests:\n");
@@ -1637,7 +1756,7 @@ int main(void) {
     ASSERT(!sp_path_is_error(&home));
     ASSERT(home.len > 0);
     ASSERT(sp_is_absolute(&home));
-    ASSERT(sp_is_dir(&home));
+    ASSERT(sp_is_dir(&home, true));
 
     /* Test expanduser with ~ */
     SpPath tilde = sp_path_f("~", SP_FLAVOR_NATIVE);
@@ -1800,7 +1919,7 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 16);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
-    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 1816);
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 2328);
 #endif
 
     printf("  struct size tests OK\n");
