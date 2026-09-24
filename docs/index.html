@@ -182,8 +182,8 @@
       <p>The original API was created by <a href="https://peps.python.org/pep-0428/">Antoine Pitrou</a>.</p>
       <div class="language-bash highlighter-rouge">
         <div class="highlight">
-          <pre class="highlight"><code><span class="nv">u</span><span class="o">=</span>https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h <span class="o">&amp;&amp;</span> <span class="se">\</span>
-curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span class="nv">$u</span><span class="s2">"</span> <span class="o">&amp;&amp;</span> <span class="se">\</span>
+          <pre class="highlight"><code><span class="nv">u</span><span class="o">=</span>https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h <span class="o">&amp;&amp;</span>
+curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span class="nv">$u</span><span class="s2">"</span> <span class="o">&amp;&amp;</span>
 <span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="s1">'EOF'</span> | cc <span class="nt">-xc</span> - <span class="nt">-o</span> demo <span class="o">&amp;&amp;</span>
 <span class="cp">#define SP_PATH_MAX 4096</span>
 <span class="cp">#define SNAKEPATH_FLUENT</span>
@@ -195,6 +195,7 @@ curl <span class="nt">-sSLo</span> snakepath.h <span class="s2">"</span><span cl
     <span class="n">SpPath</span> <span class="n">boring</span> <span class="o">=</span> <span class="n">sp_path</span><span class="p">(</span><span class="s">"/foo/bar.txt"</span><span class="p">);</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_name</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"BORING API: %s\n"</span><span class="p">,</span> <span class="n">sp_stem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">boring</span><span class="p">).</span><span class="n">buf</span><span class="p">);</span>
+
     <span class="n">SpPath</span> <span class="n">fluent</span> <span class="o">=</span> <span class="n">SPF</span><span class="p">(</span><span class="s">"/etc"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">join</span><span class="p">(</span><span class="s">"nginx.conf"</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">();</span>
     <span class="n">printf</span><span class="p">(</span><span class="s">"FLUENT API: %s\n"</span><span class="p">,</span> <span class="n">sp_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fluent</span><span class="p">));</span>
 <span class="p">}</span>

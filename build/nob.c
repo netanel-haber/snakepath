@@ -245,15 +245,20 @@ static const char *find_python(void) {
 
 static bool run_call_depth_tests(void) {
     Nob_Cmd cmd = {0};
-    const char *python = find_python();
-    nob_cmd_append(&cmd, python, "test_call_depth.py", "../snakepath.h", "3");
+    nob_cmd_append(&cmd, find_python(), "test_call_depth.py", "../snakepath.h", "3");
+    return nob_cmd_run(&cmd);
+}
+
+/* README.md and docs/index.html must embed the same code as api_demo.c */
+static bool run_docs_check(void) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, find_python(), "check_docs.py");
     return nob_cmd_run(&cmd);
 }
 
 static bool run_python_tests(void) {
     Nob_Cmd cmd = {0};
-    const char *python = find_python();
-    nob_cmd_append(&cmd, python, "python_harness/run_cpython_tests.py");
+    nob_cmd_append(&cmd, find_python(), "python_harness/run_cpython_tests.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -407,10 +412,15 @@ int main(int argc, char **argv) {
         all_ok = false;
     }
 
-    /* Phase 3: Public call-depth tests */
+    /* Phase 3: Static checks - public call depth, docs in lockstep with api_demo.c */
     LOG_INFO( "=== Running call-depth tests ===");
     if (!run_call_depth_tests()) {
         nob_log(NOB_ERROR, "Call-depth tests failed");
+        all_ok = false;
+    }
+    LOG_INFO( "=== Checking docs ===");
+    if (!run_docs_check()) {
+        nob_log(NOB_ERROR, "Docs check failed");
         all_ok = false;
     }
 
