@@ -222,8 +222,6 @@ SpPath sp_with_suffix(const SpPath *p, const char *suffix);
 SpPath sp_relative_to(const SpPath *p, const SpPath *other);
 SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other);
 bool sp_is_relative_to(const SpPath *p, const SpPath *other);
-SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up);
-bool sp_is_relative_to_parts(const SpPath *p, const char **parts);
 
 bool sp_is_absolute(const SpPath *p);
 SpPath sp_cwd(SpFlavor flavor);
@@ -1137,16 +1135,6 @@ SpPath sp_relative_to_walk_up(const SpPath *p, const SpPath *other) {
     return sp_priv_relative_to_impl(p, other, true);
 }
 
-bool sp_is_relative_to_parts(const SpPath *p, const char **parts) {
-    SpPath r = sp_relative_to_parts(p, parts, false);
-    return !sp_path_is_error(&r);
-}
-
-SpPath sp_relative_to_parts(const SpPath *p, const char **parts, bool walk_up) {
-    SpPath other = sp_priv_join_parts(sp_priv_empty_path(p->flavor), parts, 0, true);
-    return sp_priv_relative_to_impl(p, &other, walk_up);
-}
-
 /* urllib.parse.quote: percent-encode all but letters, digits, "_.-~" and `safe`; false if buf is too small */
 static bool sp_priv_quote(const char *s, size_t len, const char *safe, char *buf, size_t buf_size, size_t *pos) {
     static const char hex[] = "0123456789ABCDEF";
@@ -1787,43 +1775,44 @@ bool sp_samefile(const SpPath *a, const SpPath *b) {
     return stat_a.valid && stat_b.valid && stat_a.sp_dev == stat_b.sp_dev && stat_a.sp_ino == stat_b.sp_ino;
 }
 
-static int sp_priv_mkdir_parents(const SpPath *p, unsigned int parent_mode) {
-    SpPath parent = sp_parent(p);
-    if (sp_path_eq(&parent, p) || parent.len == 0) return SP_OK;
-    int r = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
-    return (r == SP_ERR_EXISTS_NOT_DIR) ? SP_ERR_NOT_DIR : r;
+/* The last failed OS call's error as an SP_ERR_* code */
+static int sp_priv_last_error(void) {
+#ifdef SP_WINDOWS
+    DWORD e = GetLastError();
+    if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return SP_ERR_NOT_FOUND;
+    if (e == ERROR_ALREADY_EXISTS || e == ERROR_FILE_EXISTS) return SP_ERR_EXISTS;
+    if (e == ERROR_ACCESS_DENIED) return SP_ERR_PERMISSION;
+    if (e == ERROR_DIRECTORY) return SP_ERR_NOT_DIR;
+#else
+    if (errno == ENOENT) return SP_ERR_NOT_FOUND;
+    if (errno == EEXIST) return SP_ERR_EXISTS;
+    if (errno == EACCES || errno == EPERM) return SP_ERR_PERMISSION;
+    if (errno == ENOTDIR) return SP_ERR_NOT_DIR;
+    if (errno == EINVAL) return SP_ERR_INVALID_ARG;
+#endif
+    return SP_ERR_OTHER;
 }
 
+/* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
+ * failure is fine with exist_ok when the path is a directory (Windows reports some of those as access denied) */
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode) {
     const char *path_str;
     if (mode == 0) mode = SP_MKDIR_DEF_MODE;
     if (!sp_priv_path_cstr(p, &path_str)) return SP_ERR_OTHER_OP;
-    if (parents) {
-        int r = sp_priv_mkdir_parents(p, parent_mode);
-        if (r != SP_OK) return r;
-    }
 #ifdef SP_WINDOWS
     (void)mode;
-    DWORD attrs = GetFileAttributesA(path_str);
-    if (attrs != INVALID_FILE_ATTRIBUTES)
-        return (attrs & FILE_ATTRIBUTE_DIRECTORY) ? (exist_ok ? SP_OK : SP_ERR_EXISTS) : SP_ERR_EXISTS_NOT_DIR;
     if (CreateDirectoryA(path_str, NULL)) return SP_OK;
-    DWORD err = GetLastError();
-    if (err == ERROR_ALREADY_EXISTS) return exist_ok ? SP_OK : SP_ERR_EXISTS;
-    if (err == ERROR_PATH_NOT_FOUND) return SP_ERR_NOT_FOUND;
-    if (err == ERROR_ACCESS_DENIED) return SP_ERR_PERMISSION;
-    return SP_ERR_OTHER_OP;
 #else
-    struct stat st;
     if (mkdir(path_str, SP_PRIV_CAST(mode_t, mode)) == 0) return SP_OK;
-    if (errno == EEXIST)
-        return (stat(path_str, &st) == 0 && S_ISDIR(st.st_mode)) ? (exist_ok ? SP_OK : SP_ERR_EXISTS)
-                                                                 : SP_ERR_EXISTS_NOT_DIR;
-    if (errno == ENOENT) return SP_ERR_NOT_FOUND;
-    if (errno == EACCES || errno == EPERM) return SP_ERR_PERMISSION;
-    if (errno == ENOTDIR) return SP_ERR_NOT_DIR;
-    return SP_ERR_OTHER_OP;
 #endif
+    int err = sp_priv_last_error();
+    SpPath parent = sp_parent(p);
+    if (err == SP_ERR_NOT_FOUND && parents && !sp_path_eq(&parent, p)) {
+        err = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
+        return err == SP_OK ? sp_mkdir(p, mode, false, exist_ok, parent_mode) : err;
+    }
+    if (exist_ok && sp_is_dir(p, true)) return SP_OK;
+    return err == SP_ERR_EXISTS && !sp_is_dir(p, true) ? SP_ERR_EXISTS_NOT_DIR : err;
 }
 
 bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
@@ -1989,24 +1978,6 @@ static bool sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) 
         *out = sp_priv_join_len(dir, name, strlen(name));
         return true;
     }
-}
-
-/* The last failed OS call's error as an SP_ERR_* code */
-static int sp_priv_last_error(void) {
-#ifdef SP_WINDOWS
-    DWORD e = GetLastError();
-    if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return SP_ERR_NOT_FOUND;
-    if (e == ERROR_ALREADY_EXISTS || e == ERROR_FILE_EXISTS) return SP_ERR_EXISTS;
-    if (e == ERROR_ACCESS_DENIED) return SP_ERR_PERMISSION;
-    if (e == ERROR_DIRECTORY) return SP_ERR_NOT_DIR;
-#else
-    if (errno == ENOENT) return SP_ERR_NOT_FOUND;
-    if (errno == EEXIST) return SP_ERR_EXISTS;
-    if (errno == EACCES || errno == EPERM) return SP_ERR_PERMISSION;
-    if (errno == ENOTDIR) return SP_ERR_NOT_DIR;
-    if (errno == EINVAL) return SP_ERR_INVALID_ARG;
-#endif
-    return SP_ERR_OTHER;
 }
 
 /* CPython's _copy_info for local paths: access and modification times, then permissions */
@@ -2479,23 +2450,13 @@ static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow
 
     if (top_down && !callback(&entry)) return false;
 
-    char (*next_dirs)[SP_WALK_NAME_MAX] = top_down ? entry.dirnames : dirnames;
-    size_t next_count = top_down ? entry.dirname_count : dirname_count;
-    for (size_t i = 0; i < next_count; i++) {
-        SpPath subdir = sp_priv_join_len(dir, next_dirs[i], strlen(next_dirs[i]));
+    /* Top-down callbacks may prune entry.dirname_count */
+    for (size_t i = 0; i < entry.dirname_count; i++) {
+        SpPath subdir = sp_priv_join_len(dir, dirnames[i], strlen(dirnames[i]));
         if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
             return false;
     }
-
-    if (!top_down) {
-        sp_priv_walk_scan(dir, follow_symlinks, dirnames, &dirname_count, filenames, &filename_count);
-        entry.dirname_count = dirname_count;
-        entry.filename_count = filename_count;
-
-        if (!callback(&entry)) return false;
-    }
-
-    return true;
+    return top_down || callback(&entry);
 }
 
 bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks,
