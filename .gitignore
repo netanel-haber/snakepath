@@ -1,25 +1,33 @@
+# Build outputs (POSIX binaries have no extension)
 build/nob
 build/nob.old
-*.o
-*.dSYM/
-api_demo
-
-# Python
-__pycache__/
-*.pyc
-
-# Tests
-build/python_harness/cpython_tests/
-build/python_harness/libsnakepath.so
-build/python_harness/snakepath.dll
 build/test_gcc
 build/test_clang
 build/test_gcc_san
 build/test_clang_san
 build/test_gpp
 build/test_clangpp
-build/test_fluent_*
-build/test_msvc*
+build/test_fluent_gcc
+build/test_fluent_clang
+build/python_harness/libsnakepath.so
+api_demo
+*.o
+*.dSYM/
+
+# MSVC outputs (tests, demo, nob, and the Python DLL with its .lib/.exp)
+*.exe
+*.exe.old
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+
+# Python
+__pycache__/
+*.pyc
+build/python_harness/cpython_tests/
 
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp
