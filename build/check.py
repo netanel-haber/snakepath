@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Checks run by nob: public call depth in snakepath.h, and docs/index.html and README.md
-embedding the same code (README.md embedding api_demo.c verbatim)."""
+"""Checks run by nob: public call depth in snakepath.h, and docs/README.md (also the
+website) embedding api_demo.c verbatim."""
 from __future__ import annotations
 
-import html
 import re
 import sys
 from pathlib import Path
@@ -74,12 +73,8 @@ def longest_path_from(start: str, graph: dict[str, set[str]]) -> list[str]:
 
 
 def check_docs(root: Path) -> int:
-    demo = (root / "api_demo.c").read_text(encoding="utf-8")
-    readme = re.findall(r"```\w*\n(.*?)```", (root / "README.md").read_text(encoding="utf-8"), re.S)
-    page = [html.unescape(re.sub(r"<[^>]+>", "", block)) for block in
-            re.findall(r"<pre[^>]*>(.*?)</pre>", (root / "docs/index.html").read_text(encoding="utf-8"), re.S)]
-    ok = demo in readme and [b.rstrip("\n") for b in readme] == [b.rstrip("\n") for b in page]
-    print("docs check: OK" if ok else "docs check: FAILED (README.md, docs/index.html and api_demo.c code differ)")
+    ok = (root / "api_demo.c").read_text(encoding="utf-8") in (root / "docs/README.md").read_text(encoding="utf-8")
+    print("docs check: OK" if ok else "docs check: FAILED (docs/README.md does not embed api_demo.c verbatim)")
     return 0 if ok else 1
 
 

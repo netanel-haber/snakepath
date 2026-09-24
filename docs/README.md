@@ -1,11 +1,10 @@
-Snakepath:
-C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes [CPython 3.12's own test suite](build/run_cpython_tests.py).
+C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes CPython 3.12's own test suite.
 POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
 Vibe-coded with Claude Code + Cursor.
 
 The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
 
-```c
+```bash
 u=https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &&
 curl -sSLo snakepath.h "$u" &&
 cat <<'EOF' | cc -xc - -o demo &&
@@ -36,7 +35,7 @@ cc -o build/nob build/nob.c && ./build/nob
 
 
 <details markdown="1">
-<summary>Snakepath API Reference (<a href="api_demo.c">api_demo.c</a>)</summary>
+<summary>Snakepath API Reference (<a href="https://github.com/netanel-haber/snakepath/blob/main/api_demo.c">api_demo.c</a>)</summary>
 
 ```c
 /* compile: cc api_demo.c -o api_demo && ./api_demo
@@ -415,4 +414,4 @@ SOFTWARE.
 </details>
 
 
-<img height="200px" src="./docs/snakepath.png" alt="snake ascii art that also looks like a path"/>
+<img height="200px" src="./snakepath.png" alt="snake ascii art that also looks like a path"/>
