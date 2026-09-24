@@ -52,12 +52,6 @@ extern "C" {
 #define SP_MAX_SUFFIXES 16
 #endif
 
-#define SP_ERR_NONE '\x00'         /* No error (or empty path) */
-#define SP_ERR_NOT_RELATIVE '\x01' /* Not relative to other path */
-#define SP_ERR_NO_NAME '\x02'      /* Path has no usable name */
-#define SP_ERR_INVALID_ARG '\x03'  /* Invalid argument (name/stem/suffix) */
-#define SP_ERR_OTHER '\x04'        /* Other error (I/O, permission, etc.) */
-
 #define SP_MATCH_YES 1          /* Pattern matched */
 #define SP_MATCH_NO 0           /* Pattern did not match */
 #define SP_MATCH_ERR_EMPTY -1   /* Empty pattern */
@@ -289,6 +283,8 @@ bool sp_samefile(const SpPath *a, const SpPath *b);
 
 int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok);  /* returns SP_OK / SP_ERR_* */
 
+/* One code space for operation results and failed SpPath results (sp_path_error_code),
+ * so sp_error_str() describes either */
 enum {
     SP_OK = 0,
     SP_ERR,
@@ -301,7 +297,12 @@ enum {
     SP_ERR_READ,
     SP_ERR_WRITE,
     SP_ERR_TOO_LARGE,
-    SP_ERR_OTHER_OP
+    SP_ERR_OTHER_OP,
+    SP_ERR_NOT_RELATIVE,  /* Not relative to other path */
+    SP_ERR_NO_NAME,       /* Path has no usable name */
+    SP_ERR_INVALID_ARG,   /* Invalid argument (name/stem/suffix) */
+    SP_ERR_NONE = SP_OK,  /* No error (or empty path) */
+    SP_ERR_OTHER = SP_ERR /* Other error (I/O, permission, etc.) */
 };
 
 const char *sp_error_str(int error);
@@ -780,9 +781,9 @@ static void sp_priv_normalize(char *buf, size_t *len, SpFlavor flavor) {
     *len = j;
 }
 
-static inline SpPath sp_priv_error_path(SpFlavor flavor, char err_code) {
+static inline SpPath sp_priv_error_path(SpFlavor flavor, int err_code) {
     SpPath p = sp_priv_empty_path(flavor);
-    p.buf[0] = err_code;
+    p.buf[0] = SP_PRIV_CAST(char, err_code);
     return p;
 }
 
@@ -1908,7 +1909,8 @@ const char *sp_error_str(int error) {
         "Success", "Operation failed", "File exists",
         "No such file or directory", "Not a directory", "Permission denied",
         "Path exists but is not a directory", "Could not open file", "Read failed",
-        "Write failed", "File too large for buffer", "Unknown error"
+        "Write failed", "File too large for buffer", "Unknown error",
+        "Path is not relative to the other path", "Path has an empty name", "Invalid argument"
     };
     return (error >= 0 && error < SP_PRIV_CAST(int, SP_ARRAY_LEN(messages))) ? messages[error] : "Unknown error";
 }
