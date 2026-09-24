@@ -1571,6 +1571,17 @@ int main(void) {
         ASSERT(!sp_full_match(&w, "C:/A/*.pY", 1));
         ASSERT(sp_match_ex(&w, "*:/*/*.py", -1) == SP_MATCH_YES);
         ASSERT_PATH(sp_path_f("//a//b", SP_FLAVOR_WINDOWS), "\\\\a\\\\b"); /* //server/share with an empty share */
+        SpPath dotted = sp_path_f("a/x.", SP_FLAVOR_POSIX), back = sp_path_f("a\\b", SP_FLAVOR_POSIX);
+        ASSERT_TERM(sp_suffix(&dotted), ".");                     /* a trailing dot is a suffix */
+        ASSERT_TERM(sp_stem(&dotted), "x");
+        ASSERT_PATH(sp_with_suffix(&dotted, "."), "a/x.");
+        { char posix[16]; sp_as_posix(&back, posix, sizeof(posix)); ASSERT(strcmp(posix, "a\\b") == 0); }
+        SpPath dotdot = sp_path_f("../a/b", SP_FLAVOR_POSIX), up = sp_path_f("../c", SP_FLAVOR_POSIX);
+        ASSERT_PATH(sp_relative_to_walk_up(&dotdot, &up), "../a/b"); /* ".." shared by both is not walked */
+        SpPath dot = sp_path_f("", SP_FLAVOR_POSIX), star = sp_path_f("*", SP_FLAVOR_POSIX);
+        ASSERT(sp_path_cmp(&dot, &star) > 0);                     /* compares "." with "*", part by part */
+        SpPath protected_drive = sp_path_f("./c:", SP_FLAVOR_WINDOWS);
+        ASSERT_PATH(sp_parent(&protected_drive), ".");
     }
     {
         char buf[SP_PATH_MAX * 3];

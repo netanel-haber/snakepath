@@ -595,8 +595,8 @@ static int sp_priv_str_cmp_case(const char *a, size_t alen, const char *b, size_
     size_t min_len = alen < blen ? alen : blen;
     if (case_insensitive) {
         for (size_t i = 0; i < min_len; i++) {
-            char ca = sp_priv_tolower(a[i]);
-            char cb = sp_priv_tolower(b[i]);
+            unsigned char ca = SP_PRIV_CAST(unsigned char, sp_priv_tolower(a[i]));
+            unsigned char cb = SP_PRIV_CAST(unsigned char, sp_priv_tolower(b[i]));
             if (ca != cb) return ca < cb ? -1 : 1;
         }
     } else {
@@ -738,6 +738,8 @@ static inline size_t sp_priv_parent_len_raw(const char *buf, size_t len, SpFlavo
     if (len <= anchor) return len;
     size_t i = sp_priv_rfind_sep(buf, len, anchor, flavor);
     if (i > anchor) i--;
+    /* The "." protecting a drive-like part ('.\c:') is not a parent of its own: the parent is the empty path */
+    if (anchor == 0 && i == 1 && buf[0] == '.') return 0;
     return i <= anchor ? anchor : i;
 }
 
@@ -781,7 +783,7 @@ void sp_as_posix(const SpPath *p, char *out, size_t out_size) {
     }
     size_t n = p->len < out_size - 1 ? p->len : out_size - 1;
     for (size_t i = 0; i < n; i++) {
-        out[i] = (p->buf[i] == '\\') ? '/' : p->buf[i];
+        out[i] = (p->buf[i] == sp_priv_sep(p->flavor)) ? '/' : p->buf[i];
     }
     out[n] = '\0';
 }
@@ -818,14 +820,13 @@ SpTerm sp_name(const SpPath *p) {
     return sp_priv_term(sv.data, sv.len);
 }
 
+/* From the last '.' after the name's leading dots; "a." has suffix "." */
 static inline SpStr sp_priv_suffix_sv(SpStr name) {
     size_t lead = 0;
     while (lead < name.len && name.data[lead] == '.') lead++;
-    if (lead == name.len) return SP_PRIV_STR(SP_PRIV_NULL, 0); /* empty or all dots */
     size_t i = name.len;
-    while (i > 0 && name.data[i - 1] != '.') i--;
-    if (i <= 1 || i == name.len) return SP_PRIV_STR(SP_PRIV_NULL, 0);
-    return SP_PRIV_STR(name.data + i - 1, name.len - i + 1);
+    while (i > lead && name.data[i - 1] != '.') i--;
+    return i > lead ? SP_PRIV_STR(name.data + i - 1, name.len - i + 1) : SP_PRIV_STR(SP_PRIV_NULL, 0);
 }
 
 SpTerm sp_suffix(const SpPath *p) {
@@ -846,16 +847,15 @@ SpSuffixes sp_suffixes(const SpPath *p) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpSuffixes r = SP_PRIV_ZERO;
     SpStr name = sp_priv_name_sv(p);
-    if (name.len == 0 || name.data[name.len - 1] == '.') return r;
-    size_t i = (name.data[0] == '.') ? 1 : 0;
+    /* Each '.' after the leading dots starts a suffix, even an empty one ("a..b" -> ".", ".b") */
+    size_t i = 0;
+    while (i < name.len && name.data[i] == '.') i++;
+    while (i < name.len && name.data[i] != '.') i++;
     while (i < name.len && r.count < SP_MAX_SUFFIXES) {
-        size_t dot = i;
-        while (dot < name.len && name.data[dot] != '.') dot++;
-        if (dot >= name.len) break;
-        r.items[r.count].data = name.data + dot;
-        size_t end = dot + 1;
+        size_t end = i + 1;
         while (end < name.len && name.data[end] != '.') end++;
-        r.items[r.count++].len = end - dot;
+        r.items[r.count].data = name.data + i;
+        r.items[r.count++].len = end - i;
         i = end;
     }
     return r;
@@ -1011,12 +1011,6 @@ SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count)
     return sp_priv_join_parts(sp_priv_empty_path(p->flavor), parts, parts_count, false);
 }
 
-static bool sp_priv_is_valid_name(const char *s, size_t len, SpFlavor flavor) {
-    if (len == 0) return false;
-    if (s[0] == '.' && (len == 1 || (len == 2 && s[1] == '.'))) return false;
-    return sp_priv_find_sep(s, len, 0, flavor) == len;
-}
-
 static SpPath sp_priv_with_name_impl(const SpPath *p, const char *name, size_t nlen) {
     SpPath r = sp_parent(p);
 
@@ -1030,46 +1024,36 @@ static SpPath sp_priv_with_name_impl(const SpPath *p, const char *name, size_t n
     return r;
 }
 
+/* with_name(head + tail), where the name must be non-empty, not "." and free of separators */
 static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
+    if (sp_priv_name_sv(p).len == 0) return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
     char name[SP_PATH_MAX];
     size_t len = sp_priv_copy_trunc(name, SP_PATH_MAX, head.data, head.len);
     len += sp_priv_copy_trunc(name + len, SP_PATH_MAX - len, tail.data, tail.len);
+    if (len == 0 || (len == 1 && name[0] == '.') || sp_priv_find_sep(name, len, 0, p->flavor) < len)
+        return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
     return sp_priv_with_name_impl(p, name, len);
 }
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_name_sv(p).len == 0) return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
-    size_t nlen = strlen(name);
-    if (!sp_priv_is_valid_name(name, nlen, p->flavor)) return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-    return sp_priv_with_name_impl(p, name, nlen);
+    return sp_priv_with_name_parts(p, SP_PRIV_STR(name, strlen(name)), SP_PRIV_STR(SP_PRIV_NULL, 0));
 }
 
 SpPath sp_with_stem(const SpPath *p, const char *stem) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_name_sv(p).len == 0) return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
-    size_t slen = strlen(stem);
-    if (!sp_priv_is_valid_name(stem, slen, p->flavor)) return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-
-    return sp_priv_with_name_parts(p, SP_PRIV_STR(stem, slen), sp_priv_suffix_sv(sp_priv_name_sv(p)));
+    SpStr suffix = sp_priv_suffix_sv(sp_priv_name_sv(p));
+    /* A non-empty suffix needs a non-empty stem */
+    if (suffix.len > 0 && stem[0] == '\0') return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
+    return sp_priv_with_name_parts(p, SP_PRIV_STR(stem, strlen(stem)), suffix);
 }
 
 SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
     SP_ASSERT_PATH_INVARIANT(p);
-    if (sp_priv_name_sv(p).len == 0) return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
-    size_t suflen = strlen(suffix);
-    if (suflen > 0 && (suffix[0] != '.' || suflen == 1 ||
-                       sp_priv_find_sep(suffix, suflen, 0, p->flavor) < suflen ||
-                       (sp_priv_is_windows_flavor(p->flavor) && suffix[1] == ':')))
-        return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-
-    SpStr name_sv = sp_priv_name_sv(p);
-    SpStr suf = sp_priv_suffix_sv(name_sv);
-    return sp_priv_with_name_parts(
-        p,
-        SP_PRIV_STR(name_sv.data, name_sv.len - suf.len),
-        SP_PRIV_STR(suffix, suflen)
-    );
+    if (suffix[0] != '\0' && suffix[0] != '.') return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
+    SpStr name = sp_priv_name_sv(p);
+    return sp_priv_with_name_parts(p, SP_PRIV_STR(name.data, name.len - sp_priv_suffix_sv(name).len),
+                                   SP_PRIV_STR(suffix, strlen(suffix)));
 }
 
 bool sp_is_absolute(const SpPath *p) {
@@ -1103,37 +1087,36 @@ static size_t sp_priv_collect_parts(const SpPath *p, SpStr *out, size_t max) {
     return n;
 }
 
+/* CPython walks `other` and its parents up to the first that is p or one of p's parents, stepping out with ".."
+ * (walk_up only, and never over a ".." part). The result is p's remaining parts. */
 static SpPath sp_priv_relative_to_impl(const SpPath *p, const SpPath *other, bool walk_up) {
     SpStr p_parts[SP_PATH_MAX / 2], o_parts[SP_PATH_MAX / 2];
-    size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2);
+    size_t p_count = sp_priv_collect_parts(p, p_parts, SP_PATH_MAX / 2); /* anchor first, if any */
     size_t o_count = sp_priv_collect_parts(other, o_parts, SP_PATH_MAX / 2);
-
-    if (walk_up) {
-        for (size_t i = 0; i < o_count; i++)
-            if (o_parts[i].len == 2 && o_parts[i].data[0] == '.' && o_parts[i].data[1] == '.')
-                return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
+    bool o_anchored = sp_priv_anchor_len(other->buf, other->len, other->flavor) > 0;
+    bool same_anchoring = (sp_priv_anchor_len(p->buf, p->len, p->flavor) > 0) == o_anchored;
+    size_t ups = 0, k = o_count;
+    for (;; k--) {
+        size_t same = 0;
+        while (same < k && same < p_count && sp_priv_sv_eq_flavor(p_parts[same], o_parts[same], p->flavor)) same++;
+        if (same_anchoring && same == k) break;
+        if (!walk_up || k == o_anchored || (o_parts[k - 1].len == 2 && memcmp(o_parts[k - 1].data, "..", 2) == 0))
+            return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
+        ups++;
     }
-
-    /* Anchors must both be absent, or both present and equal */
-    size_t p_anchor = sp_priv_anchor_len(p->buf, p->len, p->flavor);
-    size_t o_anchor = sp_priv_anchor_len(other->buf, other->len, other->flavor);
-    if ((p_anchor > 0) != (o_anchor > 0) ||
-        !sp_priv_sv_eq_flavor(SP_PRIV_STR(p->buf, p_anchor), SP_PRIV_STR(other->buf, o_anchor), p->flavor))
-        return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
-
-    size_t common = 0;
-    while (common < p_count && common < o_count && sp_priv_sv_eq_flavor(p_parts[common], o_parts[common], p->flavor))
-        common++;
-
-    if (!walk_up && common < o_count) return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
-
-    /* Anchored paths share their anchor part here (anchors matched above), so common >= 1 */
-    SpPath r = sp_priv_empty_path(p->flavor);
-    for (size_t i = common; i < o_count; i++)
-        r = sp_priv_join_len(&r, "..", 2);
-    for (size_t i = common; i < p_count; i++)
-        r = sp_priv_join_len(&r, p_parts[i].data, p_parts[i].len);
-    return r;
+    /* Parts joined by separators, behind a "." if the first would parse as a drive */
+    char buf[SP_PATH_MAX];
+    size_t len = 0;
+    if (ups == 0 && k < p_count && sp_priv_has_drive(p_parts[k].data, p_parts[k].len, p->flavor)) {
+        buf[len++] = '.';
+        buf[len++] = sp_priv_sep(p->flavor);
+    }
+    for (size_t i = 0; i < ups + p_count - k; i++) {
+        SpStr part = i < ups ? SP_PRIV_STR("..", 2) : p_parts[k + i - ups];
+        if (i > 0 && len + 1 < SP_PATH_MAX) buf[len++] = sp_priv_sep(p->flavor);
+        len += sp_priv_copy_trunc(buf + len, SP_PATH_MAX - len, part.data, part.len);
+    }
+    return sp_priv_path_from_raw(buf, len, p->flavor);
 }
 
 bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
@@ -1285,10 +1268,23 @@ bool sp_path_eq(const SpPath *a, const SpPath *b) {
     return a->flavor == b->flavor && sp_path_cmp(a, b) == 0;
 }
 
+/* Like CPython: compare the separator-split parts of str() ("." when empty), case-folded on Windows */
 int sp_path_cmp(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
     SP_ASSERT_PATH_INVARIANT(b);
-    return sp_priv_str_cmp_flavor(a->buf, a->len, b->buf, b->len, a->flavor);
+    const char *sa = a->len ? a->buf : ".", *sb = b->len ? b->buf : ".";
+    size_t la = a->len ? a->len : 1, lb = b->len ? b->len : 1, i = 0, j = 0;
+    char sep = sp_priv_sep(a->flavor);
+    for (;;) {
+        size_t ea = i, eb = j;
+        while (ea < la && sa[ea] != sep) ea++;
+        while (eb < lb && sb[eb] != sep) eb++;
+        int c = sp_priv_str_cmp_flavor(sa + i, ea - i, sb + j, eb - j, a->flavor);
+        if (c != 0) return c;
+        if (ea == la || eb == lb) return (eb == lb) - (ea == la); /* the path with fewer parts sorts first */
+        i = ea + 1;
+        j = eb + 1;
+    }
 }
 
 unsigned long sp_path_hash(const SpPath *p) {
