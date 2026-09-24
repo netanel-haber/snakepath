@@ -162,26 +162,13 @@ static bool build_source_async(BuildConfig cfg, const char *source, const char *
     }
 
     nob_cmd_append(&cmd, source);
-
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run(&cmd, .async = procs);  /* NULL procs runs synchronously */
 }
 
 static bool run_test_async(const char *exe, Nob_Procs *procs) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, exe);
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run(&cmd, .async = procs);
 }
 
 #ifndef _WIN32
@@ -241,13 +228,7 @@ static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
     nob_cmd_append(&cmd, "python_harness/snakepath_lib.c");
 #endif
 
-    bool result;
-    if (procs) {
-        result = nob_cmd_run(&cmd, .async = procs);
-    } else {
-        result = nob_cmd_run(&cmd);
-    }
-    return result;
+    return nob_cmd_run(&cmd, .async = procs);
 }
 
 /* Run Python tests */
@@ -442,11 +423,10 @@ int main(int argc, char **argv) {
 #endif
 
     /* Wait for all builds to complete */
-    if (!nob_procs_wait(procs)) {
+    if (!nob_procs_flush(&procs)) {
         nob_log(NOB_ERROR, "Some builds failed");
         all_ok = false;
     }
-    procs.count = 0;
 
     if (!all_ok) goto end;
 
@@ -463,11 +443,10 @@ int main(int argc, char **argv) {
         run_test_async(fluent_configs[i].output, &procs);
     }
 
-    if (!nob_procs_wait(procs)) {
+    if (!nob_procs_flush(&procs)) {
         nob_log(NOB_ERROR, "Some tests failed");
         all_ok = false;
     }
-    procs.count = 0;
 
     /* Phase 3: Public call-depth tests */
     LOG_INFO( "=== Running call-depth tests ===");
