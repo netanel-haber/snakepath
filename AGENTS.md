@@ -99,3 +99,5 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - `nob.h` is the build script plus upstream nob trimmed to what it uses (see its header). If it needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
 - Public API call depth is now enforced by `snakepath.py` (limit = 3 public frames); keep wrapper chains flat and favor `sp_priv_*` delegation.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
+- The Python harness runs CPython 3.15's `test_pathlib.py`. Python-only machinery (`info`, `pathlib.types`, pickling, private hooks, mocks of Python functions) goes in `EXPECTED_FAILURES`, never into C.
+- For semantics work, differentially fuzz the bindings against the real `pathlib` (random paths/patterns, compare results); the CPython suite alone misses many edge cases.

@@ -158,6 +158,10 @@ int main(void) {
     /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
     printf("  match *.gz:     %d\n", SP_MATCH(&p, "*.gz"));
 
+    /* .full_match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.full_match */
+    printf("  full_match:     %d\n", sp_full_match(&p, "/**/*.gz", -1));
+    printf("  (fluent)        %d\n", SPF_PATH(p)->full_match("/**/*.gz"));
+
     printf("  is_reserved:    %d\n", sp_is_reserved(&p));
 
     /* ── Comparison ────────────────────────────────────────────── */
@@ -186,6 +190,10 @@ int main(void) {
     char uri_buf[SP_PATH_MAX];
     sp_as_uri(&p, uri_buf, sizeof(uri_buf));
     printf("  as_uri:   %s\n", uri_buf);
+
+    /* Path.from_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.from_uri */
+    tmp = sp_from_uri("file:///etc/hosts", SP_FLAVOR_POSIX);
+    printf("  from_uri: %s\n", sp_str(&tmp));
 
     SpPath converted = sp_path_convert("C:\\Users\\dev", SP_FLAVOR_WINDOWS, SP_FLAVOR_POSIX);
     printf("  convert:  %s\n", sp_str(&converted));
@@ -233,14 +241,15 @@ int main(void) {
     section("Type Checks");
 
     /* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists */
-    printf("  exists:     %d\n", sp_exists(&cwd));
-    printf("  (fluent)    %d\n", SPF_PATH(cwd)->exists());
+    printf("  exists:     %d\n", sp_exists(&cwd, true));
+    printf("  (fluent)    %d\n", SPF_PATH(cwd)->exists(true));
 
-    /* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir */
-    printf("  is_dir:     %d\n", sp_is_dir(&cwd));
+    /* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir
+     * exists, is_dir and is_file take follow_symlinks */
+    printf("  is_dir:     %d\n", sp_is_dir(&cwd, true));
 
     /* .is_file https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file */
-    printf("  is_file:    %d\n", sp_is_file(&cwd));
+    printf("  is_file:    %d\n", sp_is_file(&cwd, true));
 
     /* .is_symlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink */
     printf("  is_symlink: %d\n", sp_is_symlink(&cwd));
@@ -260,7 +269,7 @@ int main(void) {
     SpPath tmpfile = sp_join_one(&tmpdir, "hello.txt");
 
     /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
-    sp_mkdir(&subdir, 0755, true, true);
+    sp_mkdir(&subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
     printf("  mkdir:   demo_tmp/sub/\n");
 
     /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
@@ -281,6 +290,18 @@ int main(void) {
     SpPath renamed = sp_join_one(&tmpdir, "renamed.txt");
     sp_rename(&tmpfile, &renamed);
     printf("  rename:  hello.txt -> renamed.txt\n");
+
+    /* .copy https://docs.python.org/3/library/pathlib.html#pathlib.Path.copy (recursive for directories) */
+    SpPath copied = sp_join_one(&tmpdir, "copy.txt");
+    sp_copy(&renamed, &copied, true, false); /* follow_symlinks, preserve_metadata */
+    printf("  copy:    renamed.txt -> copy.txt\n");
+
+    /* .move_into https://docs.python.org/3/library/pathlib.html#pathlib.Path.move_into
+     * Also: sp_copy_into, sp_move (renames, or copies and deletes across filesystems) */
+    SpPath moved = sp_move_into(&copied, &subdir);
+    printf("  move_into: %s\n", sp_str(&moved));
+    tmp = SPF_PATH(moved)->move(&copied)->path();
+    printf("  (fluent move) %s\n", sp_str(&tmp));
 
     /* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */
     sp_chmod(&renamed, 0600);
@@ -319,6 +340,12 @@ int main(void) {
     SP_GLOB_FOREACH(&tmpdir, "*.txt", match)
         printf("  glob:    %s\n", sp_str(&match));
 
+    /* sp_glob_begin/next/end: case sensitivity, recurse_symlinks, and it.error for bad patterns */
+    SpGlobIter git = sp_glob_begin(&tmpdir, "**/", SP_CASE_SENSITIVE, false);
+    for (SpPath dir; sp_glob_next(&git, &dir);)
+        printf("  glob **/: %s\n", sp_str(&dir));
+    sp_glob_end(&git);
+
     /* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob */
     SP_RGLOB_FOREACH(&tmpdir, "*.txt", match)
         printf("  rglob:   %s\n", sp_str(&match));
@@ -340,6 +367,7 @@ int main(void) {
         printf("  with_name(\"/\", \"x\"): %s\n", sp_error_str(sp_path_error_code(&err)));
 
     sp_unlink(&link, false);
+    sp_unlink(&copied, false);
     sp_unlink(&renamed, false);
     sp_rmdir(&subdir);
     sp_rmdir(&tmpdir);
