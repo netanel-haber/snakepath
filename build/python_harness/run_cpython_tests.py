@@ -274,79 +274,6 @@ def setup_pathlib_patch(testfn=None):
 
 
 
-class QuietExpectedFailuresResult(unittest.TextTestResult):
-    """Custom TestResult that suppresses output for expected failures."""
-
-    def _is_expected(self, test, err):
-        """Check if this failure/error is expected."""
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
-        if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            # Format the error to check against expected message
-            err_str = self._exc_info_to_string(err, test)
-            return expected_msg in err_str
-        return False
-
-    def addError(self, test, err):
-        """Called when a test raises an unexpected exception."""
-        if self._is_expected(test, err):
-            # Silently record as expected
-            self.errors.append((test, self._exc_info_to_string(err, test)))
-            if self.showAll:
-                self.stream.writeln("expected error")
-            elif self.dots:
-                self.stream.write('x')
-                self.stream.flush()
-        else:
-            super().addError(test, err)
-
-    def addFailure(self, test, err):
-        """Called when a test fails."""
-        if self._is_expected(test, err):
-            # Silently record as expected
-            self.failures.append((test, self._exc_info_to_string(err, test)))
-            if self.showAll:
-                self.stream.writeln("expected failure")
-            elif self.dots:
-                self.stream.write('x')
-                self.stream.flush()
-        else:
-            super().addFailure(test, err)
-
-    def printErrors(self):
-        """Only print unexpected errors."""
-        unexpected_errors = []
-        unexpected_failures = []
-
-        for test, err in self.errors:
-            test_class = test.__class__.__name__
-            test_method = test._testMethodName
-            key = (test_class, test_method)
-            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
-                continue
-            unexpected_errors.append((test, err))
-
-        for test, err in self.failures:
-            test_class = test.__class__.__name__
-            test_method = test._testMethodName
-            key = (test_class, test_method)
-            if key in _EXPECTED_FAILURES_BY_TEST and _EXPECTED_FAILURES_BY_TEST[key] in err:
-                continue
-            unexpected_failures.append((test, err))
-
-        if unexpected_errors or unexpected_failures:
-            self.stream.writeln()
-            self.printErrorList('ERROR', unexpected_errors)
-            self.printErrorList('FAIL', unexpected_failures)
-
-
-class QuietRunner(unittest.TextTestRunner):
-    """Test runner that uses QuietExpectedFailuresResult."""
-    resultclass = QuietExpectedFailuresResult
-
-
 def run_single_class(class_info):
     """Run a single test class in a subprocess. Returns (class_name, results_dict)."""
     import os
@@ -382,7 +309,7 @@ def run_single_class(class_info):
     # Run with a stream that captures output
     import io
     stream = io.StringIO()
-    runner = QuietRunner(stream=stream, verbosity=0)
+    runner = unittest.TextTestRunner(stream=stream, verbosity=0)
     result = runner.run(suite)
 
     # Cleanup unique temp directory
@@ -445,89 +372,39 @@ def run_tests():
     with ctx.Pool(num_workers) as pool:
         results_list = pool.map(run_single_class, test_classes)
 
-    # Aggregate results
-    class AggregatedResult:
-        def __init__(self):
-            self.testsRun = 0
-            self.failures = []
-            self.errors = []
-            self.skipped = []
-
-    result = AggregatedResult()
-
-    # Create mock test objects for the results
-    class MockTest:
-        def __init__(self, class_name, method_name):
-            self._testMethodName = method_name
-            self.__class__ = type(class_name, (), {'__name__': class_name})
-
+    # Aggregate (class_name, method_name, traceback) tuples from all classes
+    tests_run, failures, errors, skipped = 0, [], [], []
     for class_name, res in results_list:
         if 'error' in res:
             print(f"  ERROR in {class_name}: {res['error']}")
             continue
+        tests_run += res['tests_run']
+        failures += res['failures']
+        errors += res['errors']
+        skipped += res['skipped']
 
-        result.testsRun += res['tests_run']
-
-        for cls, method, tb in res['failures']:
-            mock = MockTest(cls, method)
-            result.failures.append((mock, tb))
-
-        for cls, method, tb in res['errors']:
-            mock = MockTest(cls, method)
-            result.errors.append((mock, tb))
-
-        for cls, method, tb in res['skipped']:
-            mock = MockTest(cls, method)
-            result.skipped.append((mock, tb))
-
-    # Check expected failures, grouped by reason
+    # Expected failures must fail for their documented reason; anything else is unexpected
     expected_by_reason = {}  # reason -> list of test names
-    unexpected_failures = []
-    unexpected_errors = []
+    def unexpected(results):
+        out = []
+        for cls, method, tb in results:
+            reason = _EXPECTED_FAILURES_BY_TEST.get((cls, method))
+            if reason is not None and reason in tb:
+                expected_by_reason.setdefault(reason, []).append(f"{cls}.{method}")
+            else:
+                out.append((f"{cls}.{method}", tb))
+        return out
+    unexpected_failures = unexpected(failures)
+    unexpected_errors = unexpected(errors)
 
-    for test, traceback in result.failures:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
-        if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            if expected_msg in traceback:
-                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
-                continue
-        unexpected_failures.append((test, traceback))
-
-    for test, traceback in result.errors:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        key = (test_class, test_method)
-        if key in _EXPECTED_FAILURES_BY_TEST:
-            expected_msg = _EXPECTED_FAILURES_BY_TEST[key]
-            if expected_msg in traceback:
-                expected_by_reason.setdefault(expected_msg, []).append(f"{test_class}.{test_method}")
-                continue
-        unexpected_errors.append((test, traceback))
-
-    # Check for unexpected successes (tests in EXPECTED_FAILURES that passed)
-    failed_keys = set()
-    for test, _ in result.failures + result.errors:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        failed_keys.add((test_class, test_method))
-
-    skipped_keys = set()
-    for test, _ in result.skipped:
-        test_class = test.__class__.__name__
-        test_method = test._testMethodName
-        skipped_keys.add((test_class, test_method))
-
-    unexpected_successes = []
-    for key in _EXPECTED_FAILURES_BY_TEST:
-        if key not in failed_keys and key not in skipped_keys:
-            unexpected_successes.append(f"{key[0]}.{key[1]}")
+    # Expected failures that neither failed nor were skipped passed unexpectedly
+    not_passed = {(cls, method) for cls, method, _ in failures + errors + skipped}
+    unexpected_successes = [f"{cls}.{method}" for cls, method in _EXPECTED_FAILURES_BY_TEST
+                            if (cls, method) not in not_passed]
 
     # Summary
     expected_total = sum(len(tests) for tests in expected_by_reason.values())
-    print(f"\nRan {result.testsRun} tests, {expected_total} expected failures")
+    print(f"\nRan {tests_run} tests, {expected_total} expected failures")
 
     if expected_by_reason:
         print("\nExpected failures by reason:")
