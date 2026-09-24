@@ -1,4 +1,4 @@
-# Claude Code Guidelines for snakepath
+# Agent Guidelines for snakepath
 
 C99 STB-style header-only pathlib port. No malloc, POSIX + Windows. All code in `snakepath.h`.
 
