@@ -4,8 +4,8 @@ snakepath - Python bindings for the snakepath C library, and the checks nob runs
 Import it for PurePath/PurePosixPath/PureWindowsPath/Path/PosixPath/WindowsPath, compatible with
 Python's pathlib and backed by the C library (test.c built with -DSP_FFI).
 
-Run it (nob does: python snakepath.py) to check public call depth in snakepath.h and that
-README.md embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these classes.
+Run it (nob does: python snakepath.py) to check snakepath.h's real call depth and that README.md
+embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these classes.
 """
 
 import ctypes
@@ -13,6 +13,7 @@ import errno
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import unittest
 import urllib.request
@@ -970,119 +971,101 @@ __all__ = [
 
 # ============ Checks and CPython's pathlib tests (python snakepath.py) ============
 
-FUNC_RE = re.compile(
-    r"^\s*(?:static\s+inline\s+|static\s+)?(?:[A-Za-z_][\w\s\*]*\s+)?(sp_[A-Za-z0-9_]+)\s*\("
-)
-CALL_RE = re.compile(r"\b(sp_[A-Za-z0-9_]+)\s*\(")
+TOKEN_RE = re.compile(r"[A-Za-z_]\w*|[{}();]")
+LITERAL_RE = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'")
 
 
-def collect_definitions(lines: list[str]) -> dict[str, tuple[int, int]]:
-    definitions: dict[str, tuple[int, int]] = {}
+def preprocessed_library(header: pathlib.Path) -> str:
+    """The header with its implementation and fluent API, as the compiler sees it"""
+    defines = ["SNAKEPATH_IMPLEMENTATION", "SNAKEPATH_FLUENT", "SP_PATH_MAX=4096"]
+    if os.name == "nt":
+        cmd = ["cl", "/nologo", "/EP", "/TC", *[f"/D{d}" for d in defines], str(header)]
+    else:
+        cmd = [os.environ.get("CC", "cc"), "-E", "-P", "-x", "c", *[f"-D{d}" for d in defines], str(header)]
+    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+
+
+def call_graph(code: str) -> tuple[dict[str, set[str]], set[str]]:
+    """The sp_ functions that preprocessed code defines, each mapped to the sp_ functions its body names (calls, or
+    callbacks it hands to qsort), and the functions whose address is taken outside any function (the fluent table)"""
+    tokens = TOKEN_RE.findall(LITERAL_RE.sub(" ", code))
+    graph: dict[str, set[str]] = {}
+    escaped: set[str] = set()
+    owner = None
+    depth = 0
+
     i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.lstrip().startswith("#"):
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "{":
+            depth += 1
+        elif tok == "}":
+            depth -= 1
+            if depth == 0:
+                owner = None
+        elif owner is not None:
+            graph[owner].add(tok)
+        elif depth == 0 and tokens[i + 1:i + 2] == ["("]:
+            # A name and its parameter list at file scope: a function definition when a body follows
             i += 1
+            parens = 0
+            while True:
+                parens += {"(": 1, ")": -1}.get(tokens[i], 0)
+                i += 1
+                if parens == 0:
+                    break
+            if tokens[i:i + 1] == ["{"] and tok.startswith("sp_"):
+                owner = tok
+                graph.setdefault(tok, set())
             continue
+        else:
+            escaped.add(tok)
+        i += 1
 
-        match = FUNC_RE.match(line)
-        if not match:
-            i += 1
-            continue
-
-        name = match.group(1)
-        signature = line
-        j = i
-        while "{" not in signature and j + 1 < len(lines):
-            j += 1
-            signature += "\n" + lines[j]
-        if "{" not in signature:
-            i = j + 1
-            continue
-
-        if ";" in signature.split("{", 1)[0]:
-            i = j + 1
-            continue
-
-        brace_depth = signature.count("{") - signature.count("}")
-        k = j
-        while brace_depth > 0 and k + 1 < len(lines):
-            k += 1
-            brace_depth += lines[k].count("{") - lines[k].count("}")
-
-        definitions[name] = (i, k)
-        i = k + 1
-    return definitions
+    graph = {name: (calls & graph.keys()) - {name} for name, calls in graph.items()}
+    return graph, escaped & graph.keys()
 
 
-def longest_path_from(start: str, graph: dict[str, set[str]]) -> list[str]:
-    best = [start]
+def check_call_depth(header_path: pathlib.Path, max_depth: int) -> int:
+    """At most max_depth snakepath frames on the stack below any public function, counting every function the
+    preprocessed library defines; a fluent method is one more frame on top. A function calling itself is exempt."""
+    graph, fluent = call_graph(preprocessed_library(header_path))
+    chains: dict[str, list[str]] = {}
 
-    def dfs(node: str, path: list[str], seen: set[str]) -> None:
-        nonlocal best
-        if len(path) > len(best):
-            best = path.copy()
-        for next_node in graph.get(node, set()):
-            if next_node in seen:
-                continue
-            seen.add(next_node)
-            path.append(next_node)
-            dfs(next_node, path, seen)
-            path.pop()
-            seen.remove(next_node)
+    def chain(name: str, active: tuple[str, ...] = ()) -> list[str]:
+        """The longest chain of frames from name down"""
+        if name in active:
+            raise ValueError("mutual recursion: " + " -> ".join(active[active.index(name):] + (name,)))
+        if name not in chains:
+            below = max((chain(callee, active + (name,)) for callee in graph[name]), key=len, default=[])
+            chains[name] = [name] + below
+        return chains[name]
 
-    dfs(start, [start], {start})
-    return best
+    limits = {name: max_depth + 1 for name in fluent}
+    limits.update({name: max_depth for name in graph if not name.startswith("sp_priv_")})
+    try:
+        offenders = [chain(name) for name, limit in sorted(limits.items()) if len(chain(name)) > limit]
+    except ValueError as err:
+        print(f"call-depth check: FAILED ({err})")
+        return 1
+
+    deepest = max(len(path) for path in chains.values())
+    print(f"call-depth check: functions={len(graph)} max_depth={deepest} limit={max_depth} "
+          f"(fluent methods {max_depth + 1})")
+    if not offenders:
+        print("call-depth check: OK")
+        return 0
+
+    print("call-depth check: FAILED")
+    for path in offenders:
+        print(f"  {' -> '.join(path)}")
+    return 1
 
 
 def check_docs(root: pathlib.Path) -> int:
     ok = (root / "api_demo.c").read_text(encoding="utf-8") in (root / "README.md").read_text(encoding="utf-8")
     print("docs check: OK" if ok else "docs check: FAILED (README.md does not embed api_demo.c verbatim)")
     return 0 if ok else 1
-
-
-def check_call_depth(header_path: pathlib.Path, max_depth: int) -> int:
-    lines = header_path.read_text(encoding="utf-8").splitlines()
-    definitions = collect_definitions(lines)
-    names = set(definitions)
-
-    public = {
-        name
-        for name in names
-        if name.startswith("sp_")
-        and not name.startswith("sp_priv_")
-        and not name.startswith("sp_fluent_")
-    }
-
-    graph: dict[str, set[str]] = {name: set() for name in public}
-    for name in public:
-        start, end = definitions[name]
-        body = "\n".join(lines[start : end + 1])
-        for called in CALL_RE.findall(body):
-            if called in public and called != name:
-                graph[name].add(called)
-
-    offenders: list[tuple[str, list[str]]] = []
-    max_seen = 0
-    for root in sorted(public):
-        path = longest_path_from(root, graph)
-        depth = len(path)
-        if depth > max_seen:
-            max_seen = depth
-        if depth > max_depth:
-            offenders.append((root, path))
-
-    print(
-        f"call-depth check: public_functions={len(public)} max_depth={max_seen} limit={max_depth}"
-    )
-    if not offenders:
-        print("call-depth check: OK")
-        return 0
-
-    print("call-depth check: FAILED")
-    for root, path in offenders:
-        print(f"  {root}: {' -> '.join(path)}")
-    return 1
 
 
 THIS_DIR = pathlib.Path(__file__).resolve().parent

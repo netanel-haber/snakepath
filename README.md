@@ -33,6 +33,8 @@ rm -f demo snakepath.h
 cc -x c -o nob nob.h && ./nob
 ```
 
+Needs a C compiler, Python 3 and clang-format 21; `./nob format` applies `snakepath.h`'s layout.
+
 
 <details markdown="1">
 <summary>Snakepath API Reference (<a href="https://github.com/netanel-haber/snakepath/blob/main/api_demo.c">api_demo.c</a>)</summary>

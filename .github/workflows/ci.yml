@@ -25,6 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc g++ clang valgrind
+          pip install clang-format==21.1.8
 
       - name: Build nob
         run: cc -x c -o nob nob.h
@@ -47,6 +48,9 @@ jobs:
         with:
           python-version: '3.15'
           allow-prereleases: true
+
+      - name: Install clang-format
+        run: pip install clang-format==21.1.8
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
