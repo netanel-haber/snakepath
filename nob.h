@@ -2,6 +2,7 @@
    the parts of nob v3.10.0 it uses (https://github.com/tsoding/nob.h; license at the end).
 
    Build: cc -x c -o nob nob.h && ./nob     (quiet: add -DSNAKEPATH_QUIET; MSVC: cl /Tcnob.h)
+   Format: ./nob format                    (snakepath.h's clang-format layout, which ./nob checks)
    Builds run in parallel across the available CPU cores.
 
    The nob part was trimmed from upstream: its docs, prefix-stripped aliases, deprecated and unused
@@ -1181,10 +1182,30 @@ static const char *find_python(void) {
 #endif
 }
 
-/* Public call depth, README embedding api_demo.c, and CPython's pathlib tests on the bindings */
+/* Call depth, README embedding api_demo.c, and CPython's pathlib tests on the bindings */
 static bool run_python(void) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, find_python(), "snakepath.py");
+    return nob_cmd_run(&cmd);
+}
+
+/* snakepath.h's layout, for clang-format 21 (CI pins it): LLVM style at a 4-space indent and 120 columns, where
+   every if/for/while body gets its own line, so line counts can't be shrunk by cramming statements together.
+   Blank lines stay the author's call: they go where they separate ideas, not in front of every block. */
+#define SNAKEPATH_LAYOUT                                                                                               \
+    "--style={BasedOnStyle: LLVM, IndentWidth: 4, ColumnLimit: 120, AllowShortIfStatementsOnASingleLine: Never, "     \
+    "AllowShortLoopsOnASingleLine: false, AllowShortBlocksOnASingleLine: Never, SortIncludes: Never, "                \
+    "ReflowComments: Never}"
+
+/* Rewrite snakepath.h in that layout (./nob format), or check that it already is */
+static bool run_clang_format(bool rewrite) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "clang-format", SNAKEPATH_LAYOUT);
+    if (rewrite)
+        nob_cmd_append(&cmd, "-i");
+    else
+        nob_cmd_append(&cmd, "--dry-run", "--Werror");
+    nob_cmd_append(&cmd, "snakepath.h");
     return nob_cmd_run(&cmd);
 }
 
@@ -1237,9 +1258,11 @@ int main(int argc, char **argv) {
             }
             LOG_INFO( "Python bindings built and tested successfully!");
             return 0;
+        } else if (strcmp(subcmd, "format") == 0) {
+            return run_clang_format(true) ? 0 : 1;
         } else {
             nob_log(NOB_ERROR, "Unknown subcommand: %s", subcmd);
-            LOG_INFO( "Usage: ./nob [clean|python]");
+            LOG_INFO( "Usage: ./nob [clean|python|format]");
             return 1;
         }
     }
@@ -1322,6 +1345,12 @@ int main(int argc, char **argv) {
     LOG_INFO( "=== Running Python checks and tests ===");
     if (!run_python()) {
         nob_log(NOB_ERROR, "Python checks or tests failed");
+        all_ok = false;
+    }
+
+    LOG_INFO( "=== Checking snakepath.h's layout ===");
+    if (!run_clang_format(false)) {
+        nob_log(NOB_ERROR, "snakepath.h needs ./nob format (clang-format 21: pip install clang-format==21.1.8)");
         all_ok = false;
     }
 
