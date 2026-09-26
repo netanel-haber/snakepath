@@ -16,7 +16,7 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 ## Call Depth
 `snakepath.py` checks real stack depth on the preprocessed library (`cc -E -P`, or `cl /EP` on Windows, with `SNAKEPATH_IMPLEMENTATION` and `SNAKEPATH_FLUENT`):
 - Every function the library defines is a frame: public, `sp_priv_*` and `static inline` alike, plus functions passed as callbacks (qsort comparators). A function calling itself is exempt.
-- At most 4 snakepath frames on the stack from a public function down: the function itself and 3 below it. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 5. (The maintainer raised the limit from 3 in exchange for a compression of more than 200 lines.)
+- At most 4 snakepath frames on the stack from a public function down: the function itself and 3 below it. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 5. (The maintainer raised the limit from 3 with the PR #88 compression, and kept it after that compression shed its trade-offs and ended at 127 lines.)
 - Never pass the check by hiding a call behind a private wrapper or a macro. Structure code as entry → helper → leaf, with room for one more level (a public function may call another public function): leaves take what they need precomputed (anchor lengths, C strings), and orchestration that would need a fifth frame lives in the public function, even if two public functions then repeat a few lines.
 - A path's flavor is never `SP_FLAVOR_NATIVE`: making a path resolves it, so code tests `flavor == SP_FLAVOR_WINDOWS` and `c == '/' || c == sep` inline instead of calling predicate helpers.
 
