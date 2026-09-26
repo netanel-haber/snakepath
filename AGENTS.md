@@ -7,16 +7,17 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 ## Code Philosophy
 - All logic in `snakepath.h`. Code outside it is glue or Python-specific only (argument coercion, exception classes and messages, Python protocols like `NotImplemented`, harness stubs); path semantics always go in C first.
 - Minimize API surface, share `sp_priv_*` internals
+- No one uses the library yet, so backward compatibility is not a constraint: judge API and behavior changes on their merits (correctness, simplicity, CPython fidelity)
 - No special-casing in wrappers
-- Fluent API has near-parity with boring API — only iterators/mutators missing
+- Fluent API has near-parity with boring API — only iterators missing; a fluent method returns what the function it forwards to returns
 - Port only what is meaningful in C: Python-only pathlib machinery becomes an expected failure, never binding code.
 - Macros are for constants, names for hacks (C/C++ compat casts, platform functions) and the simplest iterator sugar (`SP_*_FOREACH`). Never use a macro to share code.
 
 ## Call Depth
 `snakepath.py` checks real stack depth on the preprocessed library (`cc -E -P`, or `cl /EP` on Windows, with `SNAKEPATH_IMPLEMENTATION` and `SNAKEPATH_FLUENT`):
 - Every function the library defines is a frame: public, `sp_priv_*` and `static inline` alike, plus functions passed as callbacks (qsort comparators). A function calling itself is exempt.
-- At most 3 snakepath frames below any public function. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 4.
-- Never pass the check by hiding a call behind a private wrapper or a macro. Structure code as entry → helper → leaf: leaves take what they need precomputed (anchor lengths, C strings), and orchestration that would need a fourth frame lives in the public function, even if two public functions then repeat a few lines.
+- At most 4 snakepath frames on the stack from a public function down: the function itself and 3 below it. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 5. (The maintainer raised the limit from 3 with the PR #88 compression, and kept it after that compression shed its trade-offs and ended at 127 lines.)
+- Never pass the check by hiding a call behind a private wrapper or a macro. Structure code as entry → helper → leaf, with room for one more level (a public function may call another public function): leaves take what they need precomputed (anchor lengths, C strings), and orchestration that would need a fifth frame lives in the public function, even if two public functions then repeat a few lines.
 - A path's flavor is never `SP_FLAVOR_NATIVE`: making a path resolves it, so code tests `flavor == SP_FLAVOR_WINDOWS` and `c == '/' || c == sep` inline instead of calling predicate helpers.
 
 ## Code Layout
@@ -47,6 +48,7 @@ Required behavior:
 - Judge macro refactors by the expanded code. If `cc -E -P` shows the same boilerplate or more indirection, reject the refactor.
 - Keep public API sections concrete when possible. Prefer small implementation-local helpers over public macro inventories.
 - Stop when the next change would save lines only by hiding code structure, adding slot-order coupling, or making the expanded code harder to follow.
+- Never make the library even slightly worse to save lines: a change that needs a trick whose correctness takes a proof, an argument or flag that only one caller needs, coupling to another function's incidental behavior, more stack or frames, a C-runtime side effect, or a macro that does more than name something stays out, whatever it saves (examples under Learnings).
 - Ship a change only if it alone is net −60 lines or more (post format). When the maintainer asks for the small things, bundle real simplifications (each a removed layer or dead branch, never cosmetic) into one PR, and say plainly that no single item clears −60.
 
 Required workflow:
@@ -131,3 +133,4 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.
 - The Python harness runs CPython 3.15's `test_pathlib.py`. Python-only machinery (`info`, `pathlib.types`, pickling, private hooks, mocks of Python functions) goes in `EXPECTED_FAILURES`, never into C.
 - For semantics work, differentially fuzz the bindings against the real `pathlib` (random paths/patterns, compare results); the CPython suite alone misses many edge cases.
+- The maintainer reverted every trade-off that made the library slightly worse from the 4-frame compression (PR #88), keeping only changes that are better on the merits. Off limits: `sp_path_cmp` comparing whole strings with the separator sorting first (plus a `low` byte its other callers pass as `'\0'`); one fluent table whose chainable methods clear and re-set the active flag; an owner/group helper switched by a flag; glob relying on the normalizer keeping a `.` before a drive-like part; reuse that adds a stack buffer or a frame (`readlink` and `path_convert` through a temporary buffer, `resolve` through `absolute`); Windows mkdir/unlink/rmdir through the C runtime, whose error codes rely on `GetLastError()` surviving the call; a macro that drops an argument.

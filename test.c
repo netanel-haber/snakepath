@@ -137,7 +137,7 @@ SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flav
     *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
 }
 
-SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = sp_path_copy(p); }
+SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = *p; }
 SP_EXPORT const char *sp_str_wrap(const SpPath *p) { return sp_str(p); }
 SP_EXPORT void sp_as_posix_wrap(const SpPath *p, char *out, size_t out_size) { sp_as_posix(p, out, out_size); }
 
@@ -736,7 +736,6 @@ static void test_fluent_api(void) {
     ASSERT_STR(sp_error_str(SP_ERR_NOT_RELATIVE), "Path is not relative to the other path");
     ASSERT_STR(sp_error_str(SP_ERR_NO_NAME), "Path has an empty name");
     ASSERT_STR(sp_error_str(SP_ERR_INVALID_ARG), "Invalid argument");
-    ASSERT_STR(sp_error_str(SP_ERR_OTHER), "Operation failed");
     ASSERT_STR(sp_error_str(9999), "Unknown error");
 
     /* ============ stat / lstat (fluent) ============ */
@@ -848,39 +847,33 @@ static void test_fluent_api(void) {
         sp_unlink(&cleanup, true);
     }
 
-    /* ============ mkdir (fluent SpPathOp) ============ */
+    /* ============ mkdir (fluent) ============ */
 
     {
         long fpid = (long)test_getpid();
         char dir_path[128];
         snprintf(dir_path, sizeof(dir_path), "test_fluent_mkdir_%ld", fpid);
 
-        SpPathOp r = SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE);
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), dir_path);
+        ASSERT(SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE) == SP_OK);
 
         /* mkdir again without exist_ok should fail */
-        SpPathOp r2 = SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE);
-        ASSERT(r2.error == SP_ERR_EXISTS);
+        ASSERT(SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE) == SP_ERR_EXISTS);
 
         /* mkdir with exist_ok should succeed */
-        SpPathOp r3 = SPF(dir_path)->mkdir(0755, false, true, SP_MKDIR_DEF_MODE);
-        ASSERT(r3.error == SP_OK);
+        ASSERT(SPF(dir_path)->mkdir(0755, false, true, SP_MKDIR_DEF_MODE) == SP_OK);
 
         SpPath cleanup = sp_path(dir_path);
         sp_rmdir(&cleanup);
     }
 
-    /* ============ touch (fluent SpPathOp) ============ */
+    /* ============ touch (fluent) ============ */
 
     {
         long fpid = (long)test_getpid();
         char touch_path[128];
         snprintf(touch_path, sizeof(touch_path), "test_fluent_touch_%ld.tmp", fpid);
 
-        SpPathOp r = SPF(touch_path)->touch(0644, true);
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), touch_path);
+        ASSERT(SPF(touch_path)->touch(0644, true));
 
         /* Verify file exists */
         ASSERT(SPF(touch_path)->exists(true) == true);
@@ -889,7 +882,7 @@ static void test_fluent_api(void) {
         sp_unlink(&cleanup, true);
     }
 
-    /* ============ unlink (fluent SpPathOp) ============ */
+    /* ============ unlink (fluent) ============ */
 
     {
         long fpid = (long)test_getpid();
@@ -899,20 +892,16 @@ static void test_fluent_api(void) {
         SpPath p = sp_path(unlink_path);
         sp_touch(&p, 0644, true);
 
-        SpPathOp r = SPF(unlink_path)->unlink(false);
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), unlink_path);
+        ASSERT(SPF(unlink_path)->unlink(false));
 
         /* Unlink non-existent without missing_ok should fail */
-        SpPathOp r2 = SPF(unlink_path)->unlink(false);
-        ASSERT(r2.error == SP_ERR);
+        ASSERT(!SPF(unlink_path)->unlink(false));
 
         /* Unlink non-existent with missing_ok should succeed */
-        SpPathOp r3 = SPF(unlink_path)->unlink(true);
-        ASSERT(r3.error == SP_OK);
+        ASSERT(SPF(unlink_path)->unlink(true));
     }
 
-    /* ============ rmdir (fluent SpPathOp) ============ */
+    /* ============ rmdir (fluent) ============ */
 
     {
         long fpid = (long)test_getpid();
@@ -922,16 +911,13 @@ static void test_fluent_api(void) {
         SpPath p = sp_path(rmdir_path);
         sp_mkdir(&p, 0755, false, false, SP_MKDIR_DEF_MODE);
 
-        SpPathOp r = SPF(rmdir_path)->rmdir();
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), rmdir_path);
+        ASSERT(SPF(rmdir_path)->rmdir());
 
         /* Rmdir non-existent should fail */
-        SpPathOp r2 = SPF(rmdir_path)->rmdir();
-        ASSERT(r2.error == SP_ERR);
+        ASSERT(!SPF(rmdir_path)->rmdir());
     }
 
-    /* ============ chmod (fluent SpPathOp) ============ */
+    /* ============ chmod (fluent) ============ */
 
 #ifndef _WIN32
     {
@@ -942,15 +928,13 @@ static void test_fluent_api(void) {
         SpPath p = sp_path(chmod_path);
         sp_touch(&p, 0644, true);
 
-        SpPathOp r = SPF(chmod_path)->chmod(0600);
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), chmod_path);
+        ASSERT(SPF(chmod_path)->chmod(0600));
 
         sp_unlink(&p, true);
     }
 #endif
 
-    /* ============ symlink_to / hardlink_to (fluent SpPathOp) ============ */
+    /* ============ symlink_to / hardlink_to (fluent) ============ */
 
 #ifndef _WIN32
     {
@@ -964,15 +948,11 @@ static void test_fluent_api(void) {
         sp_touch(&tp, 0644, true);
 
         /* symlink_to */
-        SpPathOp r = SPF(sym_path)->symlink_to(&tp, false);
-        ASSERT(r.error == SP_OK);
-        ASSERT_STR(sp_str(&r.path), sym_path);
+        ASSERT(SPF(sym_path)->symlink_to(&tp, false));
         ASSERT(SPF(sym_path)->is_symlink() == true);
 
         /* hardlink_to */
-        SpPathOp r2 = SPF(hard_path)->hardlink_to(&tp);
-        ASSERT(r2.error == SP_OK);
-        ASSERT_STR(sp_str(&r2.path), hard_path);
+        ASSERT(SPF(hard_path)->hardlink_to(&tp));
 
         SpPath sp2 = sp_path(sym_path);
         SpPath hp = sp_path(hard_path);
