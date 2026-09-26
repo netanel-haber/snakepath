@@ -38,7 +38,7 @@ if _lib is None:
 # The library's constants: errors, flags, case sensitivity and sizes
 for _name in ['SP_OK', 'SP_ERR_IO', 'SP_ERR_NOT_FOUND', 'SP_ERR_EXISTS', 'SP_ERR_NOT_DIR', 'SP_ERR_IS_DIR',
               'SP_ERR_NOT_EMPTY', 'SP_ERR_PERMISSION', 'SP_ERR_LOOP', 'SP_ERR_NOT_LINK', 'SP_ERR_CROSS_DEVICE',
-              'SP_ERR_SAME_FILE', 'SP_ERR_NO_HOME', 'SP_ERR_TOO_LONG', 'SP_ERR_LIMIT', 'SP_ERR_NUL',
+              'SP_ERR_SAME_FILE', 'SP_ERR_NO_HOME', 'SP_ERR_TOO_LONG', 'SP_ERR_LIMIT', 'SP_ERR_NUL', 'SP_ERR_ENCODING',
               'SP_ERR_INVALID_ARG', 'SP_ERR_NO_NAME', 'SP_ERR_NOT_RELATIVE', 'SP_ERR_NOT_ABSOLUTE',
               'SP_ERR_UNSUPPORTED', 'SP_MKDIR_PARENTS', 'SP_MKDIR_EXIST_OK', 'SP_COPY_FOLLOW_SYMLINKS',
               'SP_COPY_PRESERVE_METADATA', 'SP_WALK_TOP_DOWN', 'SP_WALK_FOLLOW_SYMLINKS', 'SP_CASE_DEFAULT',
@@ -1276,8 +1276,7 @@ def setup_pathlib_patch(testfn=None):
             raise OSError('chmod does not stick')
         os.chmod(target, 0o600)
 
-    # Windows symlink semantics (resolve through links, reparse tags, removing directory links) are not ported yet
-    have_symlink = os.name != 'nt' and probe(touch_then(os.symlink))
+    have_symlink = probe(touch_then(os.symlink))
     have_hardlink = probe(touch_then(lambda target, link: os.link(target, link)))
     have_chmod = probe(touch_then(chmod_sticks))
     os_helper.can_symlink = lambda: have_symlink

@@ -62,6 +62,7 @@ WRAP_CONST(SP_ERR_NO_HOME)
 WRAP_CONST(SP_ERR_TOO_LONG)
 WRAP_CONST(SP_ERR_LIMIT)
 WRAP_CONST(SP_ERR_NUL)
+WRAP_CONST(SP_ERR_ENCODING)
 WRAP_CONST(SP_ERR_INVALID_ARG)
 WRAP_CONST(SP_ERR_NO_NAME)
 WRAP_CONST(SP_ERR_NOT_RELATIVE)
@@ -1992,8 +1993,12 @@ int main(void) {
         ASSERT(sp_symlink_to(&link, &to_file, false) == SP_OK);
         ASSERT(sp_symlink_to(&link2, &to_dir, true) == SP_OK);
         ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file).sp_mode & 0777) == 0600);
-        SpError no_follow = sp_chmod(&link, 0644, false);
-        ASSERT(no_follow == SP_OK || no_follow == SP_ERR_UNSUPPORTED);
+        /* Linux symlinks have no mode of their own; BSD and macOS change the link's */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+        ASSERT(sp_chmod(&link, 0644, false) == SP_OK);
+#else
+        ASSERT(sp_chmod(&link, 0644, false) == SP_ERR_UNSUPPORTED);
+#endif
         ASSERT(sp_copy(&link, &link2, 0).error == SP_ERR_EXISTS);
         ASSERT(sp_copy(&link, &link2, SP_COPY_FOLLOW_SYMLINKS).error == SP_ERR_IS_DIR);
         ASSERT(sp_unlink(&link, false) == SP_OK && sp_unlink(&link2, false) == SP_OK);
