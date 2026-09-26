@@ -308,6 +308,8 @@ static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), Join
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
 #define ASSERT_FLUENT(f, exp) do { SpPath _p = (f)->path(); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 
+static void test_fluent_filesystem(void);
+
 static void test_fluent_api(void) {
     printf("\nFluent API Tests:\n");
 
@@ -593,6 +595,11 @@ static void test_fluent_api(void) {
     ASSERT_STR(sp_str(&docs), "/home/user/Documents");
     ASSERT_STR(sp_str(&pics), "/home/user/Pictures");
 
+    test_fluent_filesystem();
+}
+
+/* The fluent API on the file system (its own frame, apart from the pure tests) */
+static void test_fluent_filesystem(void) {
     /* ============ is_file (fluent) ============ */
 
     /* Existing file should return true */
@@ -884,6 +891,91 @@ static void test_fluent_api(void) {
     printf("  All fluent API tests OK\n");
 }
 #endif
+
+/* Errors: limits, specific OS errors, modes, symlinks, and paths the OS can't take (own frame: main's is big) */
+static void test_errors(long pid) {
+    printf("\nerror Tests:\n");
+    {
+        /* Past SP_MAX_SUFFIXES suffixes */
+        char many[2 * (SP_MAX_SUFFIXES + 1) + 2] = "a";
+        for (size_t i = 0; i <= SP_MAX_SUFFIXES; i++)
+            strcat(many, ".x");
+        SpPath many_path = sp_path_f(many, P);
+        SpSuffixes limited = sp_suffixes(&many_path);
+        ASSERT(limited.error == SP_ERR_LIMIT && limited.count == 0);
+
+        /* Errors from the OS, specific */
+        char err_dir[64];
+        snprintf(err_dir, sizeof(err_dir), "./test_errors_%ld", pid);
+        SpPath root_dir = sp_path(err_dir), file = sp_join_one(&root_dir, "f"), below = sp_join_one(&file, "x");
+        ASSERT(sp_mkdir(&root_dir, 0755, 0, SP_MODE_DIR) == SP_OK);
+        ASSERT(sp_touch(&file, 0644, false) == SP_OK);
+        ASSERT(sp_mkdir(&root_dir, 0755, SP_MKDIR_EXIST_OK | SP_COPY_FOLLOW_SYMLINKS, SP_MODE_DIR) == SP_ERR_INVALID_ARG);
+        ASSERT(sp_mkdir(&file, 0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_ERR_EXISTS);
+#ifdef SP_WINDOWS
+        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_FOUND); /* Windows: path not found */
+#else
+        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_DIR);
+#endif
+        ASSERT(sp_touch(&file, 0644, false) == SP_ERR_EXISTS);
+        ASSERT(sp_rmdir(&root_dir) == SP_ERR_NOT_EMPTY);
+        SpIterdirIter bad_dir = sp_iterdir_begin(&file);
+        SpPath listed;
+        ASSERT(bad_dir.error == SP_ERR_NOT_DIR && !sp_iterdir_next(&bad_dir, &listed));
+        sp_iterdir_end(&bad_dir);
+        SpIterdirIter listing = sp_iterdir_begin(&root_dir);
+        ASSERT(sp_iterdir_next(&listing, &listed) && sp_path_eq(&listed, &file));
+        ASSERT(!sp_iterdir_next(&listing, &listed) && listing.error == SP_OK);
+        sp_iterdir_end(&listing);
+
+#ifndef SP_WINDOWS
+        /* Mode 0 is a mode */
+        SpPath closed = sp_join_one(&root_dir, "closed");
+        ASSERT(sp_mkdir(&closed, 0, 0, SP_MODE_DIR) == SP_OK);
+        ASSERT((sp_stat(&closed).sp_mode & 0777) == 0);
+        ASSERT(sp_chmod(&closed, 0755, true) == SP_OK);
+        ASSERT(sp_rmdir(&closed) == SP_OK);
+
+        /* Symlinks: chmod through one, and copying one onto another */
+        SpPath link = sp_join_one(&root_dir, "link"), link2 = sp_join_one(&root_dir, "link2");
+        SpPath to_file = sp_path("f"), to_dir = sp_path(".");
+        ASSERT(sp_symlink_to(&link, &to_file, false) == SP_OK);
+        ASSERT(sp_symlink_to(&link2, &to_dir, true) == SP_OK);
+        ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file).sp_mode & 0777) == 0600);
+        /* Linux symlinks have no mode of their own; BSD and macOS change the link's */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+        ASSERT(sp_chmod(&link, 0644, false) == SP_OK);
+#else
+        ASSERT(sp_chmod(&link, 0644, false) == SP_ERR_UNSUPPORTED);
+#endif
+        ASSERT(sp_copy(&link, &link2, 0).error == SP_ERR_EXISTS);
+        ASSERT(sp_copy(&link, &link2, SP_COPY_FOLLOW_SYMLINKS).error == SP_ERR_IS_DIR);
+        ASSERT(sp_unlink(&link, false) == SP_OK && sp_unlink(&link2, false) == SP_OK);
+#endif
+
+        /* A glob deeper than SP_GLOB_MAX_DEPTH */
+        SpPath deepest = root_dir;
+        for (int i = 0; i < SP_GLOB_MAX_DEPTH; i++)
+            deepest = sp_join_one(&deepest, "d");
+        ASSERT(sp_mkdir(&deepest, 0755, SP_MKDIR_PARENTS, SP_MODE_DIR) == SP_OK);
+        SpGlobIter deep = sp_glob_begin(&root_dir, "**", SP_CASE_DEFAULT, false);
+        int found = 0;
+        while (sp_glob_next(&deep, &listed))
+            found++;
+        sp_glob_end(&deep);
+        ASSERT(deep.error == SP_ERR_LIMIT && found < SP_GLOB_MAX_DEPTH + 2);
+        for (; !sp_path_eq(&deepest, &root_dir); deepest = sp_parent(&deepest))
+            ASSERT(sp_rmdir(&deepest) == SP_OK);
+
+        /* An embedded NUL can't reach the OS */
+        SpPath nul = sp_path_from_n("a\0b", 3, P);
+        ASSERT(sp_mkdir(&nul, 0755, 0, SP_MODE_DIR) == SP_ERR_NUL && sp_stat(&nul).error == SP_ERR_NUL);
+        ASSERT(sp_resolve(&nul, false).error == SP_ERR_NUL);
+
+        ASSERT(sp_unlink(&file, false) == SP_OK && sp_rmdir(&root_dir) == SP_OK);
+    }
+    printf("  error tests OK\n");
+}
 
 int main(void) {
     /* Initialize unique test directory names based on PID to avoid race conditions */
@@ -1947,88 +2039,7 @@ int main(void) {
 
     printf("  walk tests OK\n");
 
-    /* ============ Error Tests ============ */
-    printf("\nerror Tests:\n");
-    {
-        /* Past SP_MAX_SUFFIXES suffixes */
-        char many[2 * (SP_MAX_SUFFIXES + 1) + 2] = "a";
-        for (size_t i = 0; i <= SP_MAX_SUFFIXES; i++)
-            strcat(many, ".x");
-        SpPath many_path = sp_path_f(many, P);
-        SpSuffixes limited = sp_suffixes(&many_path);
-        ASSERT(limited.error == SP_ERR_LIMIT && limited.count == 0);
-
-        /* Errors from the OS, specific */
-        char err_dir[64];
-        snprintf(err_dir, sizeof(err_dir), "./test_errors_%ld", pid);
-        SpPath root_dir = sp_path(err_dir), file = sp_join_one(&root_dir, "f"), below = sp_join_one(&file, "x");
-        ASSERT(sp_mkdir(&root_dir, 0755, 0, SP_MODE_DIR) == SP_OK);
-        ASSERT(sp_touch(&file, 0644, false) == SP_OK);
-        ASSERT(sp_mkdir(&root_dir, 0755, SP_MKDIR_EXIST_OK | SP_COPY_FOLLOW_SYMLINKS, SP_MODE_DIR) == SP_ERR_INVALID_ARG);
-        ASSERT(sp_mkdir(&file, 0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_ERR_EXISTS);
-#ifdef SP_WINDOWS
-        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_FOUND); /* Windows: path not found */
-#else
-        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_DIR);
-#endif
-        ASSERT(sp_touch(&file, 0644, false) == SP_ERR_EXISTS);
-        ASSERT(sp_rmdir(&root_dir) == SP_ERR_NOT_EMPTY);
-        SpIterdirIter bad_dir = sp_iterdir_begin(&file);
-        SpPath listed;
-        ASSERT(bad_dir.error == SP_ERR_NOT_DIR && !sp_iterdir_next(&bad_dir, &listed));
-        sp_iterdir_end(&bad_dir);
-        SpIterdirIter listing = sp_iterdir_begin(&root_dir);
-        ASSERT(sp_iterdir_next(&listing, &listed) && sp_path_eq(&listed, &file));
-        ASSERT(!sp_iterdir_next(&listing, &listed) && listing.error == SP_OK);
-        sp_iterdir_end(&listing);
-
-#ifndef SP_WINDOWS
-        /* Mode 0 is a mode */
-        SpPath closed = sp_join_one(&root_dir, "closed");
-        ASSERT(sp_mkdir(&closed, 0, 0, SP_MODE_DIR) == SP_OK);
-        ASSERT((sp_stat(&closed).sp_mode & 0777) == 0);
-        ASSERT(sp_chmod(&closed, 0755, true) == SP_OK);
-        ASSERT(sp_rmdir(&closed) == SP_OK);
-
-        /* Symlinks: chmod through one, and copying one onto another */
-        SpPath link = sp_join_one(&root_dir, "link"), link2 = sp_join_one(&root_dir, "link2");
-        SpPath to_file = sp_path("f"), to_dir = sp_path(".");
-        ASSERT(sp_symlink_to(&link, &to_file, false) == SP_OK);
-        ASSERT(sp_symlink_to(&link2, &to_dir, true) == SP_OK);
-        ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file).sp_mode & 0777) == 0600);
-        /* Linux symlinks have no mode of their own; BSD and macOS change the link's */
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-        ASSERT(sp_chmod(&link, 0644, false) == SP_OK);
-#else
-        ASSERT(sp_chmod(&link, 0644, false) == SP_ERR_UNSUPPORTED);
-#endif
-        ASSERT(sp_copy(&link, &link2, 0).error == SP_ERR_EXISTS);
-        ASSERT(sp_copy(&link, &link2, SP_COPY_FOLLOW_SYMLINKS).error == SP_ERR_IS_DIR);
-        ASSERT(sp_unlink(&link, false) == SP_OK && sp_unlink(&link2, false) == SP_OK);
-#endif
-
-        /* A glob deeper than SP_GLOB_MAX_DEPTH */
-        SpPath deepest = root_dir;
-        for (int i = 0; i < SP_GLOB_MAX_DEPTH; i++)
-            deepest = sp_join_one(&deepest, "d");
-        ASSERT(sp_mkdir(&deepest, 0755, SP_MKDIR_PARENTS, SP_MODE_DIR) == SP_OK);
-        SpGlobIter deep = sp_glob_begin(&root_dir, "**", SP_CASE_DEFAULT, false);
-        int found = 0;
-        while (sp_glob_next(&deep, &listed))
-            found++;
-        sp_glob_end(&deep);
-        ASSERT(deep.error == SP_ERR_LIMIT && found < SP_GLOB_MAX_DEPTH + 2);
-        for (; !sp_path_eq(&deepest, &root_dir); deepest = sp_parent(&deepest))
-            ASSERT(sp_rmdir(&deepest) == SP_OK);
-
-        /* An embedded NUL can't reach the OS */
-        SpPath nul = sp_path_from_n("a\0b", 3, P);
-        ASSERT(sp_mkdir(&nul, 0755, 0, SP_MODE_DIR) == SP_ERR_NUL && sp_stat(&nul).error == SP_ERR_NUL);
-        ASSERT(sp_resolve(&nul, false).error == SP_ERR_NUL);
-
-        ASSERT(sp_unlink(&file, false) == SP_OK && sp_rmdir(&root_dir) == SP_OK);
-    }
-    printf("  error tests OK\n");
+    test_errors(pid);
 
     /* ============ Struct Size Tests ============ */
     printf("\nStruct Size Tests:\n");
