@@ -9,11 +9,8 @@
 
 static void section(const char *s) { printf("\n--- %s ---\n\n", s); }
 
-static bool on_walk(struct SpWalkEntry *e) {
-    printf("  %s/ (%zu dirs, %zu files)\n",
-           sp_str(&e->dirpath), e->dirname_count, e->filename_count);
-    return true;
-}
+/* Actions return an SpError, which the compiler won't let you ignore */
+static void check(const char *what, SpError err) { printf("  %-9s %s\n", what, sp_error_str(err)); }
 
 int main(void) {
     SpPath tmp;
@@ -156,10 +153,12 @@ int main(void) {
     printf("  walk_up:        %s\n", sp_str(&tmp));
 
     /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
-    printf("  match *.gz:     %d\n", SP_MATCH(&p, "*.gz"));
+    printf("  match *.gz:     %d\n", sp_match(&p, "*.gz", SP_CASE_DEFAULT));
+    printf("  (fluent)        %d\n", SPF_PATH(p)->match("*.gz"));
 
-    /* .full_match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.full_match */
-    printf("  full_match:     %d\n", sp_full_match(&p, "/**/*.gz", -1));
+    /* .full_match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.full_match
+     * SP_CASE_DEFAULT is the flavor's: insensitive for Windows paths */
+    printf("  full_match:     %d\n", sp_full_match(&p, "/**/*.GZ", SP_CASE_INSENSITIVE));
     printf("  (fluent)        %d\n", SPF_PATH(p)->full_match("/**/*.gz"));
 
     /* ── Comparison ────────────────────────────────────────────── */
@@ -180,14 +179,13 @@ int main(void) {
     section("String Conversion");
 
     /* .as_posix https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.as_posix */
-    char posix_buf[SP_PATH_MAX];
-    sp_as_posix(&win, posix_buf, sizeof(posix_buf));
-    printf("  as_posix: %s\n", posix_buf);
+    printf("  as_posix: %s\n", sp_as_posix(&win).buf);
 
-    /* .as_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri */
-    char uri_buf[SP_PATH_MAX];
-    sp_as_uri(&p, uri_buf, sizeof(uri_buf));
-    printf("  as_uri:   %s\n", uri_buf);
+    /* .as_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.as_uri
+     * Into your buffer: SP_ERR_TOO_LONG when it is too small, SP_ERR_NOT_ABSOLUTE for a relative path */
+    char uri_buf[SP_PATH_MAX * 3];
+    if (sp_as_uri(&p, uri_buf, sizeof(uri_buf)) == SP_OK)
+        printf("  as_uri:   %s\n", uri_buf);
 
     /* Path.from_uri https://docs.python.org/3/library/pathlib.html#pathlib.Path.from_uri */
     tmp = sp_from_uri("file:///etc/hosts", SP_FLAVOR_POSIX);
@@ -267,16 +265,15 @@ int main(void) {
     SpPath tmpfile = sp_join_one(&tmpdir, "hello.txt");
 
     /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
-    sp_mkdir(&subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
-    printf("  mkdir:   demo_tmp/sub/\n");
+    check("mkdir:", sp_mkdir(&subdir, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR));
 
     /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
-    sp_touch(&tmpfile, 0644, true);
+    check("touch:", sp_touch(&tmpfile, SP_MODE_FILE, true));
 
     /* .write_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.write_bytes */
     const char *msg = "Hello, snakepath!";
     SpIOResult wr = sp_write_file(&tmpfile, msg, strlen(msg));
-    printf("  write:   %zu bytes (err=%d)\n", wr.bytes, wr.error);
+    printf("  write:   %zu bytes (%s)\n", wr.bytes, sp_error_str(wr.error));
 
     /* .read_bytes https://docs.python.org/3/library/pathlib.html#pathlib.Path.read_bytes */
     char buf[256];
@@ -286,13 +283,12 @@ int main(void) {
 
     /* .rename https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename */
     SpPath renamed = sp_join_one(&tmpdir, "renamed.txt");
-    sp_rename(&tmpfile, &renamed);
-    printf("  rename:  hello.txt -> renamed.txt\n");
+    check("rename:", sp_rename(&tmpfile, &renamed).error);
 
-    /* .copy https://docs.python.org/3/library/pathlib.html#pathlib.Path.copy (recursive for directories) */
+    /* .copy https://docs.python.org/3/library/pathlib.html#pathlib.Path.copy (recursive for directories)
+     * Functions with several options take flags named after pathlib's keywords */
     SpPath copied = sp_join_one(&tmpdir, "copy.txt");
-    sp_copy(&renamed, &copied, true, false); /* follow_symlinks, preserve_metadata */
-    printf("  copy:    renamed.txt -> copy.txt\n");
+    check("copy:", sp_copy(&renamed, &copied, SP_COPY_FOLLOW_SYMLINKS).error);
 
     /* .move_into https://docs.python.org/3/library/pathlib.html#pathlib.Path.move_into
      * Also: sp_copy_into, sp_move (renames, or copies and deletes across filesystems) */
@@ -302,14 +298,15 @@ int main(void) {
     printf("  (fluent move) %s\n", sp_str(&tmp));
 
     /* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */
-    sp_chmod(&renamed, 0600);
+    check("chmod:", sp_chmod(&renamed, 0600, true));
 
-    /* .owner https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner */
-    printf("  owner:   %s\n", sp_owner(&renamed).buf);
-    printf("  (fluent) %s\n", SPF_PATH(renamed)->owner().buf);
+    /* .owner https://docs.python.org/3/library/pathlib.html#pathlib.Path.owner (SP_ERR_UNSUPPORTED on Windows) */
+    SpTerm owner = sp_owner(&renamed, true);
+    printf("  owner:   %s\n", owner.error == SP_OK ? owner.buf : sp_error_str(owner.error));
 
     /* .group https://docs.python.org/3/library/pathlib.html#pathlib.Path.group */
-    printf("  group:   %s\n", sp_group(&renamed).buf);
+    SpTerm group = SPF_PATH(renamed)->group(true);
+    printf("  (fluent group) %s\n", group.error == SP_OK ? group.buf : sp_error_str(group.error));
 
     /* ── Symlinks ──────────────────────────────────────────────── */
     section("Symlinks");
@@ -317,7 +314,7 @@ int main(void) {
     SpPath link = sp_join_one(&tmpdir, "link.txt");
 
     /* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to */
-    sp_symlink_to(&link, &renamed, false);
+    check("symlink:", sp_symlink_to(&link, &renamed, false));
 
     /* .readlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink */
     tmp = sp_readlink(&link);
@@ -338,7 +335,7 @@ int main(void) {
     SP_GLOB_FOREACH(&tmpdir, "*.txt", match)
         printf("  glob:    %s\n", sp_str(&match));
 
-    /* sp_glob_begin/next/end: case sensitivity, recurse_symlinks, and it.error for bad patterns */
+    /* sp_glob_begin/next/end: case sensitivity, recurse_symlinks, and it.error for a bad pattern or a limit */
     SpGlobIter git = sp_glob_begin(&tmpdir, "**/", SP_CASE_SENSITIVE, false);
     for (SpPath dir; sp_glob_next(&git, &dir);)
         printf("  glob **/: %s\n", sp_str(&dir));
@@ -352,23 +349,31 @@ int main(void) {
     section("Walk");
 
     /* .walk https://docs.python.org/3/library/pathlib.html#pathlib.Path.walk
-     * Callback-based, allocation-free, unlimited depth via stack recursion. */
-    sp_walk(&tmpdir, true, false, on_walk, NULL, NULL);
+     * An iterator over (dirpath, dirnames, filenames), keeping the names in your buffer. Top-down, drop names from
+     * dirnames (or lower dirname_count) to prune. */
+    static char names[1 << 16];
+    SpWalkIter walk = sp_walk_begin(&tmpdir, SP_WALK_TOP_DOWN, names, sizeof(names));
+    for (SpWalkEntry *e; (e = sp_walk_next(&walk)) != NULL;)
+        printf("  %s/ (%zu dirs, %zu files)\n", sp_str(&e->dirpath), e->dirname_count, e->filename_count);
+    check("walk:", walk.error);
 
     /* ── Error Handling ────────────────────────────────────────── */
     section("Error Handling");
 
-    /* Operations that fail return SpPath checked with sp_path_is_error(). */
+    /* A failed path carries its error in .error, and passes it on: check once, at the end */
     SpPath no_name = sp_path("/");
     SpPath err = sp_with_name(&no_name, "x");
-    if (sp_path_is_error(&err))
-        printf("  with_name(\"/\", \"x\"): %s\n", sp_error_str(sp_path_error_code(&err)));
+    err = sp_join_one(&err, "more");
+    printf("  with_name(\"/\", \"x\") / \"more\": %s\n", sp_error_str(err.error));
+    tmp = SPF("/")->with_name("x")->join("more")->path();
+    printf("  (fluent) %s\n", sp_error_str(tmp.error));
 
-    sp_unlink(&link, false);
-    sp_unlink(&copied, false);
-    sp_unlink(&renamed, false);
-    sp_rmdir(&subdir);
-    sp_rmdir(&tmpdir);
+    check("unlink:", sp_unlink(&link, false));
+    check("unlink:", sp_unlink(&copied, false));
+    check("unlink:", sp_unlink(&renamed, false));
+    check("rmdir:", sp_rmdir(&tmpdir)); /* not empty yet */
+    check("rmdir:", sp_rmdir(&subdir));
+    check("rmdir:", sp_rmdir(&tmpdir));
 
     return 0;
 }
