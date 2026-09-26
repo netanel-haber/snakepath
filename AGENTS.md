@@ -5,7 +5,7 @@ C99 STB-style header-only pathlib port. No malloc, POSIX + Windows. All code in 
 Record every wish, rule or learning the maintainer states in this file (in the same change), not only in private notes.
 
 ## Code Philosophy
-- All logic in `snakepath.h`. Code outside it is glue or Python-specific only (argument coercion, exception classes and messages, Python protocols like `NotImplemented`, harness stubs); path semantics always go in C first.
+- All logic in `snakepath.h`; no logic in `snakepath.py` or the C harness (the `SP_FFI` shim in `test.c`), which stay one-to-one glue. Code outside it is glue or Python-specific only (argument coercion, exception classes and messages, Python protocols like `NotImplemented`, harness stubs); path semantics always go in C first.
 - Minimize API surface, share `sp_priv_*` internals
 - No one uses the library yet, so backward compatibility is not a constraint: judge API and behavior changes on their merits (correctness, simplicity, CPython fidelity)
 - No special-casing in wrappers
