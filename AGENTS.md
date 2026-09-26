@@ -104,6 +104,7 @@ gcc -shared -fPIC -DSP_FFI -o libsnakepath.so test.c && python snakepath.py
 **`SP_NODISCARD` pitfall:** GCC's `warn_unused_result` ignores `(void)` casts, so store or check every result (the tests assert them, cleanup included).
 
 **Environment quirks:** Android forbids hard links, and CPython there has no `os.link`: `sp_hardlink_to` returns `SP_ERR_UNSUPPORTED` on Android (`pathlib.UnsupportedOperation`), and the tests expect that.
+The harness skips CPython's symlink tests on Windows until snakepath ports Windows link semantics (resolving through links, reparse tags, removing directory links); turn them on with that port.
 
 ## EXPECTED_FAILURES
 

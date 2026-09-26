@@ -1962,7 +1962,11 @@ int main(void) {
         ASSERT(sp_touch(&file, 0644, false) == SP_OK);
         ASSERT(sp_mkdir(&root_dir, 0755, SP_MKDIR_EXIST_OK | SP_COPY_FOLLOW_SYMLINKS, SP_MODE_DIR) == SP_ERR_INVALID_ARG);
         ASSERT(sp_mkdir(&file, 0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_ERR_EXISTS);
+#ifdef SP_WINDOWS
+        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_FOUND); /* Windows: path not found */
+#else
         ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_DIR);
+#endif
         ASSERT(sp_touch(&file, 0644, false) == SP_ERR_EXISTS);
         ASSERT(sp_rmdir(&root_dir) == SP_ERR_NOT_EMPTY);
         SpIterdirIter bad_dir = sp_iterdir_begin(&file);
