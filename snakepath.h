@@ -195,15 +195,19 @@ void sp_iterdir_end(SpIterdirIter *it);
     for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
 /* clang-format on */
 
-/* Glob frames: one per directory level a recursive "**" goes down (Linux stops a symlink cycle at 40) */
+/* Glob frames: one per directory level a recursive "**" goes down (the OS stops a symlink cycle at 40 levels on Linux,
+ * 63 on Windows) */
 #ifndef SP_GLOB_MAX_DEPTH
-#define SP_GLOB_MAX_DEPTH 64
+#define SP_GLOB_MAX_DEPTH 128
 #endif
 #ifndef SP_GLOB_PATTERN_MAX
 #define SP_GLOB_PATTERN_MAX 256
 #endif
 #if SP_GLOB_MAX_DEPTH < 2 || SP_GLOB_PATTERN_MAX < 2
 #error "SP_GLOB_MAX_DEPTH and SP_GLOB_PATTERN_MAX must be at least 2"
+#endif
+#if SP_PATH_MAX > 0x7FFFFFFF || SP_GLOB_PATTERN_MAX > 0x7FFFFFFF
+#error "SP_PATH_MAX and SP_GLOB_PATTERN_MAX must fit 32 bits"
 #endif
 
 typedef struct {
@@ -221,7 +225,7 @@ typedef struct {
         /* Each frame matches pattern[from..to) below path[0..root_len), listing path[0..path_len). */
         struct {
             void *handle;
-            size_t path_len, from, to, root_len;
+            uint32_t path_len, from, to, root_len; /* SP_PATH_MAX and SP_GLOB_PATTERN_MAX lengths */
         } stack[SP_GLOB_MAX_DEPTH];
     } priv_;
 } SpGlobIter;
@@ -3376,10 +3380,10 @@ static void sp_priv_glob_push(SpGlobIter *it, size_t from, size_t to, size_t roo
     }
     it->depth++;
     it->priv_.stack[it->depth].handle = SP_PRIV_NULL;
-    it->priv_.stack[it->depth].path_len = it->priv_.path.len;
-    it->priv_.stack[it->depth].from = from;
-    it->priv_.stack[it->depth].to = to;
-    it->priv_.stack[it->depth].root_len = root_len;
+    it->priv_.stack[it->depth].path_len = SP_PRIV_CAST(uint32_t, it->priv_.path.len);
+    it->priv_.stack[it->depth].from = SP_PRIV_CAST(uint32_t, from);
+    it->priv_.stack[it->depth].to = SP_PRIV_CAST(uint32_t, to);
+    it->priv_.stack[it->depth].root_len = SP_PRIV_CAST(uint32_t, root_len);
 }
 
 /* Literal parts extend the path without a directory listing. Wildcards and recursive groups share one frame;
