@@ -924,7 +924,8 @@ static int sp_priv_fold_cmp(const char *a, size_t alen, const char *b, size_t bl
 }
 
 /* The length of a leading Windows drive like "c:": any one character but a separator, then ':'; 0 when there is none
- * (or the flavor is POSIX). A character is a UTF-8 sequence, or a byte that isn't part of one. */
+ * (or the flavor is POSIX). A character is a UTF-8 sequence, or a byte that isn't part of one; like CPython, whose
+ * ntpath.splitroot is native C on a Windows host, what counts as one character depends on the host. */
 static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
     if (flavor != SP_FLAVOR_WINDOWS || len < 2 || s[0] == '/' || s[0] == '\\')
         return 0;
@@ -936,6 +937,11 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
         n++;
     if (n != extra + 1)
         n = 1;
+#ifdef SP_WINDOWS
+    /* Windows' native splitroot counts UTF-16 units, where a character past the BMP takes two: never a drive there */
+    if (n == 4)
+        return 0;
+#endif
     return n < len && s[n] == ':' ? n + 1 : 0;
 }
 
