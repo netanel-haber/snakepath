@@ -2820,8 +2820,8 @@ SpError sp_rmdir(const SpPath *p) {
     return err != SP_OK ? err : sp_priv_remove_impl(path, true, false);
 }
 
-/* os.chmod(). On Windows the owner's write bit clears or sets the read-only attribute: of the file a link points to
- * through a handle when following, of the link itself otherwise. Not following a symlink elsewhere needs fchmodat's
+/* os.chmod(). On Windows the owner's write bit clears or sets the read-only attribute: of the file a link leads to
+ * (its final path) when following, of the link itself otherwise. Not following a symlink elsewhere needs fchmodat's
  * AT_SYMLINK_NOFOLLOW; where the headers don't show it, only a path that isn't a symlink can do without following. */
 SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks) {
     SpPrivChar buf[SP_PRIV_NATIVE_MAX];
@@ -2831,26 +2831,14 @@ SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks) {
         return err;
 
 #ifdef SP_WINDOWS
-    if (follow_symlinks) {
-        DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-        DWORD access = FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES;
-        HANDLE h = CreateFileW(path, access, share, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-        if (h == INVALID_HANDLE_VALUE)
-            return sp_priv_last_error();
-
-        FILE_BASIC_INFO info;
-        bool ok = GetFileInformationByHandleEx(h, FileBasicInfo, &info, sizeof(info)) != 0;
-        if (ok) {
-            info.FileAttributes = (mode & 0200) ? info.FileAttributes & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)
-                                                : info.FileAttributes | FILE_ATTRIBUTE_READONLY;
-            if (info.FileAttributes == 0)
-                info.FileAttributes = FILE_ATTRIBUTE_NORMAL; /* 0 would leave the attributes as they are */
-            ok = SetFileInformationByHandle(h, FileBasicInfo, &info, sizeof(info)) != 0;
-        }
-        err = ok ? SP_OK : sp_priv_last_error();
-        CloseHandle(h);
-        return err;
+    SpPath target;
+    DWORD final = follow_symlinks ? sp_priv_final_path(p, &target) : 0;
+    if (final != 0) {
+        SetLastError(final);
+        return sp_priv_last_error();
     }
+    if (follow_symlinks && (err = sp_priv_native(&target, buf, &path)) != SP_OK)
+        return err;
 
     DWORD attrs = GetFileAttributesW(path);
     if (attrs == INVALID_FILE_ATTRIBUTES)
@@ -3758,66 +3746,65 @@ static int sp_priv_walk_name_cmp(const void *a, const void *b) {
     return strcmp(*SP_PRIV_CAST(char *const *, a), *SP_PRIV_CAST(char *const *, b));
 }
 
-/* Lists entry.dirpath into a new level on top of the buffer's stack and points the entry at its names. The listing's
- * error leaves no level; a buffer too small for it is SP_ERR_TOO_LONG in it->error. */
+/* Lists entry.dirpath into a new level on top of the buffer's stack (levels start at pointer-aligned offsets) and points
+ * the entry at its names. The listing's error leaves no level; a buffer too small for it is SP_ERR_TOO_LONG in
+ * it->error. */
 static SpError sp_priv_walk_list(SpWalkIter *it) {
     SpWalkEntry *e = &it->entry;
     char *buf = it->priv_.buf;
-    size_t base = it->priv_.used;
-    size_t names = base + sizeof(SpPrivWalkLevel);
+    SpPrivWalkLevel *level = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, buf + it->priv_.used));
+    size_t names = it->priv_.used + sizeof(SpPrivWalkLevel);
     size_t used = names;
-    size_t dir_count = 0;
+    size_t count = 0;
     bool follow = (it->priv_.flags & SP_WALK_FOLLOW_SYMLINKS) != 0;
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0;) {
+    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0; count++) {
         SpStatResult st = sp_priv_stat_impl(&child, follow);
-        bool is_dir = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
         }
-        buf[used] = is_dir ? 'd' : 'f';
+        buf[used] = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR ? 'd' : 'f';
         memcpy(buf + used + 1, child.buf + child.len - n, n + 1);
         used += n + 2;
-        dir_count += is_dir ? 1 : 0;
     }
     sp_priv_readdir_close(&handle);
     if (it->error != SP_OK || child.error != SP_OK)
         return it->error != SP_OK ? it->error : child.error;
 
-    /* The pointers, aligned (the buffer's start is), after the names */
-    SpPrivWalkLevel level = SP_PRIV_ZERO;
+    /* The pointers after the names: subdirectories from the front, the rest from the back */
     size_t ptrs = (used + sizeof(char *) - 1) / sizeof(char *) * sizeof(char *);
-    size_t count = 0;
-    for (size_t at = names; at < used; at += strlen(buf + at + 1) + 2)
-        count++;
     if (names > it->priv_.size || ptrs + count * sizeof(char *) > it->priv_.size) {
         it->error = SP_ERR_TOO_LONG;
         return it->error;
     }
-
-    level.prev = it->priv_.level;
-    level.dir_len = e->dirpath.len;
-    level.dirnames = SP_PRIV_CAST(char **, SP_PRIV_CAST(void *, buf + ptrs));
-    level.filenames = level.dirnames + dir_count;
+    char **list = SP_PRIV_CAST(char **, SP_PRIV_CAST(void *, buf + ptrs));
+    size_t dirs = 0;
+    size_t files = 0;
     for (size_t at = names; at < used; at += strlen(buf + at + 1) + 2) {
         if (buf[at] == 'd')
-            level.dirnames[level.dirname_count++] = buf + at + 1;
+            list[dirs++] = buf + at + 1;
         else
-            level.filenames[level.filename_count++] = buf + at + 1;
+            list[count - ++files] = buf + at + 1;
     }
-    qsort(level.dirnames, level.dirname_count, sizeof(char *), sp_priv_walk_name_cmp);
-    qsort(level.filenames, level.filename_count, sizeof(char *), sp_priv_walk_name_cmp);
+    qsort(list, dirs, sizeof(char *), sp_priv_walk_name_cmp);
+    qsort(list + dirs, files, sizeof(char *), sp_priv_walk_name_cmp);
 
-    memcpy(buf + base, &level, sizeof(level));
-    it->priv_.level = base;
+    level->prev = it->priv_.level;
+    level->dir_len = e->dirpath.len;
+    level->next = 0;
+    level->dirnames = list;
+    level->dirname_count = dirs;
+    level->filenames = list + dirs;
+    level->filename_count = files;
+    it->priv_.level = it->priv_.used;
     it->priv_.used = ptrs + count * sizeof(char *);
-    e->dirnames = level.dirnames;
-    e->dirname_count = level.dirname_count;
-    e->filenames = level.filenames;
-    e->filename_count = level.filename_count;
+    e->dirnames = list;
+    e->dirname_count = dirs;
+    e->filenames = list + dirs;
+    e->filename_count = files;
     return SP_OK;
 }
 
@@ -3843,15 +3830,13 @@ SpWalkIter sp_walk_begin(const SpPath *top, unsigned int flags, void *buf, size_
 SpWalkEntry *sp_walk_next(SpWalkIter *it) {
     SpWalkEntry *e = &it->entry;
     bool top_down = (it->priv_.flags & SP_WALK_TOP_DOWN) != 0;
-    SpPrivWalkLevel level;
 
     /* The listing given out last, top-down: its subdirectories are what the caller left in dirnames */
     if (it->priv_.prunable) {
+        SpPrivWalkLevel *level = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, it->priv_.buf + it->priv_.level));
+        level->dirnames = e->dirnames;
+        level->dirname_count = e->dirname_count;
         it->priv_.prunable = false;
-        memcpy(&level, it->priv_.buf + it->priv_.level, sizeof(level));
-        level.dirnames = e->dirnames;
-        level.dirname_count = e->dirname_count;
-        memcpy(it->priv_.buf + it->priv_.level, &level, sizeof(level));
     }
 
     while (it->error == SP_OK) {
@@ -3876,25 +3861,24 @@ SpWalkEntry *sp_walk_next(SpWalkIter *it) {
             return SP_PRIV_NULL;
 
         /* The innermost level's next subdirectory, or else that level is done */
-        memcpy(&level, it->priv_.buf + it->priv_.level, sizeof(level));
-        e->dirpath.len = level.dir_len;
-        e->dirpath.buf[level.dir_len] = '\0';
-        if (level.next < level.dirname_count) {
-            const char *name = level.dirnames[level.next++];
-            memcpy(it->priv_.buf + it->priv_.level, &level, sizeof(level));
+        SpPrivWalkLevel *level = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, it->priv_.buf + it->priv_.level));
+        e->dirpath.len = level->dir_len;
+        e->dirpath.buf[level->dir_len] = '\0';
+        if (level->next < level->dirname_count) {
+            const char *name = level->dirnames[level->next++];
             it->error = sp_priv_join_child(&e->dirpath, name, strlen(name));
             it->priv_.pending = true;
             continue;
         }
 
         it->priv_.used = it->priv_.level;
-        it->priv_.level = level.prev;
+        it->priv_.level = level->prev;
         if (!top_down) {
             e->error = SP_OK;
-            e->dirnames = level.dirnames;
-            e->dirname_count = level.dirname_count;
-            e->filenames = level.filenames;
-            e->filename_count = level.filename_count;
+            e->dirnames = level->dirnames;
+            e->dirname_count = level->dirname_count;
+            e->filenames = level->filenames;
+            e->filename_count = level->filename_count;
             return e;
         }
     }
