@@ -55,8 +55,6 @@ extern "C" {
 
 #if defined(_WIN32) || defined(_WIN64)
 #define SP_WINDOWS 1
-#else
-#define SP_POSIX 1
 #endif
 
 /* A path's flavor is POSIX or WINDOWS: SP_FLAVOR_NATIVE resolves to the platform's when the path is made */
@@ -64,12 +62,11 @@ typedef enum { SP_FLAVOR_NATIVE = 0, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS } SpFlav
 
 typedef enum { SP_CASE_PLATFORM_DEFAULT = 0, SP_CASE_SENSITIVE, SP_CASE_INSENSITIVE } SpCaseSensitivity;
 
-#define SP_ASSERT_PATH(p) assert((p) != NULL && "path pointer must not be NULL")
 #define SP_ASSERT_FLAVOR(f)                                                                                            \
     assert(((f) == SP_FLAVOR_NATIVE || (f) == SP_FLAVOR_POSIX || (f) == SP_FLAVOR_WINDOWS) && "invalid flavor value")
 #define SP_ASSERT_PATH_INVARIANT(p)                                                                                    \
     do {                                                                                                               \
-        SP_ASSERT_PATH(p);                                                                                             \
+        assert((p) != NULL && "path pointer must not be NULL");                                                        \
         assert((p)->len < SP_PATH_MAX && "path length exceeds buffer size");                                           \
         assert((p)->buf[(p)->len] == '\0' && "path buffer not null-terminated");                                       \
         SP_ASSERT_FLAVOR((p)->flavor);                                                                                 \
@@ -148,9 +145,6 @@ void sp_iterdir_end(SpIterdirIter *it);
 #ifndef SP_GLOB_MAX_DEPTH
 #define SP_GLOB_MAX_DEPTH 32
 #endif
-#ifndef SP_GLOB_MAX_SEGMENTS
-#define SP_GLOB_MAX_SEGMENTS 64
-#endif
 #ifndef SP_GLOB_PATTERN_MAX
 #define SP_GLOB_PATTERN_MAX 256
 #endif
@@ -187,10 +181,6 @@ typedef struct {
 SpPath sp_path_new(const char *s, SpFlavor flavor);
 SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor);
 SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor);
-static inline SpPath sp_path_copy(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    return *p;
-}
 
 const char *sp_str(const SpPath *p);
 size_t sp_as_posix(const SpPath *p, char *out, size_t out_size);
@@ -286,7 +276,7 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, un
  * so sp_error_str() describes either */
 enum {
     SP_OK = 0,
-    SP_ERR,
+    SP_ERR, /* Other error (I/O, permission, etc.) */
     SP_ERR_EXISTS,
     SP_ERR_NOT_FOUND,
     SP_ERR_NOT_DIR,
@@ -296,20 +286,13 @@ enum {
     SP_ERR_READ,
     SP_ERR_WRITE,
     SP_ERR_TOO_LARGE,
-    SP_ERR_NOT_RELATIVE,  /* Not relative to other path */
-    SP_ERR_NO_NAME,       /* Path has no usable name */
-    SP_ERR_INVALID_ARG,   /* Invalid argument (name/stem/suffix, empty glob pattern, same copy source and target) */
-    SP_ERR_UNSUPPORTED,   /* Unsupported operation (non-relative glob pattern) */
-    SP_ERR_NONE = SP_OK,  /* No error (or empty path) */
-    SP_ERR_OTHER = SP_ERR /* Other error (I/O, permission, etc.) */
+    SP_ERR_NOT_RELATIVE, /* Not relative to other path */
+    SP_ERR_NO_NAME,      /* Path has no usable name */
+    SP_ERR_INVALID_ARG,  /* Invalid argument (name/stem/suffix, empty glob pattern, same copy source and target) */
+    SP_ERR_UNSUPPORTED   /* Unsupported operation (non-relative glob pattern) */
 };
 
 const char *sp_error_str(int error);
-
-typedef struct {
-    SpPath path;
-    int error;
-} SpPathOp;
 
 bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);
 bool sp_unlink(const SpPath *p, bool missing_ok);
@@ -392,108 +375,96 @@ SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensiti
 /* clang-format on */
 
 /* Error checking for path results */
-static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_ERR_NONE; }
+static inline bool sp_path_is_error(const SpPath *p) { return p->len == 0 && p->buf[0] != SP_OK; }
 static inline int sp_path_error_code(const SpPath *p) {
     return p->len == 0 ? SP_PRIV_CAST(int, SP_PRIV_CAST(unsigned char, p->buf[0])) : 0;
 }
 
-#ifdef __cplusplus
-}
-#endif
-
 /* ============ Fluent API ============ */
 #ifdef SNAKEPATH_FLUENT
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
 
-#define SP_F_TERMINATOR_METHODS(X_TERM)                                                                                \
-    X_TERM(SpPath, path, (void), sp_priv_f_ctx)                                                                        \
-    X_TERM(SpTerm, name, (void), sp_name(&sp_priv_f_ctx))                                                              \
-    X_TERM(SpTerm, stem, (void), sp_stem(&sp_priv_f_ctx))                                                              \
-    X_TERM(SpTerm, suffix, (void), sp_suffix(&sp_priv_f_ctx))                                                          \
-    X_TERM(SpSuffixes, suffixes, (void), sp_suffixes(&sp_priv_f_ctx))                                                  \
-    X_TERM(SpTerm, drive, (void), sp_drive(&sp_priv_f_ctx))                                                            \
-    X_TERM(SpTerm, root, (void), sp_root(&sp_priv_f_ctx))                                                              \
-    X_TERM(SpTerm, anchor, (void), sp_anchor(&sp_priv_f_ctx))                                                          \
-    X_TERM(SpTerm, owner, (void), sp_owner(&sp_priv_f_ctx))                                                            \
-    X_TERM(SpTerm, group, (void), sp_group(&sp_priv_f_ctx))                                                            \
-    X_TERM(bool, is_absolute, (void), sp_is_absolute(&sp_priv_f_ctx))                                                  \
-    X_TERM(bool, is_relative_to, (const SpPath *o), sp_is_relative_to(&sp_priv_f_ctx, o))                              \
-    X_TERM(bool, is_file, (bool follow_symlinks), sp_is_file(&sp_priv_f_ctx, follow_symlinks))                         \
-    X_TERM(bool, is_dir, (bool follow_symlinks), sp_is_dir(&sp_priv_f_ctx, follow_symlinks))                           \
-    X_TERM(bool, exists, (bool follow_symlinks), sp_exists(&sp_priv_f_ctx, follow_symlinks))                           \
-    X_TERM(bool, is_symlink, (void), sp_is_symlink(&sp_priv_f_ctx))                                                    \
-    X_TERM(bool, is_block_device, (void), sp_is_block_device(&sp_priv_f_ctx))                                          \
-    X_TERM(bool, is_char_device, (void), sp_is_char_device(&sp_priv_f_ctx))                                            \
-    X_TERM(bool, is_fifo, (void), sp_is_fifo(&sp_priv_f_ctx))                                                          \
-    X_TERM(bool, is_socket, (void), sp_is_socket(&sp_priv_f_ctx))                                                      \
-    X_TERM(bool, is_mount, (void), sp_is_mount(&sp_priv_f_ctx))                                                        \
-    X_TERM(bool, is_junction, (void), sp_is_junction(&sp_priv_f_ctx))                                                  \
-    X_TERM(SpStatResult, stat, (void), sp_stat(&sp_priv_f_ctx))                                                        \
-    X_TERM(SpStatResult, lstat, (void), sp_lstat(&sp_priv_f_ctx))                                                      \
-    X_TERM(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))                                                 \
-    X_TERM(bool, ne, (const SpPath *o), sp_path_ne(&sp_priv_f_ctx, o))                                                 \
-    X_TERM(bool, samefile, (const SpPath *o), sp_samefile(&sp_priv_f_ctx, o))                                          \
-    X_TERM(SpIOResult, read_file, (char *buf, size_t buf_size), sp_read_file(&sp_priv_f_ctx, buf, buf_size))           \
-    X_TERM(SpIOResult, write_file, (const char *data, size_t data_len), sp_write_file(&sp_priv_f_ctx, data, data_len)) \
-    X_TERM(size_t, as_posix, (char *out, size_t out_size), sp_as_posix(&sp_priv_f_ctx, out, out_size))                 \
-    X_TERM(size_t, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))                     \
-    X_TERM(int, match, (const char *pattern), sp_match_ex(&sp_priv_f_ctx, pattern, -1))                                \
-    X_TERM(bool, full_match, (const char *pattern), sp_full_match(&sp_priv_f_ctx, pattern, -1))                        \
-    X_TERM(SpPathOp, mkdir, (unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode),                \
-           sp_priv_f_pathop(sp_mkdir(&sp_priv_f_ctx, mode, parents, exist_ok, parent_mode)))                           \
-    X_TERM(SpPathOp, touch, (unsigned int mode, bool exist_ok),                                                        \
-           sp_priv_f_pathop(sp_touch(&sp_priv_f_ctx, mode, exist_ok) ? SP_OK : SP_ERR))                                \
-    X_TERM(SpPathOp, unlink, (bool missing_ok),                                                                        \
-           sp_priv_f_pathop(sp_unlink(&sp_priv_f_ctx, missing_ok) ? SP_OK : SP_ERR))                                   \
-    X_TERM(SpPathOp, rmdir, (void), sp_priv_f_pathop(sp_rmdir(&sp_priv_f_ctx) ? SP_OK : SP_ERR))                       \
-    X_TERM(SpPathOp, chmod, (unsigned int mode), sp_priv_f_pathop(sp_chmod(&sp_priv_f_ctx, mode) ? SP_OK : SP_ERR))    \
-    X_TERM(SpPathOp, symlink_to, (const SpPath *target, bool target_is_directory),                                     \
-           sp_priv_f_pathop(sp_symlink_to(&sp_priv_f_ctx, target, target_is_directory) ? SP_OK : SP_ERR))              \
-    X_TERM(SpPathOp, hardlink_to, (const SpPath *target),                                                              \
-           sp_priv_f_pathop(sp_hardlink_to(&sp_priv_f_ctx, target) ? SP_OK : SP_ERR))
-
-#define SP_F_CHAIN_METHODS(X)                                                                                          \
-    X(parent, (void), sp_parent(&sp_priv_f_ctx))                                                                       \
-    X(join, (const char *s), sp_join_one(&sp_priv_f_ctx, s))                                                           \
-    X(with_segments, (const char **parts, size_t parts_count), sp_with_segments(&sp_priv_f_ctx, parts, parts_count))   \
-    X(with_name, (const char *s), sp_with_name(&sp_priv_f_ctx, s))                                                     \
-    X(with_stem, (const char *s), sp_with_stem(&sp_priv_f_ctx, s))                                                     \
-    X(with_suffix, (const char *s), sp_with_suffix(&sp_priv_f_ctx, s))                                                 \
-    X(absolute, (void), sp_absolute(&sp_priv_f_ctx))                                                                   \
-    X(expanduser, (void), sp_expanduser(&sp_priv_f_ctx))                                                               \
-    X(relative_to, (const SpPath *o, bool walk_up), sp_relative_to(&sp_priv_f_ctx, o, walk_up))                        \
-    X(readlink, (void), sp_readlink(&sp_priv_f_ctx))                                                                   \
-    X(resolve, (bool strict), sp_resolve(&sp_priv_f_ctx, strict))                                                      \
-    X(rename, (const SpPath *target), sp_rename(&sp_priv_f_ctx, target))                                               \
-    X(replace, (const SpPath *target), sp_replace(&sp_priv_f_ctx, target))                                             \
-    X(copy, (const SpPath *target, bool follow_symlinks, bool preserve_metadata),                                      \
-      sp_copy(&sp_priv_f_ctx, target, follow_symlinks, preserve_metadata))                                             \
-    X(copy_into, (const SpPath *target_dir, bool follow_symlinks, bool preserve_metadata),                             \
-      sp_copy_into(&sp_priv_f_ctx, target_dir, follow_symlinks, preserve_metadata))                                    \
-    X(move, (const SpPath *target), sp_move(&sp_priv_f_ctx, target))                                                   \
-    X(move_into, (const SpPath *target_dir), sp_move_into(&sp_priv_f_ctx, target_dir))
+/* Each method returns what the function it forwards to returns; chainable ones return the fluent object again */
+#define SP_F_METHODS(X)                                                                                                \
+    X(SpPath, path, (void), sp_priv_f_ctx)                                                                             \
+    X(SpTerm, name, (void), sp_name(&sp_priv_f_ctx))                                                                   \
+    X(SpTerm, stem, (void), sp_stem(&sp_priv_f_ctx))                                                                   \
+    X(SpTerm, suffix, (void), sp_suffix(&sp_priv_f_ctx))                                                               \
+    X(SpSuffixes, suffixes, (void), sp_suffixes(&sp_priv_f_ctx))                                                       \
+    X(SpTerm, drive, (void), sp_drive(&sp_priv_f_ctx))                                                                 \
+    X(SpTerm, root, (void), sp_root(&sp_priv_f_ctx))                                                                   \
+    X(SpTerm, anchor, (void), sp_anchor(&sp_priv_f_ctx))                                                               \
+    X(SpTerm, owner, (void), sp_owner(&sp_priv_f_ctx))                                                                 \
+    X(SpTerm, group, (void), sp_group(&sp_priv_f_ctx))                                                                 \
+    X(bool, is_absolute, (void), sp_is_absolute(&sp_priv_f_ctx))                                                       \
+    X(bool, is_relative_to, (const SpPath *o), sp_is_relative_to(&sp_priv_f_ctx, o))                                   \
+    X(bool, is_file, (bool follow_symlinks), sp_is_file(&sp_priv_f_ctx, follow_symlinks))                              \
+    X(bool, is_dir, (bool follow_symlinks), sp_is_dir(&sp_priv_f_ctx, follow_symlinks))                                \
+    X(bool, exists, (bool follow_symlinks), sp_exists(&sp_priv_f_ctx, follow_symlinks))                                \
+    X(bool, is_symlink, (void), sp_is_symlink(&sp_priv_f_ctx))                                                         \
+    X(bool, is_block_device, (void), sp_is_block_device(&sp_priv_f_ctx))                                               \
+    X(bool, is_char_device, (void), sp_is_char_device(&sp_priv_f_ctx))                                                 \
+    X(bool, is_fifo, (void), sp_is_fifo(&sp_priv_f_ctx))                                                               \
+    X(bool, is_socket, (void), sp_is_socket(&sp_priv_f_ctx))                                                           \
+    X(bool, is_mount, (void), sp_is_mount(&sp_priv_f_ctx))                                                             \
+    X(bool, is_junction, (void), sp_is_junction(&sp_priv_f_ctx))                                                       \
+    X(SpStatResult, stat, (void), sp_stat(&sp_priv_f_ctx))                                                             \
+    X(SpStatResult, lstat, (void), sp_lstat(&sp_priv_f_ctx))                                                           \
+    X(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))                                                      \
+    X(bool, ne, (const SpPath *o), sp_path_ne(&sp_priv_f_ctx, o))                                                      \
+    X(bool, samefile, (const SpPath *o), sp_samefile(&sp_priv_f_ctx, o))                                               \
+    X(SpIOResult, read_file, (char *buf, size_t buf_size), sp_read_file(&sp_priv_f_ctx, buf, buf_size))                \
+    X(SpIOResult, write_file, (const char *data, size_t data_len), sp_write_file(&sp_priv_f_ctx, data, data_len))      \
+    X(size_t, as_posix, (char *out, size_t out_size), sp_as_posix(&sp_priv_f_ctx, out, out_size))                      \
+    X(size_t, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))                          \
+    X(int, match, (const char *pattern), sp_match_ex(&sp_priv_f_ctx, pattern, -1))                                     \
+    X(bool, full_match, (const char *pattern), sp_full_match(&sp_priv_f_ctx, pattern, -1))                             \
+    X(int, mkdir, (unsigned int mode, bool parents, bool exist_ok, unsigned int parent_mode),                          \
+      sp_mkdir(&sp_priv_f_ctx, mode, parents, exist_ok, parent_mode))                                                  \
+    X(bool, touch, (unsigned int mode, bool exist_ok), sp_touch(&sp_priv_f_ctx, mode, exist_ok))                       \
+    X(bool, unlink, (bool missing_ok), sp_unlink(&sp_priv_f_ctx, missing_ok))                                          \
+    X(bool, rmdir, (void), sp_rmdir(&sp_priv_f_ctx))                                                                   \
+    X(bool, chmod, (unsigned int mode), sp_chmod(&sp_priv_f_ctx, mode))                                                \
+    X(bool, symlink_to, (const SpPath *target, bool target_is_directory),                                              \
+      sp_symlink_to(&sp_priv_f_ctx, target, target_is_directory))                                                      \
+    X(bool, hardlink_to, (const SpPath *target), sp_hardlink_to(&sp_priv_f_ctx, target))                               \
+    X(SpPrivDontUseThisDirectly_ *, parent, (void), sp_priv_f_chain(sp_parent(&sp_priv_f_ctx)))                        \
+    X(SpPrivDontUseThisDirectly_ *, join, (const char *s), sp_priv_f_chain(sp_join_one(&sp_priv_f_ctx, s)))            \
+    X(SpPrivDontUseThisDirectly_ *, with_segments, (const char **parts, size_t parts_count),                           \
+      sp_priv_f_chain(sp_with_segments(&sp_priv_f_ctx, parts, parts_count)))                                           \
+    X(SpPrivDontUseThisDirectly_ *, with_name, (const char *s), sp_priv_f_chain(sp_with_name(&sp_priv_f_ctx, s)))      \
+    X(SpPrivDontUseThisDirectly_ *, with_stem, (const char *s), sp_priv_f_chain(sp_with_stem(&sp_priv_f_ctx, s)))      \
+    X(SpPrivDontUseThisDirectly_ *, with_suffix, (const char *s), sp_priv_f_chain(sp_with_suffix(&sp_priv_f_ctx, s)))  \
+    X(SpPrivDontUseThisDirectly_ *, absolute, (void), sp_priv_f_chain(sp_absolute(&sp_priv_f_ctx)))                    \
+    X(SpPrivDontUseThisDirectly_ *, expanduser, (void), sp_priv_f_chain(sp_expanduser(&sp_priv_f_ctx)))                \
+    X(SpPrivDontUseThisDirectly_ *, relative_to, (const SpPath *o, bool walk_up),                                      \
+      sp_priv_f_chain(sp_relative_to(&sp_priv_f_ctx, o, walk_up)))                                                     \
+    X(SpPrivDontUseThisDirectly_ *, readlink, (void), sp_priv_f_chain(sp_readlink(&sp_priv_f_ctx)))                    \
+    X(SpPrivDontUseThisDirectly_ *, resolve, (bool strict), sp_priv_f_chain(sp_resolve(&sp_priv_f_ctx, strict)))       \
+    X(SpPrivDontUseThisDirectly_ *, rename, (const SpPath *target),                                                    \
+      sp_priv_f_chain(sp_rename(&sp_priv_f_ctx, target)))                                                              \
+    X(SpPrivDontUseThisDirectly_ *, replace, (const SpPath *target),                                                   \
+      sp_priv_f_chain(sp_replace(&sp_priv_f_ctx, target)))                                                             \
+    X(SpPrivDontUseThisDirectly_ *, copy, (const SpPath *target, bool follow_symlinks, bool preserve_metadata),        \
+      sp_priv_f_chain(sp_copy(&sp_priv_f_ctx, target, follow_symlinks, preserve_metadata)))                            \
+    X(SpPrivDontUseThisDirectly_ *, copy_into,                                                                         \
+      (const SpPath *target_dir, bool follow_symlinks, bool preserve_metadata),                                        \
+      sp_priv_f_chain(sp_copy_into(&sp_priv_f_ctx, target_dir, follow_symlinks, preserve_metadata)))                   \
+    X(SpPrivDontUseThisDirectly_ *, move, (const SpPath *target), sp_priv_f_chain(sp_move(&sp_priv_f_ctx, target)))    \
+    X(SpPrivDontUseThisDirectly_ *, move_into, (const SpPath *target_dir),                                             \
+      sp_priv_f_chain(sp_move_into(&sp_priv_f_ctx, target_dir)))
 
 /* clang-format off */
 struct sp_fluent_ {
-    /* Terminators - end chain and return value */
-#define SP_F_TERM_FIELD(ret, name, params, expr) ret (*name) params;
-    SP_F_TERMINATOR_METHODS(SP_F_TERM_FIELD)
-#undef SP_F_TERM_FIELD
-    /* Chainable - return pointer to avoid stack copies */
-#define SP_F_CHAIN_FIELD(name, params, expr) SpPrivDontUseThisDirectly_ *(*name) params;
-    SP_F_CHAIN_METHODS(SP_F_CHAIN_FIELD)
-#undef SP_F_CHAIN_FIELD
+#define SP_F_FIELD(ret, name, params, expr) ret (*name) params;
+    SP_F_METHODS(SP_F_FIELD)
+#undef SP_F_FIELD
 };
 /* clang-format on */
 
 #ifndef SNAKEPATH_IMPLEMENTATION
-#undef SP_F_CHAIN_METHODS
-#undef SP_F_TERMINATOR_METHODS
+#undef SP_F_METHODS
 #endif
 
 SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
@@ -504,11 +475,11 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 #define SPF_W(s) sp_fluent_init_(sp_path_f((s), SP_FLAVOR_WINDOWS))
 #define SPF_PATH(p) sp_fluent_init_(p)
 
+#endif /* SNAKEPATH_FLUENT */
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* SNAKEPATH_FLUENT */
 
 #endif /* SNAKEPATH_H */
 
@@ -516,22 +487,32 @@ SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath);
 
 #include <stdio.h>
 
-/* Platform-specific includes for getcwd and stat */
+/* Platform-specific includes, and the C runtime's names for the calls both platforms share */
+#include <errno.h>
 #ifdef SP_WINDOWS
 #include <direct.h>
+#include <io.h>
 #include <windows.h>
 #define sp_priv_getcwd _getcwd
+#define sp_priv_chmod _chmod
+#define sp_priv_mkdir(path, mode) _mkdir(path)
+#define sp_priv_rmdir _rmdir
+#define sp_priv_unlink _unlink
 #else
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <errno.h>
+#include <dirent.h>
 #include <stdlib.h> /* For realpath */
 #include <fcntl.h>  /* For O_CREAT, etc. */
 #include <utime.h>  /* For utime() */
 #include <pwd.h>    /* For getpwuid, getpwnam */
 #include <grp.h>    /* For getgrgid */
 #define sp_priv_getcwd getcwd
+#define sp_priv_chmod chmod
+#define sp_priv_mkdir mkdir
+#define sp_priv_rmdir rmdir
+#define sp_priv_unlink unlink
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
 #ifndef __cplusplus
@@ -545,31 +526,17 @@ extern int gethostname(char *name, size_t len);
 #endif
 #endif
 
-/* stat mode constants - define if not provided by system headers */
-#ifndef S_IFMT
-#define S_IFMT 0170000
-#endif
-#ifndef S_IFSOCK
-#define S_IFSOCK 0140000
-#endif
-#ifndef S_IFLNK
-#define S_IFLNK 0120000
-#endif
-#ifndef S_IFREG
-#define S_IFREG 0100000
-#endif
-#ifndef S_IFBLK
-#define S_IFBLK 0060000
-#endif
-#ifndef S_IFDIR
-#define S_IFDIR 0040000
-#endif
-#ifndef S_IFCHR
-#define S_IFCHR 0020000
-#endif
-#ifndef S_IFIFO
-#define S_IFIFO 0010000
-#endif
+/* A mode's file type bits, the same everywhere (Windows and strict C99 headers leave their names out) */
+enum {
+    SP_PRIV_IFMT = 0170000,
+    SP_PRIV_IFSOCK = 0140000,
+    SP_PRIV_IFLNK = 0120000,
+    SP_PRIV_IFREG = 0100000,
+    SP_PRIV_IFBLK = 0060000,
+    SP_PRIV_IFDIR = 0040000,
+    SP_PRIV_IFCHR = 0020000,
+    SP_PRIV_IFIFO = 0010000
+};
 
 #ifdef __cplusplus
 extern "C" {
@@ -585,11 +552,12 @@ static SpFlavor sp_priv_flavor(SpFlavor flavor) {
 #endif
 }
 
-/* Byte order, with ASCII letters lowercased when case-insensitive */
-static int sp_priv_str_cmp_case(const char *a, size_t alen, const char *b, size_t blen, bool case_insensitive) {
+/* Byte order, with ASCII letters lowercased when case-insensitive and `low` sorting before every other byte */
+static int sp_priv_str_cmp_case(const char *a, size_t alen, const char *b, size_t blen, bool case_insensitive,
+                                char low) {
     for (size_t i = 0; i < alen && i < blen; i++) {
-        int ca = SP_PRIV_CAST(unsigned char, a[i]);
-        int cb = SP_PRIV_CAST(unsigned char, b[i]);
+        int ca = a[i] == low ? -1 : SP_PRIV_CAST(unsigned char, a[i]);
+        int cb = b[i] == low ? -1 : SP_PRIV_CAST(unsigned char, b[i]);
         if (case_insensitive && ca >= 'A' && ca <= 'Z')
             ca += 32;
         if (case_insensitive && cb >= 'A' && cb <= 'Z')
@@ -624,7 +592,7 @@ static SpPath sp_priv_path_from_raw(const char *s, size_t len, SpFlavor flavor) 
     return p;
 }
 
-/* The empty path, carrying an error code for sp_path_error_code() (SP_ERR_NONE for a plain empty path) */
+/* The empty path, carrying an error code for sp_path_error_code() (SP_OK for a plain empty path) */
 static SpPath sp_priv_error_path(SpFlavor flavor, int err_code) {
     SpPath p = SP_PRIV_ZERO;
     p.flavor = flavor;
@@ -746,20 +714,11 @@ SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor) {
 
 SpPath sp_path_new(const char *s, SpFlavor flavor) { return sp_path_from_n(s, s ? strlen(s) : 0, flavor); }
 
+/* The path's POSIX form, parsed in the destination flavor: separators carry over (Windows reads '/' as one too) */
 SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor) {
-    SpPath src = sp_path_from_n(s, s ? strlen(s) : 0, src_flavor);
-    SpPath dest = src;
-    dest.flavor = sp_priv_flavor(dest_flavor);
-    if (src.flavor == dest.flavor)
-        return src;
-
-    char ssep = src.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-    char dsep = dest.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-    for (size_t i = 0; i < dest.len; i++)
-        if (dest.buf[i] == ssep)
-            dest.buf[i] = dsep;
-    sp_priv_normalize(&dest, sp_priv_split_anchor(dest.buf, dest.len, dest.flavor, NULL));
-    return dest;
+    SpPath src = sp_path_new(s, src_flavor);
+    char buf[SP_PATH_MAX];
+    return sp_path_from_n(buf, sp_as_posix(&src, buf, SP_PATH_MAX), dest_flavor);
 }
 
 const char *sp_str(const SpPath *p) {
@@ -804,8 +763,6 @@ static SpStr sp_priv_name_sv(const SpPath *p, size_t anchor) {
     size_t i = p->len;
     while (i > anchor && p->buf[i - 1] != '/' && p->buf[i - 1] != sep)
         i--;
-    if (i == 0 && p->len == 1 && p->buf[0] == '.')
-        return SP_PRIV_STR(SP_PRIV_NULL, 0);
     return SP_PRIV_STR(p->buf + i, p->len - i);
 }
 
@@ -854,8 +811,7 @@ SpSuffixes sp_suffixes(const SpPath *p) {
         size_t end = i + 1;
         while (end < name.len && name.data[end] != '.')
             end++;
-        r.items[r.count].data = name.data + i;
-        r.items[r.count++].len = end - i;
+        r.items[r.count++] = SP_PRIV_STR(name.data + i, end - i);
         i = end;
     }
     return r;
@@ -884,41 +840,27 @@ SpPartsIter sp_parts_begin(const SpPath *p) {
     return it;
 }
 
-/* Consume either end of the same bounded view; anchors remain one indivisible part. */
-static bool sp_priv_parts_take(SpPartsIter *it, SpStr *out, bool reverse) {
+/* The anchor is one part; the rest are split at separators */
+bool sp_parts_next(SpPartsIter *it, SpStr *out) {
     const char *buf = it->path->buf;
     char sep = it->path->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     size_t start = it->pos;
-    size_t end = it->end;
+    size_t end = it->anchor;
 
-    if (reverse) {
-        while (end > it->anchor && end > start && (buf[end - 1] == '/' || buf[end - 1] == sep))
-            end--;
-        if (end > it->anchor) {
-            start = end;
-            while (start > it->anchor && start > it->pos && buf[start - 1] != '/' && buf[start - 1] != sep)
-                start--;
-        }
-        it->end = start;
-    } else if (start == 0 && it->anchor > 0) {
-        end = it->anchor;
-        it->pos = end;
-    } else {
-        while (start < end && (buf[start] == '/' || buf[start] == sep))
+    if (start > 0 || end == 0) {
+        while (start < it->end && (buf[start] == '/' || buf[start] == sep))
             start++;
         end = start;
         while (end < it->end && buf[end] != '/' && buf[end] != sep)
             end++;
-        it->pos = end;
     }
+    it->pos = end;
 
     if (end <= start)
         return false;
     *out = SP_PRIV_STR(buf + start, end - start);
     return true;
 }
-
-bool sp_parts_next(SpPartsIter *it, SpStr *out) { return sp_priv_parts_take(it, out, false); }
 
 size_t sp_parts_count(const SpPath *p) {
     SpPartsIter it = sp_parts_begin(p);
@@ -975,7 +917,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
         add_sep = false;
     } else if (sp_priv_has_drive(other, olen, flavor)) {
         replace = !sp_priv_has_drive(base->buf, base->len, flavor) ||
-                  sp_priv_str_cmp_case(other, 1, base->buf, 1, true) != 0 ||
+                  sp_priv_str_cmp_case(other, 1, base->buf, 1, true, '\0') != 0 ||
                   (olen > 2 && (other[2] == '/' || other[2] == '\\'));
         if (!replace) { /* Same drive: keep the base path, adopting the other's case. */
             r.buf[0] = other[0];
@@ -992,10 +934,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
     return r;
 }
 
-SpPath sp_join_one(const SpPath *base, const char *other) {
-    SP_ASSERT_PATH_INVARIANT(base);
-    return other && other[0] ? sp_priv_join_len(base, other, strlen(other)) : *base;
-}
+SpPath sp_join_one(const SpPath *base, const char *other) { return sp_join_n(base, other, other ? strlen(other) : 0); }
 
 SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
     SP_ASSERT_PATH_INVARIANT(base);
@@ -1005,28 +944,22 @@ SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
 SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
     SP_ASSERT_PATH_INVARIANT(base);
     SP_ASSERT_PATH_INVARIANT(other);
-    if (other->len == 0)
-        return *base;
-    if (base->len == 0)
-        return *other;
-    return sp_priv_join_len(base, other->buf, other->len);
+    return base->len == 0 && other->len > 0 ? *other : sp_join_n(base, other->buf, other->len);
 }
 
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
     SP_ASSERT_PATH_INVARIANT(base);
     SpPath r = *base;
     for (; *parts; parts++)
-        if ((*parts)[0])
-            r = sp_priv_join_len(&r, *parts, strlen(*parts));
+        r = sp_join_n(&r, *parts, strlen(*parts));
     return r;
 }
 
 SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpPath r = sp_priv_error_path(p->flavor, SP_ERR_NONE);
+    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     for (size_t i = 0; i < parts_count; i++)
-        if (parts[i][0])
-            r = sp_priv_join_len(&r, parts[i], strlen(parts[i]));
+        r = sp_join_n(&r, parts[i], strlen(parts[i]));
     return r;
 }
 
@@ -1107,7 +1040,7 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
     bool case_insensitive = p->flavor == SP_FLAVOR_WINDOWS;
 
     for (size_t len = p->len;;) {
-        if (len == other->len && sp_priv_str_cmp_case(p->buf, len, other->buf, len, case_insensitive) == 0)
+        if (len == other->len && sp_priv_str_cmp_case(p->buf, len, other->buf, len, case_insensitive, '\0') == 0)
             return true;
 
         size_t parent = sp_priv_parent_len(p->buf, len, p->flavor, anchor);
@@ -1121,7 +1054,7 @@ bool sp_is_relative_to(const SpPath *p, const SpPath *other) {
  * and never over a ".." part). The result is p's remaining parts. */
 SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
     SpPath base = *other;
-    SpPath r = sp_priv_error_path(p->flavor, SP_ERR_NONE);
+    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     size_t anchor = sp_priv_split_anchor(other->buf, other->len, other->flavor, NULL);
 
     while (!sp_is_relative_to(p, &base)) {
@@ -1149,7 +1082,6 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
 
 /* urllib.parse.quote: percent-encode all but letters, digits, "_.-~" and `safe`; false if buf is too small */
 static bool sp_priv_quote(const char *s, size_t len, const char *safe, char *buf, size_t buf_size, size_t *pos) {
-    static const char hex[] = "0123456789ABCDEF";
     for (size_t i = 0; i < len; i++) {
         unsigned char c = SP_PRIV_CAST(unsigned char, s[i]);
         bool plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -1157,13 +1089,10 @@ static bool sp_priv_quote(const char *s, size_t len, const char *safe, char *buf
         if (*pos + (plain ? 1u : 3u) >= buf_size)
             return false;
 
-        if (plain) {
+        if (plain)
             buf[(*pos)++] = SP_PRIV_CAST(char, c);
-        } else {
-            buf[(*pos)++] = '%';
-            buf[(*pos)++] = hex[c >> 4];
-            buf[(*pos)++] = hex[c & 0x0F];
-        }
+        else
+            *pos += SP_PRIV_CAST(size_t, snprintf(buf + *pos, 4, "%%%02X", c));
     }
 
     buf[*pos] = '\0';
@@ -1191,7 +1120,7 @@ size_t sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
         if (drive >= 4 && memcmp(d, "//?/", 4) == 0) {
             d += 4;
             drive -= 4;
-            if (drive >= 4 && sp_priv_str_cmp_case(d, 4, "UNC/", 4, true) == 0) {
+            if (drive >= 4 && sp_priv_str_cmp_case(d, 4, "UNC/", 4, true, '\0') == 0) {
                 d += 4;
                 drive -= 4;
                 prefix = "file://";
@@ -1250,7 +1179,7 @@ static void sp_priv_unquote_append(char *buf, size_t *n, const char *s, size_t l
 SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
     flavor = sp_priv_flavor(flavor);
     SpPath err = sp_priv_error_path(flavor, SP_ERR_INVALID_ARG);
-    if (strlen(uri) < 5 || sp_priv_str_cmp_case(uri, 5, "file:", 5, true) != 0)
+    if (strlen(uri) < 5 || sp_priv_str_cmp_case(uri, 5, "file:", 5, true, '\0') != 0)
         return err;
 
     const char *path = uri + 5;
@@ -1295,32 +1224,12 @@ SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
 
 bool sp_path_eq(const SpPath *a, const SpPath *b) { return a->flavor == b->flavor && sp_path_cmp(a, b) == 0; }
 
-/* Like CPython: compare the separator-split parts of str() ("." when empty), case-folded on Windows */
+/* Like CPython: compare the separator-split parts of str() ("." when empty), case-folded on Windows. With the
+ * separator sorting first, comparing the whole strings does that. */
 int sp_path_cmp(const SpPath *a, const SpPath *b) {
-    SP_ASSERT_PATH_INVARIANT(a);
-    SP_ASSERT_PATH_INVARIANT(b);
-    const char *sa = a->len ? a->buf : ".";
-    const char *sb = b->len ? b->buf : ".";
-    size_t la = a->len ? a->len : 1;
-    size_t lb = b->len ? b->len : 1;
-    char sep = a->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-
-    for (size_t i = 0, j = 0;;) {
-        size_t ea = i;
-        size_t eb = j;
-        while (ea < la && sa[ea] != sep)
-            ea++;
-        while (eb < lb && sb[eb] != sep)
-            eb++;
-
-        int c = sp_priv_str_cmp_case(sa + i, ea - i, sb + j, eb - j, a->flavor == SP_FLAVOR_WINDOWS);
-        if (c != 0)
-            return c;
-        if (ea == la || eb == lb)
-            return ea < la ? 1 : eb < lb ? -1 : 0; /* the path with fewer parts sorts first */
-        i = ea + 1;
-        j = eb + 1;
-    }
+    bool windows = a->flavor == SP_FLAVOR_WINDOWS;
+    return sp_priv_str_cmp_case(sp_str(a), a->len ? a->len : 1, sp_str(b), b->len ? b->len : 1, windows,
+                                windows ? '\\' : '/');
 }
 
 unsigned long sp_path_hash(const SpPath *p) {
@@ -1464,32 +1373,33 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
     return si == slen;
 }
 
-static bool sp_priv_case_insensitive(int case_sensitive, SpFlavor flavor) {
-    return case_sensitive == -1 ? flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
-}
-
 bool sp_full_match(const SpPath *p, const char *pattern, int case_sensitive) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpPath pat = sp_path_from_n(pattern, pattern ? strlen(pattern) : 0, p->flavor);
-    return sp_priv_match_path(pat.buf, pat.len, p->buf, p->len, sp_priv_case_insensitive(case_sensitive, p->flavor),
-                              true, p->flavor);
+    SpPath pat = sp_path_new(pattern, p->flavor);
+    bool ci = case_sensitive == -1 ? p->flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
+    return sp_priv_match_path(pat.buf, pat.len, p->buf, p->len, ci, true, p->flavor);
 }
 
+/* CPython: the path's last parts match the pattern's parts, which must be all of its parts for an anchored pattern */
 int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpPath pat = sp_path_from_n(pattern, pattern ? strlen(pattern) : 0, p->flavor);
+    SpPath pat = sp_path_new(pattern, p->flavor);
     SpPartsIter path = sp_parts_begin(p);
     SpPartsIter pattern_parts = sp_parts_begin(&pat);
-    if (pattern_parts.pos == pattern_parts.end)
+    size_t count = sp_parts_count(&pat);
+    size_t total = sp_parts_count(p);
+    if (count == 0)
         return SP_MATCH_ERR_EMPTY;
+    if (total < count || (total > count && pattern_parts.anchor > 0))
+        return SP_MATCH_NO;
 
-    bool ci = sp_priv_case_insensitive(case_sensitive, p->flavor);
+    bool ci = case_sensitive == -1 ? p->flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
     SpStr pp, sp;
-    while (sp_priv_parts_take(&pattern_parts, &pp, true))
-        if (!sp_priv_parts_take(&path, &sp, true) ||
-            !sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor))
+    for (size_t skip = total - count; sp_parts_next(&path, &sp);)
+        if (skip > 0)
+            skip--;
+        else if (sp_parts_next(&pattern_parts, &pp) &&
+                 !sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor))
             return SP_MATCH_NO;
-    return pattern_parts.anchor > 0 && sp_priv_parts_take(&path, &sp, true) ? SP_MATCH_NO : SP_MATCH_YES;
+    return SP_MATCH_YES;
 }
 
 /* The path as a C string ("." when empty); false when it has an embedded NUL */
@@ -1500,13 +1410,6 @@ static bool sp_priv_path_cstr(const SpPath *p, const char **out) {
     *out = p->len == 0 ? "." : p->buf;
     return true;
 }
-
-#ifdef SP_WINDOWS
-#define SP_FILETIME_TO_NS(ft)                                                                                          \
-    ((SP_PRIV_CAST(long long, (SP_PRIV_CAST(unsigned long long, (ft).dwHighDateTime) << 32) | (ft).dwLowDateTime) -    \
-      116444736000000000LL) *                                                                                          \
-     100LL)
-#endif
 
 static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     SP_ASSERT_PATH_INVARIANT(p);
@@ -1533,15 +1436,15 @@ static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     DWORD file_type = GetFileType(hFile);
     result.sp_mode = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 040777 : 0100666;
     if (file_type == FILE_TYPE_CHAR) {
-        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFCHR;
+        result.sp_mode = (result.sp_mode & ~SP_PRIV_IFMT) | SP_PRIV_IFCHR;
     } else if (file_type != FILE_TYPE_DISK) {
-        result.sp_mode &= ~S_IFMT;
+        result.sp_mode &= ~SP_PRIV_IFMT;
     }
     if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
         result.sp_mode &= ~0222;
     }
     if (!follow_symlinks && (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
-        result.sp_mode = (result.sp_mode & ~S_IFMT) | S_IFLNK;
+        result.sp_mode = (result.sp_mode & ~SP_PRIV_IFMT) | SP_PRIV_IFLNK;
     }
 
     typedef struct {
@@ -1561,9 +1464,14 @@ static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     result.sp_nlink = SP_PRIV_CAST(unsigned long long, info.nNumberOfLinks);
     result.sp_size = (SP_PRIV_CAST(long long, info.nFileSizeHigh) << 32) | SP_PRIV_CAST(long long, info.nFileSizeLow);
 
-    result.sp_atime_ns = SP_FILETIME_TO_NS(info.ftLastAccessTime);
-    result.sp_mtime_ns = SP_FILETIME_TO_NS(info.ftLastWriteTime);
-    result.sp_ctime_ns = SP_FILETIME_TO_NS(info.ftCreationTime);
+    /* FILETIMEs count 100ns ticks since 1601 */
+    FILETIME times[3] = {info.ftLastAccessTime, info.ftLastWriteTime, info.ftCreationTime};
+    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    for (int i = 0; i < 3; i++) {
+        unsigned long long ticks =
+            (SP_PRIV_CAST(unsigned long long, times[i].dwHighDateTime) << 32) | times[i].dwLowDateTime;
+        *ns[i] = (SP_PRIV_CAST(long long, ticks) - 116444736000000000LL) * 100;
+    }
 
     CloseHandle(hFile);
 #else
@@ -1605,25 +1513,25 @@ bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
 
 static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
     SpStatResult st = sp_priv_stat_impl(p, follow_symlinks);
-    return st.valid && (st.sp_mode & S_IFMT) == type_mask;
+    return st.valid && (st.sp_mode & SP_PRIV_IFMT) == type_mask;
 }
 
 bool sp_exists(const SpPath *p, bool follow_symlinks) { return sp_priv_stat_impl(p, follow_symlinks).valid; }
 
-bool sp_is_dir(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, S_IFDIR, follow_symlinks); }
-bool sp_is_file(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, S_IFREG, follow_symlinks); }
-bool sp_is_symlink(const SpPath *p) { return sp_priv_has_type(p, S_IFLNK, false); }
-bool sp_is_block_device(const SpPath *p) { return sp_priv_has_type(p, S_IFBLK, true); }
-bool sp_is_char_device(const SpPath *p) { return sp_priv_has_type(p, S_IFCHR, true); }
-bool sp_is_fifo(const SpPath *p) { return sp_priv_has_type(p, S_IFIFO, true); }
-bool sp_is_socket(const SpPath *p) { return sp_priv_has_type(p, S_IFSOCK, true); }
+bool sp_is_dir(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, SP_PRIV_IFDIR, follow_symlinks); }
+bool sp_is_file(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, SP_PRIV_IFREG, follow_symlinks); }
+bool sp_is_symlink(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFLNK, false); }
+bool sp_is_block_device(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFBLK, true); }
+bool sp_is_char_device(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFCHR, true); }
+bool sp_is_fifo(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFIFO, true); }
+bool sp_is_socket(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFSOCK, true); }
 
 bool sp_is_mount(const SpPath *p) {
+#ifdef SP_WINDOWS
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
         return false;
 
-#ifdef SP_WINDOWS
     char vol_path[SP_PATH_MAX];
     if (!GetVolumePathNameA(path_str, vol_path, SP_PATH_MAX))
         return false;
@@ -1634,15 +1542,13 @@ bool sp_is_mount(const SpPath *p) {
         vlen--;
     if (plen > 0 && (path_str[plen - 1] == '\\' || path_str[plen - 1] == '/'))
         plen--;
-    return sp_priv_str_cmp_case(path_str, plen, vol_path, vlen, true) == 0;
+    return sp_priv_str_cmp_case(path_str, plen, vol_path, vlen, true, '\0') == 0;
 #else
-    (void)path_str;
     SpStatResult st_path = sp_priv_stat_impl(p, false);
-    if ((st_path.sp_mode & S_IFMT) != S_IFDIR)
+    if ((st_path.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
         return false;
 
-    size_t anchor = sp_priv_split_anchor(p->buf, p->len, p->flavor, NULL);
-    SpPath parent = sp_priv_path_from_raw(p->buf, sp_priv_parent_len(p->buf, p->len, p->flavor, anchor), p->flavor);
+    SpPath parent = sp_parent(p);
     SpStatResult st_parent = sp_priv_stat_impl(&parent, false);
     return st_parent.valid && (st_path.sp_dev != st_parent.sp_dev || st_path.sp_ino == st_parent.sp_ino);
 #endif
@@ -1708,40 +1614,27 @@ static size_t sp_priv_readlink_impl(const char *path, char *out) {
 }
 
 SpPath sp_readlink(const SpPath *p) {
-    SpPath r = sp_priv_error_path(p->flavor, SP_ERR_NONE);
+    char buf[SP_PATH_MAX];
     const char *path_str;
-    if (sp_priv_path_cstr(p, &path_str))
-        r.len = sp_priv_readlink_impl(path_str, r.buf);
-    if (r.len == 0)
-        return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
-
-    r.buf[r.len] = '\0';
-    sp_priv_normalize(&r, sp_priv_split_anchor(r.buf, r.len, r.flavor, NULL));
-    return r;
+    size_t len = sp_priv_path_cstr(p, &path_str) ? sp_priv_readlink_impl(path_str, buf) : 0;
+    return len > 0 ? sp_path_from_n(buf, len, p->flavor) : sp_priv_error_path(p->flavor, SP_ERR);
 }
 
 /* os.path.realpath of the absolute path: GetFullPathName on Windows; on POSIX, realpath() of the longest prefix it
  * resolves (the whole path when strict), followed by the rest */
 SpPath sp_resolve(const SpPath *p, bool strict) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpPath abs = *p;
+    SpPath abs = sp_absolute(p);
     char buf[SP_PATH_MAX];
-    if (!sp_is_absolute(p) && sp_priv_getcwd(buf, SP_PATH_MAX)) {
-        SpPath cwd = sp_path_from_n(buf, strlen(buf), p->flavor);
-        if (cwd.len > 0)
-            abs = sp_priv_join_len(&cwd, p->buf, p->len);
-    }
-
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
-        return strict ? sp_priv_error_path(p->flavor, SP_ERR_OTHER) : abs;
+        return strict ? sp_priv_error_path(p->flavor, SP_ERR) : abs;
 
 #ifdef SP_WINDOWS
     DWORD len = GetFullPathNameA(path_str, SP_PATH_MAX, buf, NULL);
     if (len == 0 || len >= SP_PATH_MAX)
-        return strict ? sp_priv_error_path(p->flavor, SP_ERR_OTHER) : abs;
+        return strict ? sp_priv_error_path(p->flavor, SP_ERR) : abs;
     if (strict && GetFileAttributesA(buf) == INVALID_FILE_ATTRIBUTES)
-        return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
+        return sp_priv_error_path(p->flavor, SP_ERR);
     return sp_path_from_n(buf, len, p->flavor);
 #else
     size_t anchor = sp_priv_split_anchor(abs.buf, abs.len, abs.flavor, NULL);
@@ -1755,7 +1648,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
             return n < abs.len ? sp_priv_join_len(&r, abs.buf + n, abs.len - n) : r;
         }
         if (strict)
-            return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
+            return sp_priv_error_path(p->flavor, SP_ERR);
 
         size_t parent = sp_priv_parent_len(abs.buf, n, abs.flavor, anchor);
         if (parent == n)
@@ -1823,16 +1716,7 @@ static int sp_priv_last_error(void) {
     if (errno == EINVAL)
         return SP_ERR_INVALID_ARG;
 #endif
-    return SP_ERR_OTHER;
-}
-
-static bool sp_priv_mkdir_impl(const char *path, unsigned int mode) {
-#ifdef SP_WINDOWS
-    (void)mode;
-    return CreateDirectoryA(path, NULL) != 0;
-#else
-    return mkdir(path, SP_PRIV_CAST(mode_t, mode)) == 0;
-#endif
+    return SP_ERR;
 }
 
 /* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
@@ -1842,35 +1726,36 @@ int sp_mkdir(const SpPath *p, unsigned int mode, bool parents, bool exist_ok, un
     if (mode == 0)
         mode = SP_MKDIR_DEF_MODE;
     if (!sp_priv_path_cstr(p, &path_str))
-        return SP_ERR_OTHER;
-    if (sp_priv_mkdir_impl(path_str, mode))
+        return SP_ERR;
+    if (sp_priv_mkdir(path_str, mode) == 0)
         return SP_OK;
 
     int err = sp_priv_last_error();
-    size_t anchor = sp_priv_split_anchor(p->buf, p->len, p->flavor, NULL);
-    SpPath parent = sp_priv_path_from_raw(p->buf, sp_priv_parent_len(p->buf, p->len, p->flavor, anchor), p->flavor);
+    SpPath parent = sp_parent(p);
     if (err == SP_ERR_NOT_FOUND && parents && parent.len != p->len) {
         err = sp_mkdir(&parent, parent_mode, true, true, parent_mode);
         return err == SP_OK ? sp_mkdir(p, mode, false, exist_ok, parent_mode) : err;
     }
 
-    bool is_dir = sp_priv_has_type(p, S_IFDIR, true);
+    bool is_dir = sp_priv_has_type(p, SP_PRIV_IFDIR, true);
     if (exist_ok && is_dir)
         return SP_OK;
     return err == SP_ERR_EXISTS && !is_dir ? SP_ERR_EXISTS_NOT_DIR : err;
 }
 
+/* CPython's Path.touch: with exist_ok, bump an existing file's times; otherwise create the file */
 bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
         return false;
     if (mode == 0)
         mode = 0666;
+
+#ifdef SP_WINDOWS
     bool exists = sp_priv_stat_impl(p, true).valid;
     if (exists && !exist_ok)
         return false;
 
-#ifdef SP_WINDOWS
     DWORD access = exists ? FILE_WRITE_ATTRIBUTES : GENERIC_WRITE;
     DWORD disposition = exists ? OPEN_EXISTING : CREATE_NEW;
     DWORD share = exists ? (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE) : 0;
@@ -1887,40 +1772,22 @@ bool sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
     CloseHandle(h);
     return ok;
 #else
-    if (exists)
-        return utime(path_str, SP_PRIV_NULL) == 0;
-
-    int fd = open(path_str, O_CREAT | O_WRONLY, SP_PRIV_CAST(mode_t, mode));
-    if (fd < 0)
-        return false;
-    close(fd);
-    return true;
-#endif
-}
-
-/* os.unlink() or os.rmdir(); a missing file is fine with missing_ok */
-static bool sp_priv_remove_impl(const char *path, bool is_dir, bool missing_ok) {
-#ifdef SP_WINDOWS
-    if (is_dir)
-        return RemoveDirectoryA(path) != 0;
-    if (DeleteFileA(path))
+    if (exist_ok && utime(path_str, SP_PRIV_NULL) == 0)
         return true;
 
-    DWORD err = GetLastError();
-    return missing_ok && (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND);
-#else
-    return (is_dir ? rmdir(path) : unlink(path)) == 0 || (!is_dir && missing_ok && errno == ENOENT);
+    int fd = open(path_str, O_CREAT | O_WRONLY | (exist_ok ? 0 : O_EXCL), SP_PRIV_CAST(mode_t, mode));
+    return fd >= 0 && close(fd) == 0;
 #endif
 }
 
 bool sp_unlink(const SpPath *p, bool missing_ok) {
     const char *path_str;
-    return sp_priv_path_cstr(p, &path_str) && sp_priv_remove_impl(path_str, false, missing_ok);
+    return sp_priv_path_cstr(p, &path_str) && (sp_priv_unlink(path_str) == 0 || (missing_ok && errno == ENOENT));
 }
 
 bool sp_rmdir(const SpPath *p) {
     const char *path_str;
-    return sp_priv_path_cstr(p, &path_str) && sp_priv_remove_impl(path_str, true, false);
+    return sp_priv_path_cstr(p, &path_str) && sp_priv_rmdir(path_str) == 0;
 }
 
 static SpIOResult sp_priv_io_result(size_t bytes, int error) {
@@ -1930,34 +1797,13 @@ static SpIOResult sp_priv_io_result(size_t bytes, int error) {
     return r;
 }
 
+/* os.chmod(): on Windows, the owner's write bit clears or sets the read-only attribute */
 bool sp_chmod(const SpPath *p, unsigned int mode) {
     const char *path_str;
-    if (!sp_priv_path_cstr(p, &path_str))
-        return false;
-
-#ifdef SP_WINDOWS
-    DWORD attrs = GetFileAttributesA(path_str);
-    if (attrs == INVALID_FILE_ATTRIBUTES)
-        return false;
-    DWORD new_attrs = attrs;
-    if ((mode & 0222) == 0) {
-        new_attrs |= FILE_ATTRIBUTE_READONLY;
-    } else {
-        new_attrs &= ~FILE_ATTRIBUTE_READONLY;
-    }
-    if (new_attrs == attrs)
-        return true;
-    return SetFileAttributesA(path_str, new_attrs) != 0;
-#else
-    return chmod(path_str, SP_PRIV_CAST(mode_t, mode)) == 0;
-#endif
+    return sp_priv_path_cstr(p, &path_str) && sp_priv_chmod(path_str, mode) == 0;
 }
 
 SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
-    const char *path_str;
-    if (!sp_priv_path_cstr(p, &path_str))
-        return sp_priv_io_result(0, SP_ERR_OPEN);
-
     SpStatResult st = sp_stat(p);
     if (!st.valid || st.sp_size < 0)
         return sp_priv_io_result(0, SP_ERR_OPEN);
@@ -1965,31 +1811,22 @@ SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
     if (sz > buf_size)
         return sp_priv_io_result(sz, SP_ERR_TOO_LARGE);
 
-    FILE *f = fopen(path_str, "rb");
+    FILE *f = fopen(sp_str(p), "rb"); /* stat() succeeded, so there is no embedded NUL */
     if (!f)
         return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t got = fread(buf, 1, sz, f);
-    if (got != sz) {
-        fclose(f);
-        return sp_priv_io_result(got, SP_ERR_READ);
-    }
-    return sp_priv_io_result(got, fclose(f) == 0 ? SP_OK : SP_ERR_READ);
+    bool closed = fclose(f) == 0;
+    return sp_priv_io_result(got, got == sz && closed ? SP_OK : SP_ERR_READ);
 }
 
 SpIOResult sp_write_file(const SpPath *p, const char *data, size_t data_len) {
     const char *path_str;
-    if (!sp_priv_path_cstr(p, &path_str))
-        return sp_priv_io_result(0, SP_ERR_OPEN);
-
-    FILE *f = fopen(path_str, "wb");
+    FILE *f = sp_priv_path_cstr(p, &path_str) ? fopen(path_str, "wb") : SP_PRIV_NULL;
     if (!f)
         return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t wrote = fwrite(data, 1, data_len, f);
-    if (wrote != data_len) {
-        fclose(f);
-        return sp_priv_io_result(wrote, SP_ERR_WRITE);
-    }
-    return sp_priv_io_result(wrote, fclose(f) == 0 ? SP_OK : SP_ERR_WRITE);
+    bool closed = fclose(f) == 0;
+    return sp_priv_io_result(wrote, wrote == data_len && closed ? SP_OK : SP_ERR_WRITE);
 }
 
 const char *sp_error_str(int error) {
@@ -2012,10 +1849,6 @@ const char *sp_error_str(int error) {
     };
     return (error >= 0 && error < SP_PRIV_CAST(int, SP_ARRAY_LEN(messages))) ? messages[error] : "Unknown error";
 }
-
-#ifndef SP_WINDOWS
-#include <dirent.h>
-#endif
 
 static void sp_priv_readdir_close(void **handle) {
     if (!*handle)
@@ -2108,11 +1941,8 @@ static bool sp_priv_copy_metadata(const char *src, const char *dst, bool follow_
         CloseHandle(hd);
 
     /* chmod() on Windows only sets the read-only attribute, here the source's */
-    DWORD src_attrs = GetFileAttributesA(src);
-    DWORD dst_attrs = GetFileAttributesA(dst);
-    DWORD attrs = (dst_attrs & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)) | (src_attrs & FILE_ATTRIBUTE_READONLY);
-    return ok && (!follow_symlinks ||
-                  (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesA(dst, attrs))));
+    bool read_only = (GetFileAttributesA(src) & FILE_ATTRIBUTE_READONLY) != 0;
+    return ok && (!follow_symlinks || sp_priv_chmod(dst, read_only ? 0444 : 0666) == 0);
 #else
     struct stat st;
     if ((follow_symlinks ? stat(src, &st) : lstat(src, &st)) != 0)
@@ -2144,13 +1974,13 @@ static int sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlink
 
     SpStatResult st = sp_priv_stat_impl(src, follow_symlinks);
     int err;
-    if (!follow_symlinks && (st.sp_mode & S_IFMT) == S_IFLNK) {
+    if (!follow_symlinks && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK) {
         char link[SP_PATH_MAX];
         size_t n = sp_priv_readlink_impl(from, link);
         link[n] = '\0';
-        bool target_is_dir = n > 0 && (sp_priv_stat_impl(src, true).sp_mode & S_IFMT) == S_IFDIR;
+        bool target_is_dir = n > 0 && (sp_priv_stat_impl(src, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         err = n > 0 && sp_priv_link_to_impl(to, link, true, target_is_dir) ? SP_OK : sp_priv_last_error();
-    } else if ((st.sp_mode & S_IFMT) == S_IFDIR) {
+    } else if ((st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR) {
         /* Children are listed before dst is created, so an unreadable src leaves no dst behind */
         void *handle = SP_PRIV_NULL;
         SpPath child;
@@ -2158,8 +1988,8 @@ static int sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlink
         if (!handle)
             return sp_priv_last_error();
 
-        err = sp_priv_mkdir_impl(to, SP_MKDIR_DEF_MODE) ? SP_OK : sp_priv_last_error();
-        if (err == SP_ERR_EXISTS && (sp_priv_stat_impl(dst, true).sp_mode & S_IFMT) != S_IFDIR)
+        err = sp_priv_mkdir(to, SP_MKDIR_DEF_MODE) == 0 ? SP_OK : sp_priv_last_error();
+        if (err == SP_ERR_EXISTS && (sp_priv_stat_impl(dst, true).sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
             err = SP_ERR_EXISTS_NOT_DIR;
         for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child)) {
             sp_priv_join_child(dst, child.buf + child.len - n, n);
@@ -2194,15 +2024,16 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, bool follow_symlinks, bool
     return err == SP_OK ? *target : sp_priv_error_path(target->flavor, err);
 }
 
-/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
+/* CPython's Path._delete: symlinks and junctions (links too to lstat() on Windows) are unlinked, directories removed
+ * recursively */
 static int sp_priv_delete(const SpPath *p) {
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
         return SP_ERR_INVALID_ARG;
 
-    bool dir = (sp_priv_stat_impl(p, true).sp_mode & S_IFMT) == S_IFDIR;
-    if (!dir || (sp_priv_stat_impl(p, false).sp_mode & S_IFMT) == S_IFLNK || sp_is_junction(p))
-        return sp_priv_remove_impl(path_str, false, false) ? SP_OK : sp_priv_last_error();
+    bool dir = (sp_priv_stat_impl(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+    if (!dir || (sp_priv_stat_impl(p, false).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK)
+        return sp_priv_unlink(path_str) == 0 ? SP_OK : sp_priv_last_error();
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
@@ -2213,7 +2044,7 @@ static int sp_priv_delete(const SpPath *p) {
 
     if (err != SP_OK)
         return err;
-    return sp_priv_remove_impl(path_str, true, false) ? SP_OK : sp_priv_last_error();
+    return sp_priv_rmdir(path_str) == 0 ? SP_OK : sp_priv_last_error();
 }
 
 /* sp_priv_rename's error when only copying and deleting can move across filesystems */
@@ -2265,10 +2096,7 @@ SpPath sp_copy_into(const SpPath *p, const SpPath *target_dir, bool follow_symli
         return sp_priv_error_path(target_dir->flavor, SP_ERR_NO_NAME);
 
     SpPath target = sp_priv_join_len(target_dir, name.data, name.len);
-    SpPath dst = target;
-    int err = sp_is_relative_to(&target, p) ? SP_ERR_INVALID_ARG
-                                            : sp_priv_copy_tree(p, &dst, follow_symlinks, preserve_metadata);
-    return err == SP_OK ? target : sp_priv_error_path(target.flavor, err);
+    return sp_copy(p, &target, follow_symlinks, preserve_metadata);
 }
 
 SpPath sp_move_into(const SpPath *p, const SpPath *target_dir) {
@@ -2277,15 +2105,7 @@ SpPath sp_move_into(const SpPath *p, const SpPath *target_dir) {
         return sp_priv_error_path(target_dir->flavor, SP_ERR_NO_NAME);
 
     SpPath target = sp_priv_join_len(target_dir, name.data, name.len);
-    SpPath r = sp_priv_rename(p, &target, true, true);
-    if (sp_path_error_code(&r) != SP_PRIV_ERR_CROSS_DEVICE)
-        return r;
-
-    SpPath dst = target;
-    int err = sp_is_relative_to(&target, p) ? SP_ERR_INVALID_ARG : sp_priv_copy_tree(p, &dst, false, true);
-    if (err == SP_OK)
-        err = sp_priv_delete(p);
-    return err == SP_OK ? target : sp_priv_error_path(target.flavor, err);
+    return sp_move(p, &target);
 }
 
 static SpStr sp_priv_glob_part(const SpGlobIter *it, size_t pos) {
@@ -2354,76 +2174,55 @@ static bool sp_priv_glob_select(SpGlobIter *it, size_t seg, bool exists, bool tr
     if (exists)
         return true;
     SpStatResult st = sp_priv_stat_impl(path, trailing);
-    return trailing ? (st.sp_mode & S_IFMT) == S_IFDIR : st.valid;
+    return trailing ? (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR : st.valid;
 }
 
-/* An iterator for prefix + pattern, compacted once (without empty and '.' parts) but keeping separators, so
- * recursive groups are contiguous pattern slices; a trailing separator adds a final empty part. */
+/* An iterator for prefix + pattern, with its first match selected. Like CPython, the pattern's parts are those of the
+ * path it makes (less a '.' that protects a drive-like part), and a trailing separator adds a final empty part; the
+ * separators stay, so recursive groups are contiguous pattern slices. */
 static SpGlobIter sp_priv_glob_init(const SpPath *base, const char *prefix, const char *pattern, SpCaseSensitivity cs,
                                     bool recurse_symlinks) {
-    SpGlobIter it;
-    memset(&it, 0, sizeof(it));
+    SpGlobIter it = SP_PRIV_ZERO;
     it.depth = -1;
     SP_ASSERT_PATH_INVARIANT(base);
-    SpFlavor flavor = base->flavor;
     size_t plen = strlen(prefix);
     size_t len = strlen(pattern);
-    if (sp_priv_split_anchor(pattern, len, flavor, NULL) > 0) {
+    if (sp_priv_split_anchor(pattern, len, base->flavor, NULL) > 0) {
         it.error = SP_ERR_UNSUPPORTED;
         return it;
     }
 
-    char *buf = it.priv_.pattern_buf;
-    char sep = flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
+    char buf[SP_PATH_MAX];
+    size_t n = sp_priv_copy_trunc(buf, SP_PATH_MAX, prefix, plen);
+    SpPath pat = sp_path_from_n(buf, n + sp_priv_copy_trunc(buf + n, SP_PATH_MAX - n, pattern, len), base->flavor);
+    char sep = base->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     char last = len > 0 ? pattern[len - 1] : plen > 0 ? prefix[plen - 1] : '\0';
-    size_t n = sp_priv_copy_trunc(buf, SP_GLOB_PATTERN_MAX, prefix, plen);
-    len = n + sp_priv_copy_trunc(buf + n, SP_GLOB_PATTERN_MAX - n, pattern, len);
-
-    n = 0;
-    size_t count = 0;
-    for (size_t pos = 0, end; count < SP_GLOB_MAX_SEGMENTS && pos < len; pos = end + 1) {
-        while (pos < len && (buf[pos] == '/' || buf[pos] == sep))
-            pos++;
-        end = pos;
-        while (end < len && buf[end] != '/' && buf[end] != sep)
-            end++;
-        if (pos == end || (end - pos == 1 && buf[pos] == '.'))
-            continue;
-
-        if (count++)
-            buf[n++] = sep;
-        memmove(buf + n, buf + pos, end - pos);
-        n += end - pos;
-    }
+    size_t skip = pat.len > 1 && pat.buf[0] == '.' && pat.buf[1] == sep ? 2 : 0;
+    n = sp_priv_copy_trunc(it.priv_.pattern_buf, SP_GLOB_PATTERN_MAX, pat.buf + skip, pat.len - skip);
     if (n == 0) {
         it.error = SP_ERR_INVALID_ARG;
         return it;
     }
-    if ((last == '/' || last == sep) && count < SP_GLOB_MAX_SEGMENTS)
-        buf[n++] = sep;
+    if (last == '/' || last == sep)
+        it.priv_.pattern_buf[n++] = sep;
 
     it.priv_.pattern_len = n;
     it.priv_.case_insensitive =
-        cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_PLATFORM_DEFAULT && flavor == SP_FLAVOR_WINDOWS);
+        cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_PLATFORM_DEFAULT && base->flavor == SP_FLAVOR_WINDOWS);
     it.priv_.case_pedantic = cs != SP_CASE_PLATFORM_DEFAULT;
     it.priv_.recurse_symlinks = recurse_symlinks;
     it.priv_.path = *base;
+    it.priv_.pending = sp_priv_glob_select(&it, 0, false, true);
     return it;
 }
 
 SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs, bool recurse_symlinks) {
-    SpGlobIter it = sp_priv_glob_init(base, "", pattern, cs, recurse_symlinks);
-    if (it.error == SP_OK)
-        it.priv_.pending = sp_priv_glob_select(&it, 0, false, true);
-    return it;
+    return sp_priv_glob_init(base, "", pattern, cs, recurse_symlinks);
 }
 
 /* glob(join('**', pattern)); an anchored pattern replaces the '**' in the join, which glob rejects */
 SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs, bool recurse_symlinks) {
-    SpGlobIter it = sp_priv_glob_init(base, "**/", pattern, cs, recurse_symlinks);
-    if (it.error == SP_OK)
-        it.priv_.pending = sp_priv_glob_select(&it, 0, false, true);
-    return it;
+    return sp_priv_glob_init(base, "**/", pattern, cs, recurse_symlinks);
 }
 
 bool sp_glob_next(SpGlobIter *it, SpPath *out) {
@@ -2445,7 +2244,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             continue;
         }
 
-        bool is_dir = (walk || !last) && sp_priv_has_type(&entry, S_IFDIR, !walk || it->priv_.recurse_symlinks);
+        bool is_dir = (walk || !last) && sp_priv_has_type(&entry, SP_PRIV_IFDIR, !walk || it->priv_.recurse_symlinks);
         if (!last && !is_dir)
             continue;
         *path = entry;
@@ -2542,7 +2341,7 @@ static size_t sp_priv_user_home(const char *user, size_t ulen, char *home) {
 SpPath sp_home(SpFlavor flavor) {
     char home[SP_PATH_MAX];
     size_t len = sp_priv_user_home("", 0, home);
-    return len > 0 ? sp_path_from_n(home, len, flavor) : sp_priv_error_path(sp_priv_flavor(flavor), SP_ERR_OTHER);
+    return len > 0 ? sp_path_from_n(home, len, flavor) : sp_priv_error_path(sp_priv_flavor(flavor), SP_ERR);
 }
 
 /* Expands a leading "~" or "~user" part of a path without drive or root; an error if its home is unknown */
@@ -2558,7 +2357,7 @@ SpPath sp_expanduser(const SpPath *p) {
     char home[SP_PATH_MAX];
     size_t len = sp_priv_user_home(p->buf + 1, end - 1, home);
     if (len == 0)
-        return sp_priv_error_path(p->flavor, SP_ERR_OTHER);
+        return sp_priv_error_path(p->flavor, SP_ERR);
 
     SpPath r = sp_path_from_n(home, len, p->flavor);
     if (end >= p->len)
@@ -2570,41 +2369,33 @@ SpPath sp_expanduser(const SpPath *p) {
     return sp_priv_join_len(&r, rest, strlen(rest));
 }
 
-SpTerm sp_owner(const SpPath *p) {
+/* The name of the user or group owning p: empty when unknown, and on Windows */
+static SpTerm sp_priv_owner(const SpPath *p, bool of_group) {
     SP_ASSERT_PATH_INVARIANT(p);
+    const char *name = SP_PRIV_NULL;
 #ifdef SP_WINDOWS
     (void)p;
-    return sp_priv_term(NULL, 0);
+    (void)of_group;
 #else
-    SpStatResult st = sp_stat(p);
-    struct passwd *pw = st.valid ? getpwuid(st.sp_uid) : SP_PRIV_NULL;
-    const char *name = pw ? pw->pw_name : SP_PRIV_NULL;
-    return sp_priv_term(name, name ? strlen(name) : 0);
+    SpStatResult st = sp_priv_stat_impl(p, true);
+    struct passwd *pw = st.valid && !of_group ? getpwuid(st.sp_uid) : SP_PRIV_NULL;
+    struct group *gr = st.valid && of_group ? getgrgid(st.sp_gid) : SP_PRIV_NULL;
+    name = pw ? pw->pw_name : gr ? gr->gr_name : SP_PRIV_NULL;
 #endif
+    return sp_priv_term(name, name ? strlen(name) : 0);
 }
 
-SpTerm sp_group(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
-#ifdef SP_WINDOWS
-    (void)p;
-    return sp_priv_term(NULL, 0);
-#else
-    SpStatResult st = sp_stat(p);
-    struct group *gr = st.valid ? getgrgid(st.sp_gid) : SP_PRIV_NULL;
-    const char *name = gr ? gr->gr_name : SP_PRIV_NULL;
-    return sp_priv_term(name, name ? strlen(name) : 0);
-#endif
-}
+SpTerm sp_owner(const SpPath *p) { return sp_priv_owner(p, false); }
+SpTerm sp_group(const SpPath *p) { return sp_priv_owner(p, true); }
 
 SpIterdirIter sp_iterdir_begin(const SpPath *p) {
-    SpIterdirIter it;
-    memset(&it, 0, sizeof(it));
+    SpIterdirIter it = SP_PRIV_ZERO;
     it.dir = *p;
 
     const char *path_str;
     bool ok = sp_priv_path_cstr(p, &path_str);
 #ifdef SP_WINDOWS
-    ok = ok && (p->len == 0 || sp_priv_has_type(p, S_IFDIR, true)); /* FindFirstFile opens on the first next() */
+    ok = ok && (p->len == 0 || sp_priv_has_type(p, SP_PRIV_IFDIR, true)); /* FindFirstFile opens on the first next() */
 #else
     ok = ok && (it.priv_.handle = opendir(path_str)) != SP_PRIV_NULL;
 #endif
@@ -2615,11 +2406,8 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (!it || it->done != 0)
         return false;
-    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out) == 0) {
-        it->done = 1;
-        return false;
-    }
-    return true;
+    it->done = sp_priv_readdir_next(&it->priv_.handle, &it->dir, out) == 0;
+    return !it->done;
 }
 
 void sp_iterdir_end(SpIterdirIter *it) {
@@ -2633,29 +2421,32 @@ static int sp_priv_walk_name_cmp(const void *a, const void *b) {
     return strcmp(SP_PRIV_CAST(const char *, a), SP_PRIV_CAST(const char *, b));
 }
 
-/* One directory of os.walk: its sorted listing (split into directories and files) before or after its subdirectories */
-static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow_symlinks, SpWalkFn callback,
-                                   SpWalkErrorFn on_error, void *user_data) {
+/* os.walk: each directory's sorted listing (split into directories and files) goes to the callback before or after
+ * its subdirectories are walked, and a directory that can't be listed goes to on_error */
+bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks, SpWalkFn callback, SpWalkErrorFn on_error,
+             void *user_data) {
+    const char *path_str;
+    if (!p || !callback || !sp_priv_path_cstr(p, &path_str))
+        return false;
+
     char dirnames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
     char filenames[SP_WALK_MAX_ENTRIES][SP_WALK_NAME_MAX];
-    SpWalkEntry entry;
-    entry.dirpath = *dir;
+    SpWalkEntry entry = SP_PRIV_ZERO;
+    entry.dirpath = *p;
     entry.dirnames = dirnames;
-    entry.dirname_count = 0;
     entry.filenames = filenames;
-    entry.filename_count = 0;
     entry.user_data = user_data;
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    size_t n = sp_priv_readdir_next(&handle, dir, &child);
+    size_t n = sp_priv_readdir_next(&handle, p, &child);
     if (!handle) {
         if (on_error)
-            on_error(dir, errno, user_data);
+            on_error(p, errno, user_data);
         return true;
     }
-    for (; n > 0; n = sp_priv_readdir_next(&handle, dir, &child)) {
-        bool is_dir = (sp_priv_stat_impl(&child, follow_symlinks).sp_mode & S_IFMT) == S_IFDIR;
+    for (; n > 0; n = sp_priv_readdir_next(&handle, p, &child)) {
+        bool is_dir = (sp_priv_stat_impl(&child, follow_symlinks).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         char (*names)[SP_WALK_NAME_MAX] = is_dir ? dirnames : filenames;
         size_t *count = is_dir ? &entry.dirname_count : &entry.filename_count;
         if (*count < SP_WALK_MAX_ENTRIES)
@@ -2670,23 +2461,12 @@ static bool sp_priv_walk_recursive(const SpPath *dir, bool top_down, bool follow
 
     /* Top-down callbacks may prune entry.dirname_count */
     for (size_t i = 0; i < entry.dirname_count; i++) {
-        SpPath subdir = *dir;
+        SpPath subdir = *p;
         sp_priv_join_child(&subdir, dirnames[i], strlen(dirnames[i]));
-        if (!sp_priv_walk_recursive(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
+        if (!sp_walk(&subdir, top_down, follow_symlinks, callback, on_error, user_data))
             return false;
     }
     return top_down || callback(&entry);
-}
-
-bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks, SpWalkFn callback, SpWalkErrorFn on_error,
-             void *user_data) {
-    if (!p || !callback)
-        return false;
-    SP_ASSERT_PATH_INVARIANT(p);
-    if (!sp_priv_has_type(p, S_IFDIR, true))
-        return false;
-
-    return sp_priv_walk_recursive(p, top_down, follow_symlinks, callback, on_error, user_data);
 }
 
 /* ============ Fluent API Implementation ============ */
@@ -2711,56 +2491,35 @@ bool sp_walk(const SpPath *p, bool top_down, bool follow_symlinks, SpWalkFn call
 static SP_TLS SpPath sp_priv_f_ctx;
 static SP_TLS bool sp_priv_f_ctx_active = false;
 
-static SpPathOp sp_priv_f_pathop(int error) {
-    SpPathOp r;
-    r.path = sp_priv_f_ctx;
-    sp_priv_f_ctx_active = false;
-    r.error = error;
-    return r;
-}
+static SpPrivDontUseThisDirectly_ *sp_priv_f_chain(SpPath path);
 
-#define SP_F_TERM(ret, name, params, expr)                                                                             \
+/* A method ends the chain; a chainable one starts it again from its result */
+#define SP_F_METHOD(ret, name, params, expr)                                                                           \
     static ret sp_priv_f_##name##_ params {                                                                            \
         sp_priv_f_ctx_active = false;                                                                                  \
         return (expr);                                                                                                 \
     }
-
-SP_F_TERMINATOR_METHODS(SP_F_TERM)
-
-#define SP_F_CHAIN_DECL(name, params, expr) static SpPrivDontUseThisDirectly_ *sp_priv_f_##name##_ params;
-SP_F_CHAIN_METHODS(SP_F_CHAIN_DECL)
+SP_F_METHODS(SP_F_METHOD)
+#undef SP_F_METHOD
 
 /* clang-format off */
 static SpPrivDontUseThisDirectly_ sp_priv_f_instance = {
-#define SP_F_TERM_INIT(ret, name, params, expr) sp_priv_f_##name##_,
-    SP_F_TERMINATOR_METHODS(SP_F_TERM_INIT)
-#undef SP_F_TERM_INIT
-#define SP_F_CHAIN_INIT(name, params, expr) sp_priv_f_##name##_,
-    SP_F_CHAIN_METHODS(SP_F_CHAIN_INIT)
-#undef SP_F_CHAIN_INIT
+#define SP_F_INIT(ret, name, params, expr) sp_priv_f_##name##_,
+    SP_F_METHODS(SP_F_INIT)
+#undef SP_F_INIT
 };
 /* clang-format on */
+#undef SP_F_METHODS
 
 static SpPrivDontUseThisDirectly_ *sp_priv_f_chain(SpPath path) {
+    sp_priv_f_ctx_active = true;
     sp_priv_f_ctx = path;
     return &sp_priv_f_instance;
 }
 
-#define SP_F_CHAIN(name, params, expr)                                                                                 \
-    static SpPrivDontUseThisDirectly_ *sp_priv_f_##name##_ params { return sp_priv_f_chain(expr); }
-SP_F_CHAIN_METHODS(SP_F_CHAIN)
-
-#undef SP_F_CHAIN
-#undef SP_F_CHAIN_DECL
-#undef SP_F_TERM
-#undef SP_F_CHAIN_METHODS
-#undef SP_F_TERMINATOR_METHODS
-
 SpPrivDontUseThisDirectly_ *sp_fluent_init_(SpPath p) {
     assert(!sp_priv_f_ctx_active && "snakepath fluent API: previous chain not terminated");
-    sp_priv_f_ctx_active = true;
-    sp_priv_f_ctx = p;
-    return &sp_priv_f_instance;
+    return sp_priv_f_chain(p);
 }
 
 #endif /* SNAKEPATH_FLUENT */

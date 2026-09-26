@@ -8,15 +8,15 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 - All logic in `snakepath.h`. Code outside it is glue or Python-specific only (argument coercion, exception classes and messages, Python protocols like `NotImplemented`, harness stubs); path semantics always go in C first.
 - Minimize API surface, share `sp_priv_*` internals
 - No special-casing in wrappers
-- Fluent API has near-parity with boring API — only iterators/mutators missing
+- Fluent API has near-parity with boring API — only iterators missing; a fluent method returns what the function it forwards to returns
 - Port only what is meaningful in C: Python-only pathlib machinery becomes an expected failure, never binding code.
 - Macros are for constants, names for hacks (C/C++ compat casts, platform functions) and the simplest iterator sugar (`SP_*_FOREACH`). Never use a macro to share code.
 
 ## Call Depth
 `snakepath.py` checks real stack depth on the preprocessed library (`cc -E -P`, or `cl /EP` on Windows, with `SNAKEPATH_IMPLEMENTATION` and `SNAKEPATH_FLUENT`):
 - Every function the library defines is a frame: public, `sp_priv_*` and `static inline` alike, plus functions passed as callbacks (qsort comparators). A function calling itself is exempt.
-- At most 3 snakepath frames below any public function. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 4.
-- Never pass the check by hiding a call behind a private wrapper or a macro. Structure code as entry → helper → leaf: leaves take what they need precomputed (anchor lengths, C strings), and orchestration that would need a fourth frame lives in the public function, even if two public functions then repeat a few lines.
+- At most 4 snakepath frames on the stack from a public function down: the function itself and 3 below it. A fluent method is a real trampoline frame on top of the public function it forwards to, so fluent chains may reach 5. (The maintainer raised the limit from 3 in exchange for a compression of more than 200 lines.)
+- Never pass the check by hiding a call behind a private wrapper or a macro. Structure code as entry → helper → leaf, with room for one more level (a public function may call another public function): leaves take what they need precomputed (anchor lengths, C strings), and orchestration that would need a fifth frame lives in the public function, even if two public functions then repeat a few lines.
 - A path's flavor is never `SP_FLAVOR_NATIVE`: making a path resolves it, so code tests `flavor == SP_FLAVOR_WINDOWS` and `c == '/' || c == sep` inline instead of calling predicate helpers.
 
 ## Code Layout

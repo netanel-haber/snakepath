@@ -1471,7 +1471,7 @@ def main():
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    checks_failed = check_call_depth(THIS_DIR / "snakepath.h", 3) | check_docs(THIS_DIR)
+    checks_failed = check_call_depth(THIS_DIR / "snakepath.h", 4) | check_docs(THIS_DIR)
     return run_tests() or checks_failed
 
 
