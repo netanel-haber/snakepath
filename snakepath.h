@@ -3144,6 +3144,7 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
 #endif
 }
 
+#ifndef SP_WINDOWS
 /* The bytes of in, written to out */
 static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
     char buf[8192];
@@ -3155,6 +3156,7 @@ static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
     } while (got == sizeof(buf));
     return SP_OK;
 }
+#endif
 
 /* CPython's Path._copy_from: recursively copy src to dst (extended in place for children, then restored) */
 static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlinks, bool preserve_metadata) {
@@ -3167,18 +3169,17 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
     if (err != SP_OK || to_err != SP_OK)
         return err != SP_OK ? err : to_err;
 
+    /* Like CPython, anything that can't be stat()ed as a directory or symlink is copied as a file */
     SpStatResult st = sp_priv_stat_impl(src, follow_symlinks);
-    if (st.error != SP_OK)
-        return st.error;
-
-    if ((st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK) {
+    unsigned int type = st.error == SP_OK ? st.sp_mode & SP_PRIV_IFMT : 0;
+    if (type == SP_PRIV_IFLNK) {
         SpPrivChar link[SP_PATH_MAX];
         size_t n;
         err = sp_priv_readlink_impl(from, link, &n);
         bool target_is_dir = (sp_priv_stat_impl(src, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         if (err == SP_OK)
             err = sp_priv_link_to_impl(to, link, true, target_is_dir);
-    } else if ((st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR) {
+    } else if (type == SP_PRIV_IFDIR) {
         /* Children are listed before dst is created, so an unreadable src leaves no dst behind */
         void *handle = SP_PRIV_NULL;
         SpPath child;
@@ -3199,9 +3200,16 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         sp_priv_readdir_close(&handle);
     } else {
         SpStatResult to_st = sp_priv_stat_impl(dst, true);
-        if (to_st.error == SP_OK && st.sp_dev == to_st.sp_dev && st.sp_ino == to_st.sp_ino)
+        if (st.error == SP_OK && to_st.error == SP_OK && st.sp_dev == to_st.sp_dev && st.sp_ino == to_st.sp_ino)
             return SP_ERR_SAME_FILE;
 
+#ifdef SP_WINDOWS
+        /* CopyFile2, as CPython copies files on Windows */
+        HRESULT copied = CopyFile2(from, to, NULL);
+        if (FAILED(copied))
+            SetLastError(SP_PRIV_CAST(DWORD, HRESULT_CODE(copied)));
+        err = SUCCEEDED(copied) ? SP_OK : sp_priv_last_error();
+#else
         SpPrivFile in;
         SpPrivFile out;
         err = sp_priv_open(from, false, &in);
@@ -3215,6 +3223,7 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         }
         SpError closed = sp_priv_close(in);
         err = err != SP_OK ? err : closed;
+#endif
     }
 
     if (err == SP_OK && preserve_metadata && !sp_priv_copy_metadata(from, to, follow_symlinks))

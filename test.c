@@ -2030,26 +2030,6 @@ int main(void) {
     }
     printf("  error tests OK\n");
 
-#ifdef _WIN32
-    /* TEMPORARY CI PROBE: copying a directory symlink onto a symlink on Windows */
-    {
-        SpPath pr = sp_path("probe_dir"), pd = sp_join_one(&pr, "d"), pf = sp_join_one(&pr, "f");
-        SpPath src = sp_join_one(&pr, "src"), dst = sp_join_one(&pr, "dst"), abs_d = sp_absolute(&pd), abs_f = sp_absolute(&pf);
-        printf("PROBE mkdir %d %d touch %d\n", sp_mkdir(&pr, 0777, 0, 0777), sp_mkdir(&pd, 0777, 0, 0777), sp_touch(&pf, 0666, true));
-        printf("PROBE symlinks %d %d\n", sp_symlink_to(&src, &abs_d, false), sp_symlink_to(&dst, &abs_f, false));
-        SpStatResult st = sp_stat(&src), lst = sp_lstat(&src);
-        printf("PROBE stat %d mode %o lstat %d mode %o\n", st.error, st.sp_mode, lst.error, lst.sp_mode);
-        SpIterdirIter it = sp_iterdir_begin(&src);
-        SpPath e;
-        bool got = sp_iterdir_next(&it, &e);
-        printf("PROBE iterdir begin %d next %d err %d\n", it.error, got, it.error);
-        sp_iterdir_end(&it);
-        printf("PROBE mkdir onto link %d\n", sp_mkdir(&dst, 0777, 0, 0777));
-        printf("PROBE copy %d copy nofollow %d\n", sp_copy(&src, &dst, SP_COPY_FOLLOW_SYMLINKS).error, sp_copy(&src, &dst, 0).error);
-        printf("PROBE cleanup %d %d %d %d %d\n", sp_unlink(&src, false), sp_unlink(&dst, false), sp_unlink(&pf, false), sp_rmdir(&pd), sp_rmdir(&pr));
-    }
-#endif
-
     /* ============ Struct Size Tests ============ */
     printf("\nStruct Size Tests:\n");
 
