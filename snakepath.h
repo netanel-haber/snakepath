@@ -1046,7 +1046,9 @@ static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
     SpPath r = sp_priv_path_from_raw(p->buf, sp_priv_parent_len(p->buf, p->len, p->flavor, anchor), p->flavor);
     if (r.len == 0 && sp_priv_has_drive(name, len, p->flavor))
         r.buf[r.len++] = '.'; /* keep "c:" from parsing as a drive */
-    sp_priv_append(&r, name, len, true);
+
+    /* Past the anchor the name follows a separator; a bare drive takes it directly ("c:x" -> "c:y") */
+    sp_priv_append(&r, name, len, r.len > anchor);
     return r;
 }
 
