@@ -1106,6 +1106,32 @@ int main(void) {
     JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}, {"c:x.py", ".gz", "c:x.gz"}};
     test_with(W, sp_with_suffix, win_with_suffix, ARRAY_LEN(win_with_suffix));
     
+    /* Windows compares like str.lower(): every script, U+0130 to i + combining dot, and a word-final sigma */
+    {
+        SpPath cafe = sp_path_f("Caf\xc3\xa9", W), upper = sp_path_f("CAF\xc3\x89", W);
+        SpPath dotted = sp_path_f("\xc4\xb0", W), plain_i = sp_path_f("I", W), i_dot = sp_path_f("i\xcc\x87", W);
+        SpPath final_sigma = sp_path_f("\xce\x91\xce\xa3", W), final_small = sp_path_f("\xce\xb1\xcf\x82", W);
+        SpPath medial_small = sp_path_f("\xce\xb1\xcf\x83", W);
+        ASSERT(sp_path_eq(&cafe, &upper) && sp_path_hash(&cafe) == sp_path_hash(&upper));
+        ASSERT(!sp_path_eq(&dotted, &plain_i) && sp_path_eq(&dotted, &i_dot));
+        ASSERT(sp_path_eq(&final_sigma, &final_small) && !sp_path_eq(&final_sigma, &medial_small));
+        SpPath sub = sp_path_f("CAF\xc3\x89\\x", W);
+        ASSERT(sp_is_relative_to(&sub, &cafe));
+        ASSERT_PATH(sp_relative_to(&sub, &cafe, false), "x");
+    }
+    /* A drive is any one character, then ':' */
+    {
+        SpPath e_drive = sp_path_f("\xc3\xa9:\\x", W);
+        ASSERT_TERM(sp_drive(&e_drive), "\xc3\xa9:");
+        ASSERT(sp_is_absolute(&e_drive));
+    }
+    /* Case-insensitive matching follows re.IGNORECASE, including its extra case groups (s and long s, k and Kelvin) */
+    {
+        SpPath longs = sp_path_f("\xc5\xbf", P), kelvin = sp_path_f("\xe2\x84\xaa", P), sigma = sp_path_f("\xce\xa3", P);
+        ASSERT(sp_full_match(&longs, "S", 0) && sp_full_match(&kelvin, "k", 0) && sp_full_match(&sigma, "[\xcf\x83]", 0));
+        ASSERT(!sp_full_match(&kelvin, "k", 1));
+    }
+
     SpPath win_ws_base = sp_path_f("ignored", W);
     const char *win_ws1[] = {"C:/", "Users", "Bob"};
     ASSERT_PATH(sp_with_segments(&win_ws_base, win_ws1, ARRAY_LEN(win_ws1)), "C:\\Users\\Bob");
