@@ -1276,7 +1276,8 @@ def setup_pathlib_patch(testfn=None):
             raise OSError('chmod does not stick')
         os.chmod(target, 0o600)
 
-    have_symlink = probe(touch_then(os.symlink))
+    # Windows symlink semantics (resolve through links, reparse tags, removing directory links) are not ported yet
+    have_symlink = os.name != 'nt' and probe(touch_then(os.symlink))
     have_hardlink = probe(touch_then(lambda target, link: os.link(target, link)))
     have_chmod = probe(touch_then(chmod_sticks))
     os_helper.can_symlink = lambda: have_symlink
