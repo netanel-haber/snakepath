@@ -2785,10 +2785,13 @@ static SpError sp_priv_delete(const SpPath *p) {
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    while (err == SP_OK && sp_priv_readdir_next(&handle, p, &child) > 0)
+    while (err == SP_OK) {
+        if (sp_priv_readdir_next(&handle, p, &child) == 0) {
+            err = child.error; /* why the listing ended */
+            break;
+        }
         err = sp_priv_delete(&child);
-    if (err == SP_OK)
-        err = child.error; /* why the listing ended */
+    }
     sp_priv_readdir_close(&handle);
 
     return err != SP_OK ? err : sp_priv_remove_impl(path_str, true, false);
@@ -3274,7 +3277,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    for (size_t n; it->error == SP_OK && (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0;) {
+    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0;) {
         SpStatResult st = sp_priv_stat_impl(&child, follow);
         bool is_dir = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         if (used + n + 2 > it->priv_.size) {

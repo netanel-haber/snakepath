@@ -1947,7 +1947,7 @@ int main(void) {
     printf("\nerror Tests:\n");
     {
         /* Past SP_MAX_SUFFIXES suffixes */
-        char many[2 * SP_MAX_SUFFIXES + 3] = "a";
+        char many[2 * (SP_MAX_SUFFIXES + 1) + 2] = "a";
         for (size_t i = 0; i <= SP_MAX_SUFFIXES; i++)
             strcat(many, ".x");
         SpPath many_path = sp_path_f(many, P);
