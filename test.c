@@ -8,6 +8,9 @@
 #else
 #define SP_PATH_MAX SP_PATH_MAX_LINUX
 #endif
+#ifndef SP_FFI
+#define SP_GLOB_MAX_DEPTH 16 /* a glob past it needs a tree this deep, which Windows paths must be short enough for */
+#endif
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 
@@ -2078,7 +2081,7 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 24);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
     ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
-    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 3352);
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * 24);
 #endif
 
     printf("  struct size tests OK\n");
