@@ -11,7 +11,16 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 - No special-casing in wrappers
 - Fluent API has near-parity with boring API — only iterators missing; a fluent method returns what the function it forwards to returns
 - Port only what is meaningful in C: Python-only pathlib machinery becomes an expected failure, never binding code.
-- Macros are for constants, names for hacks (C/C++ compat casts, platform functions) and the simplest iterator sugar (`SP_*_FOREACH`). Never use a macro to share code.
+- Macros are for constants, names for hacks (C/C++ compat casts, platform functions, compiler attributes like `SP_NODISCARD`) and the simplest iterator sugar (`SP_*_FOREACH`). Never use a macro to share code.
+
+## Errors
+Shift every error as far left as it goes: what can be a compile error is one, what can be an explicit runtime error is one.
+- One `SpError` for everything, path logic and OS alike, with specific codes (`sp_priv_last_error` maps errno and `GetLastError`). A result that can fail carries it (`.error` on paths, text, suffixes, stat results and iterators); actions return it.
+- A path with an error passes it on: every function returning a path, text or struct returns the input's error, and actions return it, so a chain needs one check at the end. Functions returning a bool or a number, and `sp_str`, assert that their paths carry no error. An error path is empty.
+- Every public function that returns a value is `SP_NODISCARD`; bad configuration macros are `#error`s.
+- Nothing is silently truncated or skipped: a result that doesn't fit its buffer (`SP_PATH_MAX` or the caller's) is `SP_ERR_TOO_LONG`, going past a configured limit (`SP_MAX_SUFFIXES`, `SP_GLOB_MAX_DEPTH`, `SP_GLOB_PATTERN_MAX`) is `SP_ERR_LIMIT`.
+- Options: a function with one option takes a named bool; one with two or more takes flags named after pathlib's keywords with the function's prefix (`SP_MKDIR_*`, `SP_COPY_*`, `SP_WALK_*`), each a distinct bit, so another function's flag is `SP_ERR_INVALID_ARG`. Modes are always explicit (0 is a mode; `SP_MODE_DIR`/`SP_MODE_FILE` are pathlib's defaults).
+- A fluent chain started while another runs carries `SP_ERR_NESTED_CHAIN` (both chains do, until the next terminator).
 
 ## Call Depth
 `snakepath.py` checks real stack depth on the preprocessed library (`cc -E -P`, or `cl /EP` on Windows, with `SNAKEPATH_IMPLEMENTATION` and `SNAKEPATH_FLUENT`):
@@ -90,9 +99,11 @@ g++ -std=c++11 -x c++ -I. -Wall -Wextra -Werror -Wmissing-field-initializers -o 
 gcc -shared -fPIC -DSP_FFI -o libsnakepath.so test.c && python snakepath.py
 ```
 
-**g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`
+**g++ pitfalls:** `{0}` → `memset`, `void*` casts → `SP_PRIV_CAST`, C casts → `SP_PRIV_CAST`, pointer to integer → `SP_PRIV_PTR_BITS`. A struct's first member must not be an enum (clang warns that `{0}` converts an int to it).
 
-**Environment quirks:** Android forbids hard links, so there the fluent `hardlink_to` test fails even on clean `main`.
+**`SP_NODISCARD` pitfall:** GCC's `warn_unused_result` ignores `(void)` casts, so store or check every result (the tests assert them, cleanup included).
+
+**Environment quirks:** Android forbids hard links, and CPython there has no `os.link`: `sp_hardlink_to` returns `SP_ERR_UNSUPPORTED` on Android (`pathlib.UnsupportedOperation`), and the tests expect that.
 
 ## EXPECTED_FAILURES
 
@@ -123,7 +134,8 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - Before treating a local filesystem/fluent failure as a regression, stash the patch, run `./nob clean`, verify clean `main`, then compare against that baseline.
 - Python bindings should use `os.fspath()` directly (no `str()` fallback) so non-pathlike types raise `TypeError`.
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
-- Windows builds should not compile `sp_owner_wrap`/`sp_group_wrap`; gate the wrappers in C.
+- `owner`/`group` return `SP_ERR_UNSUPPORTED` on Windows (the bindings raise `pathlib.UnsupportedOperation`), so their wrappers are built everywhere.
+- `walk` is an iterator (`sp_walk_begin`/`sp_walk_next`) keeping names in the caller's buffer, in `os.walk`'s shape: the bindings drive it as a generator and hand pruned `dirnames` back between yields, with no walk logic in Python.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
 - New functionality goes in `snakepath.h` first; then mirror wrappers in the `SP_FFI` section of `test.c` and in `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
 - When API examples change, update `api_demo.c` first, then its copy in `README.md` (GitHub Pages renders that file as the website through `_layouts/default.html`), and record any new learnings here. `nob` fails (`snakepath.py`) if the copy drifts.

@@ -10,6 +10,7 @@ embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these c
 
 import ctypes
 import errno
+import io
 import os
 import pathlib
 import re
@@ -17,7 +18,7 @@ import subprocess
 import sys
 import unittest
 import urllib.request
-from ctypes import c_char_p, c_size_t, c_int, POINTER, Structure, byref, create_string_buffer
+from ctypes import c_char_p, c_size_t, c_int, c_uint, POINTER, Structure, byref, create_string_buffer
 
 # Find and load the shared library
 _lib_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,52 +35,58 @@ for name in _lib_names:
 if _lib is None:
     raise ImportError(f"Could not load snakepath library. Looked in {_lib_dir}")
 
-# Get structure sizes from library
-SP_PATH_MAX = _lib.sp_path_max()
-SP_MAX_SUFFIXES = _lib.sp_max_suffixes()
-_sizeof_parts_iter = _lib.sp_sizeof_parts_iter()
-_sizeof_parents_iter = _lib.sp_sizeof_parents_iter()
+# The library's constants: errors, flags, case sensitivity and sizes
+for _name in ['SP_OK', 'SP_ERR_IO', 'SP_ERR_NOT_FOUND', 'SP_ERR_EXISTS', 'SP_ERR_NOT_DIR', 'SP_ERR_IS_DIR',
+              'SP_ERR_NOT_EMPTY', 'SP_ERR_PERMISSION', 'SP_ERR_LOOP', 'SP_ERR_NOT_LINK', 'SP_ERR_CROSS_DEVICE',
+              'SP_ERR_SAME_FILE', 'SP_ERR_NO_HOME', 'SP_ERR_TOO_LONG', 'SP_ERR_LIMIT', 'SP_ERR_NUL',
+              'SP_ERR_INVALID_ARG', 'SP_ERR_NO_NAME', 'SP_ERR_NOT_RELATIVE', 'SP_ERR_NOT_ABSOLUTE',
+              'SP_ERR_UNSUPPORTED', 'SP_MKDIR_PARENTS', 'SP_MKDIR_EXIST_OK', 'SP_COPY_FOLLOW_SYMLINKS',
+              'SP_COPY_PRESERVE_METADATA', 'SP_WALK_TOP_DOWN', 'SP_WALK_FOLLOW_SYMLINKS', 'SP_CASE_DEFAULT',
+              'SP_CASE_SENSITIVE', 'SP_CASE_INSENSITIVE', 'SP_PATH_MAX', 'SP_MAX_SUFFIXES']:
+    globals()[_name] = getattr(_lib, f'sp_const_{_name}')()
 
-# Flavor constants
 SP_FLAVOR_NATIVE = 0
 SP_FLAVOR_POSIX = 1
 SP_FLAVOR_WINDOWS = 2
 
-# Result and error codes (from C library)
-SP_OK = _lib.sp_ok()
-SP_ERR_EXISTS = _lib.sp_err_exists()
-SP_ERR_NOT_FOUND = _lib.sp_err_not_found()
-SP_ERR_NOT_DIR = _lib.sp_err_not_dir()
-SP_ERR_PERMISSION = _lib.sp_err_permission()
-SP_ERR_EXISTS_NOT_DIR = _lib.sp_err_exists_not_dir()
-SP_ERR_OPEN = _lib.sp_err_open()
-SP_ERR_NO_NAME = _lib.sp_err_no_name()
-SP_ERR_INVALID_ARG = _lib.sp_err_invalid_arg()
-SP_ERR_UNSUPPORTED = _lib.sp_err_unsupported()
-SP_MATCH_YES = _lib.sp_match_yes()
-SP_MATCH_ERR_EMPTY = _lib.sp_match_err_empty()
-
-# Case sensitivity options for glob/match
-SP_CASE_PLATFORM_DEFAULT = _lib.sp_case_platform_default()
-SP_CASE_SENSITIVE = _lib.sp_case_sensitive()
-SP_CASE_INSENSITIVE = _lib.sp_case_insensitive()
+_WALK_BUF_SIZE = 1 << 22  # names kept for the directories being walked
 
 
 class _SpPath(Structure):
-    """C SpPath structure"""
-    _fields_ = [
-        ("buf", ctypes.c_char * SP_PATH_MAX),
-        ("len", c_size_t),
-        ("flavor", c_int),
-    ]
+    _fields_ = [("buf", ctypes.c_char * SP_PATH_MAX), ("len", c_size_t), ("flavor", c_int), ("error", c_int)]
 
 
-class _SpPartsIter(Structure):
-    _fields_ = [("_data", ctypes.c_char * _sizeof_parts_iter)]
+class _SpTerm(Structure):
+    _fields_ = [("buf", ctypes.c_char * SP_PATH_MAX), ("len", c_size_t), ("error", c_int)]
 
 
-class _SpParentsIter(Structure):
-    _fields_ = [("_data", ctypes.c_char * _sizeof_parents_iter)]
+class _SpStr(Structure):
+    _fields_ = [("data", ctypes.c_void_p), ("len", c_size_t)]
+
+
+class _SpSuffixes(Structure):
+    _fields_ = [("items", _SpStr * SP_MAX_SUFFIXES), ("count", c_size_t), ("error", c_int)]
+
+
+class _SpIOResult(Structure):
+    _fields_ = [("bytes", c_size_t), ("error", c_int)]
+
+
+class _SpWalkEntry(Structure):
+    _fields_ = [("dirpath", _SpPath), ("dirnames", POINTER(c_char_p)), ("dirname_count", c_size_t),
+                ("filenames", POINTER(c_char_p)), ("filename_count", c_size_t), ("error", c_int)]
+
+
+def _opaque(size_fn):
+    """A ctypes structure as big as a C struct that Python only passes around"""
+    return type('_Opaque', (Structure,), {'_fields_': [('_data', ctypes.c_char * size_fn())]})
+
+
+_SpPartsIter = _opaque(_lib.sp_sizeof_parts_iter)
+_SpParentsIter = _opaque(_lib.sp_sizeof_parents_iter)
+_SpGlobIter = _opaque(_lib.sp_sizeof_glob_iter)
+_SpIterdirIter = _opaque(_lib.sp_sizeof_iterdir_iter)
+_SpWalkIter = _opaque(_lib.sp_sizeof_walk_iter)
 
 
 class _SpStatResult(Structure):
@@ -98,14 +105,14 @@ class _SpStatResult(Structure):
         ("st_atime_ns", ctypes.c_longlong),
         ("st_mtime_ns", ctypes.c_longlong),
         ("st_ctime_ns", ctypes.c_longlong),
-        ("valid", ctypes.c_bool),
+        ("error", c_int),
     ]
 
     def __eq__(self, other):
         if isinstance(other, _SpStatResult):
             return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other)))
         if hasattr(other, 'st_mode'):
-            other_sp = _SpStatResult(**{n: getattr(other, n) for n, _ in _SpStatResult._fields_ if n != 'valid'}, valid=True)
+            other_sp = _SpStatResult(**{n: getattr(other, n) for n, _ in _SpStatResult._fields_ if n != 'error'})
             return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other_sp)))
         return NotImplemented
 
@@ -116,7 +123,7 @@ class _SpStatResult(Structure):
                 f"st_atime={self.st_atime}, st_mtime={self.st_mtime}, st_ctime={self.st_ctime})")
 
 
-# ============ Signature helpers ============
+# ============ Signatures ============
 
 def _sig(name, argtypes, restype=None):
     fn = getattr(_lib, name)
@@ -124,120 +131,117 @@ def _sig(name, argtypes, restype=None):
     fn.restype = restype
 
 _PP = POINTER(_SpPath)
+_PT = POINTER(_SpTerm)
 _PStat = POINTER(_SpStatResult)
+_PBytes = POINTER(ctypes.c_char)
 
-# Bulk signature setup by pattern
-# SpTerm-returning functions: pass buffer, buffer size, receive length
-for n in ['drive', 'root', 'anchor', 'name', 'stem', 'suffix']:
-    _sig(f'sp_{n}_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)])
-
-for n in ['parent', 'absolute']:
+for n in ['drive', 'root', 'anchor', 'name', 'stem', 'suffix', 'as_posix']:
+    _sig(f'sp_{n}_wrap', [_PP, _PT])
+for n in ['owner', 'group']:
+    _sig(f'sp_{n}_wrap', [_PP, c_int, _PT])
+for n in ['parent', 'absolute', 'expanduser', 'readlink']:
     _sig(f'sp_{n}_wrap', [_PP, _PP])
-
 for n in ['with_name', 'with_stem', 'with_suffix']:
     _sig(f'sp_{n}_wrap', [_PP, c_char_p, _PP])
-
-_sig('sp_joinpath_wrap', [_PP, _PP, _PP])
-
+for n in ['joinpath', 'rename', 'replace', 'move', 'move_into']:
+    _sig(f'sp_{n}_wrap', [_PP, _PP, _PP])
 for n in ['is_file', 'is_dir', 'exists']:
     _sig(f'sp_{n}_wrap', [_PP, c_int], c_int)
-
-for n in ['is_absolute',
-          'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo',
-          'is_socket', 'is_mount', 'is_junction',
-          'path_is_error', 'path_error_code']:
+for n in ['is_absolute', 'is_symlink', 'is_block_device', 'is_char_device', 'is_fifo', 'is_socket', 'is_mount',
+          'is_junction']:
     _sig(f'sp_{n}_wrap', [_PP], c_int)
+for n in ['path_eq', 'is_relative_to', 'samefile', 'path_cmp']:
+    _sig(f'sp_{n}_wrap', [_PP, _PP], c_int)
 
-_sig('sp_path_eq_wrap', [_PP, _PP], c_int)
-
-_sig('sp_path_hash_wrap', [_PP], ctypes.c_ulong)
-
-# Remaining signatures
-_sig('sp_path_new_len_wrap', [POINTER(ctypes.c_char), c_size_t, c_int, _PP])
+_sig('sp_error_str_wrap', [c_int], c_char_p)
+_sig('sp_path_new_len_wrap', [_PBytes, c_size_t, c_int, _PP])
 _sig('sp_path_convert_wrap', [c_char_p, c_int, c_int, _PP])
 _sig('sp_path_copy_wrap', [_PP, _PP])
 _sig('sp_str_wrap', [_PP], c_char_p)
-_sig('sp_join_one_len_wrap', [_PP, POINTER(ctypes.c_char), c_size_t, _PP])
-_sig('sp_suffixes_wrap', [_PP, POINTER(c_char_p), POINTER(c_size_t), c_size_t], c_size_t)
+_sig('sp_cwd_wrap', [c_int, _PP])
+_sig('sp_home_wrap', [c_int, _PP])
+_sig('sp_from_uri_wrap', [c_char_p, c_int, _PP])
+_sig('sp_suffixes_wrap', [_PP, POINTER(_SpSuffixes)])
+_sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_int)
+_sig('sp_join_one_len_wrap', [_PP, _PBytes, c_size_t, _PP])
+_sig('sp_with_segments_wrap', [_PP, POINTER(c_char_p), c_size_t, _PP])
+_sig('sp_relative_to_wrap', [_PP, _PP, c_int, _PP])
+_sig('sp_resolve_wrap', [_PP, c_int, _PP])
+_sig('sp_copy_wrap', [_PP, _PP, c_uint, _PP])
+_sig('sp_copy_into_wrap', [_PP, _PP, c_uint, _PP])
 _sig('sp_parts_iter_begin_wrap', [_PP, POINTER(_SpPartsIter)])
-_sig('sp_parts_iter_next_wrap', [POINTER(_SpPartsIter), POINTER(c_char_p), POINTER(c_size_t)], c_int)
+_sig('sp_parts_iter_next_wrap', [POINTER(_SpPartsIter), POINTER(_SpStr)], c_int)
 _sig('sp_parents_iter_begin_wrap', [_PP, POINTER(_SpParentsIter)])
 _sig('sp_parents_iter_next_wrap', [POINTER(_SpParentsIter), _PP], c_int)
-_sig('sp_with_segments_wrap', [_PP, POINTER(c_char_p), c_size_t, _PP])
-_sig('sp_is_relative_to_wrap', [_PP, _PP], c_int)
-_sig('sp_relative_to_wrap', [_PP, _PP, c_int, _PP])
-_sig('sp_as_uri_wrap', [_PP, c_char_p, c_size_t], c_size_t)
-_sig('sp_from_uri_wrap', [c_char_p, c_int, _PP])
-_sig('sp_as_posix_wrap', [_PP, c_char_p, c_size_t])
-_sig('sp_cwd_wrap', [c_int, _PP])
-_sig('sp_path_cmp_wrap', [_PP, _PP], c_int)
-_sig('sp_match_ex_wrap', [_PP, c_char_p, c_int], c_int)
+_sig('sp_path_hash_wrap', [_PP], ctypes.c_ulong)
+_sig('sp_match_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_full_match_wrap', [_PP, c_char_p, c_int], c_int)
-_sig('sp_error_str_wrap', [c_int], c_char_p)
 _sig('sp_stat_wrap', [_PP, _PStat])
 _sig('sp_lstat_wrap', [_PP, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
-# Symlink & link operations
-_sig('sp_readlink_wrap', [_PP, _PP])
-_sig('sp_resolve_wrap', [_PP, c_int, _PP])
-_sig('sp_symlink_to_wrap', [_PP, _PP, c_int], c_int)
-_sig('sp_hardlink_to_wrap', [_PP, _PP], c_int)
-_sig('sp_samefile_wrap', [_PP, _PP], c_int)
-_sig('sp_mkdir_wrap', [_PP, ctypes.c_uint, c_int, c_int, ctypes.c_uint], c_int)
-# Glob iterator
-_sizeof_glob_iter = _lib.sp_sizeof_glob_iter()
-class _SpGlobIter(Structure):
-    _fields_ = [('_opaque', ctypes.c_char * _sizeof_glob_iter)]
-_PGlobIter = POINTER(_SpGlobIter)
-_sig('sp_glob_begin_wrap', [_PP, c_char_p, c_int, c_int, _PGlobIter])
-_sig('sp_rglob_begin_wrap', [_PP, c_char_p, c_int, c_int, _PGlobIter])
-_sig('sp_glob_next_wrap', [_PGlobIter, _PP], c_int)
-_sig('sp_glob_end_wrap', [_PGlobIter])
-_sig('sp_glob_error_wrap', [_PGlobIter], c_int)
-# File/directory modification operations
-_sig('sp_touch_wrap', [_PP, ctypes.c_uint, c_int], c_int)
+_sig('sp_mkdir_wrap', [_PP, c_uint, c_uint, c_uint], c_int)
+_sig('sp_touch_wrap', [_PP, c_uint, c_int], c_int)
 _sig('sp_unlink_wrap', [_PP, c_int], c_int)
 _sig('sp_rmdir_wrap', [_PP], c_int)
-_sig('sp_rename_wrap', [_PP, _PP, _PP])
-_sig('sp_replace_wrap', [_PP, _PP, _PP])
-_sig('sp_copy_wrap', [_PP, _PP, c_int, c_int, _PP])
-_sig('sp_copy_into_wrap', [_PP, _PP, c_int, c_int, _PP])
-_sig('sp_move_wrap', [_PP, _PP, _PP])
-_sig('sp_move_into_wrap', [_PP, _PP, _PP])
-_sig('sp_chmod_wrap', [_PP, ctypes.c_uint], c_int)
-# File I/O
-_sig('sp_read_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(c_int)])
-_sig('sp_write_file_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t), POINTER(c_int)])
-# Home directory and user expansion
-_sig('sp_home_wrap', [c_int, _PP])
-_sig('sp_expanduser_wrap', [_PP, _PP])
-# User/group info (SpTerm-based, buffer API) - not available on Windows builds
-_HAS_OWNER_GROUP = hasattr(_lib, 'sp_owner_wrap') and hasattr(_lib, 'sp_group_wrap')
-if _HAS_OWNER_GROUP:
-    for n in ['owner', 'group']:
-        _sig(f'sp_{n}_wrap', [_PP, c_char_p, c_size_t, POINTER(c_size_t)])
-# iterdir iterator
-_sizeof_iterdir_iter = _lib.sp_sizeof_iterdir_iter()
-class _SpIterdirIter(Structure):
-    _fields_ = [('_opaque', ctypes.c_char * _sizeof_iterdir_iter)]
-_PIterdirIter = POINTER(_SpIterdirIter)
-_sig('sp_iterdir_begin_wrap', [_PP, _PIterdirIter])
-_sig('sp_iterdir_next_wrap', [_PIterdirIter, _PP], c_int)
-_sig('sp_iterdir_end_wrap', [_PIterdirIter])
-_sig('sp_iterdir_done_wrap', [_PIterdirIter], c_int)
-# walk - Python walk() composes iterdir + is_dir (see walk() docstring for why)
+_sig('sp_chmod_wrap', [_PP, c_uint, c_int], c_int)
+_sig('sp_symlink_to_wrap', [_PP, _PP, c_int], c_int)
+_sig('sp_hardlink_to_wrap', [_PP, _PP], c_int)
+_sig('sp_read_file_wrap', [_PP, c_char_p, c_size_t, POINTER(_SpIOResult)])
+_sig('sp_write_file_wrap', [_PP, c_char_p, c_size_t, POINTER(_SpIOResult)])
+_sig('sp_iterdir_begin_wrap', [_PP, POINTER(_SpIterdirIter)])
+_sig('sp_iterdir_next_wrap', [POINTER(_SpIterdirIter), _PP], c_int)
+_sig('sp_iterdir_end_wrap', [POINTER(_SpIterdirIter)])
+_sig('sp_iterdir_error_wrap', [POINTER(_SpIterdirIter)], c_int)
+for n in ['glob', 'rglob']:
+    _sig(f'sp_{n}_begin_wrap', [_PP, c_char_p, c_int, c_int, POINTER(_SpGlobIter)])
+_sig('sp_glob_next_wrap', [POINTER(_SpGlobIter), _PP], c_int)
+_sig('sp_glob_end_wrap', [POINTER(_SpGlobIter)])
+_sig('sp_glob_error_wrap', [POINTER(_SpGlobIter)], c_int)
+_sig('sp_walk_begin_wrap', [_PP, c_uint, ctypes.c_void_p, c_size_t, POINTER(_SpWalkIter)])
+_sig('sp_walk_next_wrap', [POINTER(_SpWalkIter)], POINTER(_SpWalkEntry))
+_sig('sp_walk_error_wrap', [POINTER(_SpWalkIter)], c_int)
+
+
+# ============ Errors ============
+
+class UnsupportedOperation(NotImplementedError):
+    """An operation the path doesn't support (pathlib.UnsupportedOperation)"""
+
+
+# The errno of each SpError that is an OSError
+_ERRNO = {SP_ERR_IO: errno.EIO, SP_ERR_NOT_FOUND: errno.ENOENT, SP_ERR_EXISTS: errno.EEXIST,
+          SP_ERR_NOT_DIR: errno.ENOTDIR, SP_ERR_IS_DIR: errno.EISDIR, SP_ERR_NOT_EMPTY: errno.ENOTEMPTY,
+          SP_ERR_PERMISSION: errno.EACCES, SP_ERR_LOOP: errno.ELOOP, SP_ERR_NOT_LINK: errno.EINVAL,
+          SP_ERR_CROSS_DEVICE: errno.EXDEV, SP_ERR_SAME_FILE: errno.EINVAL, SP_ERR_TOO_LONG: errno.ENAMETOOLONG,
+          SP_ERR_LIMIT: errno.E2BIG, SP_ERR_INVALID_ARG: errno.EINVAL}
+
+
+def _error(err, *filenames):
+    """The Python exception for an SpError from the file system (filenames: the path, then the target)"""
+    message = _decode(_lib.sp_error_str_wrap(err))
+    if err == SP_ERR_NUL:
+        return ValueError("embedded null byte")
+    if err == SP_ERR_UNSUPPORTED:
+        return UnsupportedOperation(message)
+    if err == SP_ERR_NO_HOME:
+        return RuntimeError("Could not determine home directory.")
+    if err not in _ERRNO:
+        return ValueError(message)
+    code = _ERRNO[err]
+    names = [os.fspath(f) for f in filenames]
+    return OSError(code, os.strerror(code), *names[:1], *([None, names[1]] if len(names) > 1 else []))
+
+
+def _check(err, *filenames):
+    if err != SP_OK:
+        raise _error(err, *filenames)
 
 
 # ============ Property descriptors ============
 
-_TERM_BUF_SIZE = 256  # matches SP_TERM_MAX
-
-def _term(func, sp):
-    """Decode the SpTerm that func writes for sp ('' when empty)"""
-    buf = create_string_buffer(_TERM_BUF_SIZE)
-    length = c_size_t()
-    func(byref(sp), buf, _TERM_BUF_SIZE, byref(length))
-    return buf.value[:length.value].decode('utf-8') if length.value else ''
+def _text(term):
+    """The text of an SpTerm"""
+    return term.buf[:term.len].decode('utf-8', errors='surrogatepass')
 
 
 class _TermProp:
@@ -246,7 +250,11 @@ class _TermProp:
     def __init__(self, name):
         self._func = getattr(_lib, f'sp_{name}_wrap')
     def __get__(self, obj, objtype=None):
-        return self if obj is None else _term(self._func, obj._sp)
+        if obj is None:
+            return self
+        term = _SpTerm()
+        self._func(byref(obj._sp), byref(term))
+        return _text(term)
 
 
 class _PathProp:
@@ -279,24 +287,15 @@ def _follow_method(name):
     return method
 
 
-def _raise_for(err, source, target):
-    """Raise the OSError subclass (or ValueError) for an SP_ERR_* code from a copy or move"""
-    if err == SP_ERR_NO_NAME:
-        raise ValueError(f"{source!r} has an empty name")
-    code = {SP_ERR_NOT_FOUND: errno.ENOENT, SP_ERR_EXISTS: errno.EEXIST, SP_ERR_PERMISSION: errno.EACCES,
-            SP_ERR_NOT_DIR: errno.ENOTDIR, SP_ERR_INVALID_ARG: errno.EINVAL}.get(err, errno.EIO)
-    raise OSError(code, _decode(_lib.sp_error_str_wrap(err)), str(source), None, str(target))  # OSError picks the subclass
-
-
 # ============ Helper functions ============
+
+_BYTES_ERROR = "argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'bytes'"
+
 
 def _encode(s):
     """Encode string to bytes for C library"""
     if isinstance(s, bytes):
-        raise TypeError(
-            "argument should be a str or an os.PathLike object "
-            "where __fspath__ returns a str, not 'bytes'"
-        )
+        raise TypeError(_BYTES_ERROR)
     return s.encode('utf-8', errors='surrogatepass') if s else b''
 
 
@@ -318,6 +317,10 @@ def _get_pathlib_flavor(obj):
     elif isinstance(obj, pathlib.PurePosixPath):
         return SP_FLAVOR_POSIX
     return None
+
+
+def _case(case_sensitive):
+    return SP_CASE_DEFAULT if case_sensitive is None else SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE
 
 
 # ============ PathParents ============
@@ -386,10 +389,7 @@ class PurePath:
         self._sp = _SpPath()
         for arg in args:
             if isinstance(arg, bytes):
-                raise TypeError(
-                    "argument should be a str or an os.PathLike object "
-                    "where __fspath__ returns a str, not 'bytes'"
-                )
+                raise TypeError(_BYTES_ERROR)
         self._load(args[0] if args else '', self._sp)
         self._join_into(self._sp, args[1:])
 
@@ -397,13 +397,12 @@ class PurePath:
         """Parse one path argument into out, converting from another flavor if needed"""
         if isinstance(arg, PurePath) and arg._flavor == self._flavor:
             _lib.sp_path_copy_wrap(byref(arg._sp), byref(out))
-            return
-        src_flavor = arg._flavor if isinstance(arg, PurePath) else _get_pathlib_flavor(arg)
-        if src_flavor is not None:
+        elif (src_flavor := arg._flavor if isinstance(arg, PurePath) else _get_pathlib_flavor(arg)) is not None:
             _lib.sp_path_convert_wrap(_encode(str(arg)), src_flavor, self._flavor, byref(out))
         else:
             buf = _encode_buf(os.fspath(arg))
             _lib.sp_path_new_len_wrap(buf, len(buf.raw), self._flavor, byref(out))
+        _check(out.error, arg)
 
     def _join_into(self, sp, others):
         """Join each argument onto sp in place; plain strings are joined as raw text"""
@@ -415,6 +414,7 @@ class PurePath:
             else:
                 buf = _encode_buf(os.fspath(other))
                 _lib.sp_join_one_len_wrap(byref(sp), buf, len(buf.raw), byref(sp))
+            _check(sp.error, other)
 
     def with_segments(self, *pathsegments):
         """Construct a new path object from any number of path-like objects."""
@@ -422,6 +422,7 @@ class PurePath:
         parts_arr = (c_char_p * len(parts))(*parts) if parts else None
         out = _SpPath()
         _lib.sp_with_segments_wrap(byref(self._sp), parts_arr, len(parts), byref(out))
+        _check(out.error, *pathsegments[:1])
         return self._from_sp(out)
 
     def _from_sp(self, sp_value):
@@ -452,21 +453,26 @@ class PurePath:
     def __hash__(self):
         return _lib.sp_path_hash_wrap(byref(self._sp))
 
+    def _cmp(self, other):
+        if not isinstance(other, PurePath) or self.parser is not other.parser:
+            return NotImplemented
+        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp))
+
     def __lt__(self, other):
-        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) < 0
+        c = self._cmp(other)
+        return c if c is NotImplemented else c < 0
 
     def __le__(self, other):
-        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) <= 0
+        c = self._cmp(other)
+        return c if c is NotImplemented else c <= 0
 
     def __gt__(self, other):
-        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) > 0
+        c = self._cmp(other)
+        return c if c is NotImplemented else c > 0
 
     def __ge__(self, other):
-        if not isinstance(other, PurePath) or self.parser is not other.parser: return NotImplemented
-        return _lib.sp_path_cmp_wrap(byref(self._sp), byref(other._sp)) >= 0
+        c = self._cmp(other)
+        return c if c is NotImplemented else c >= 0
 
     def __truediv__(self, other):
         try:
@@ -482,11 +488,11 @@ class PurePath:
 
     @property
     def suffixes(self):
-        data_arr = (c_char_p * SP_MAX_SUFFIXES)()
-        len_arr = (c_size_t * SP_MAX_SUFFIXES)()
-        count = _lib.sp_suffixes_wrap(byref(self._sp), data_arr, len_arr, SP_MAX_SUFFIXES)
-        return [data_arr[i][:len_arr[i]].decode('utf-8')
-                for i in range(count) if data_arr[i] and len_arr[i] > 0]
+        s = _SpSuffixes()
+        _lib.sp_suffixes_wrap(byref(self._sp), byref(s))
+        _check(s.error, self)
+        return [ctypes.string_at(item.data, item.len).decode('utf-8', errors='surrogatepass')
+                for item in s.items[:s.count]]
 
     @property
     def parents(self):
@@ -497,24 +503,22 @@ class PurePath:
         parts = []
         it = _SpPartsIter()
         _lib.sp_parts_iter_begin_wrap(byref(self._sp), byref(it))
-        data, length = c_char_p(), c_size_t()
-        while _lib.sp_parts_iter_next_wrap(byref(it), byref(data), byref(length)):
-            if data.value and length.value > 0:
-                parts.append(data.value[:length.value].decode('utf-8'))
+        part = _SpStr()
+        while _lib.sp_parts_iter_next_wrap(byref(it), byref(part)):
+            parts.append(ctypes.string_at(part.data, part.len).decode('utf-8', errors='surrogatepass'))
         return tuple(parts)
 
     def as_posix(self):
-        buf = create_string_buffer(SP_PATH_MAX)
-        _lib.sp_as_posix_wrap(byref(self._sp), buf, SP_PATH_MAX)
-        return buf.value.decode('utf-8')
+        term = _SpTerm()
+        _lib.sp_as_posix_wrap(byref(self._sp), byref(term))
+        return _text(term)
 
     def as_uri(self):
-        if not self.is_absolute():
+        buf = create_string_buffer(SP_PATH_MAX * 3 + 8)  # every byte percent-encoded, after "file:///"
+        err = _lib.sp_as_uri_wrap(byref(self._sp), buf, len(buf))
+        if err == SP_ERR_NOT_ABSOLUTE:
             raise ValueError("relative path can't be expressed as a file URI")
-        buf = create_string_buffer(SP_PATH_MAX * 3)
-        result_len = _lib.sp_as_uri_wrap(byref(self._sp), buf, SP_PATH_MAX * 3)
-        if result_len == 0:
-            raise ValueError("relative path can't be expressed as a file URI")
+        _check(err, self)
         return buf.value.decode('utf-8')
 
     is_absolute = _bool_method('is_absolute')
@@ -529,19 +533,18 @@ class PurePath:
         return bool(_lib.sp_is_relative_to_wrap(byref(self._sp), byref(self._other(other))))
 
     def relative_to(self, other, *, walk_up=False):
+        other_sp = self._other(other)
         out = _SpPath()
-        _lib.sp_relative_to_wrap(byref(self._sp), byref(self._other(other)), 1 if walk_up else 0, byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise ValueError(f"{str(self)!r} is not relative to {str(self._from_sp(self._other(other)))!r}")
+        _lib.sp_relative_to_wrap(byref(self._sp), byref(other_sp), 1 if walk_up else 0, byref(out))
+        if out.error == SP_ERR_NOT_RELATIVE:
+            raise ValueError(f"{str(self)!r} is not relative to {str(self._from_sp(other_sp))!r}")
+        _check(out.error, self)
         return self._from_sp(out)
 
     def joinpath(self, *others):
         for other in others:
             if isinstance(other, bytes):
-                raise TypeError(
-                    "argument should be a str or an os.PathLike object "
-                    "where __fspath__ returns a str, not 'bytes'"
-                )
+                raise TypeError(_BYTES_ERROR)
         out = _SpPath()
         _lib.sp_path_copy_wrap(byref(self._sp), byref(out))
         self._join_into(out, others)
@@ -552,11 +555,11 @@ class PurePath:
             raise TypeError(f"expected str, not {type(value).__name__}")
         out = _SpPath()
         getattr(_lib, f'sp_with_{type_name}_wrap')(byref(self._sp), _encode(value), byref(out))
-        err = _lib.sp_path_error_code_wrap(byref(out))
-        if err == SP_ERR_NO_NAME:
+        if out.error == SP_ERR_NO_NAME:
             raise ValueError(f"{self!r} has an empty name")
-        if err == SP_ERR_INVALID_ARG:
+        if out.error == SP_ERR_INVALID_ARG:
             raise ValueError(f"Invalid {type_name} {value!r}")
+        _check(out.error, self)
         return self._from_sp(out)
 
     def with_name(self, name):
@@ -569,15 +572,14 @@ class PurePath:
         return self._with_field('suffix', suffix)
 
     def full_match(self, pattern, *, case_sensitive=None):
-        cs_value = -1 if case_sensitive is None else (1 if case_sensitive else 0)
-        return bool(_lib.sp_full_match_wrap(byref(self._sp), _encode(os.fspath(pattern)), cs_value))
+        pattern = os.fspath(pattern)
+        return bool(_lib.sp_full_match_wrap(byref(self._sp), _encode(pattern), _case(case_sensitive)))
 
     def match(self, path_pattern, *, case_sensitive=None):
-        cs_value = -1 if case_sensitive is None else (1 if case_sensitive else 0)
-        result = _lib.sp_match_ex_wrap(byref(self._sp), _encode(os.fspath(path_pattern)), cs_value)
-        if result == SP_MATCH_ERR_EMPTY:
+        # sp_match's precondition, raised as pathlib raises it
+        if not self.with_segments(path_pattern).parts:
             raise ValueError("empty pattern")
-        return result == SP_MATCH_YES
+        return bool(_lib.sp_match_wrap(byref(self._sp), _encode(os.fspath(path_pattern)), _case(case_sensitive)))
 
 
 class PurePosixPath(PurePath):
@@ -606,16 +608,55 @@ class Path(PurePath):
         return object.__new__(cls)
 
     @classmethod
-    def cwd(cls):
+    def _made(cls, make, *args):
+        """A path of this class from a C function that makes one (cwd, home, from_uri)"""
         result = cls.__new__(cls)
         result._sp = _SpPath()
-        _lib.sp_cwd_wrap(result._flavor, byref(result._sp))
+        make(*args, result._flavor, byref(result._sp))
         return result
 
-    def absolute(self):
+    @classmethod
+    def cwd(cls):
+        result = cls._made(_lib.sp_cwd_wrap)
+        _check(result._sp.error)
+        return result
+
+    @classmethod
+    def home(cls):
+        result = cls._made(_lib.sp_home_wrap)
+        _check(result._sp.error)
+        return result
+
+    @classmethod
+    def from_uri(cls, uri):
+        """Return a new path from the given 'file' URI."""
+        result = cls._made(_lib.sp_from_uri_wrap, _encode(uri))
+        if result._sp.error in (SP_ERR_INVALID_ARG, SP_ERR_NOT_ABSOLUTE):
+            raise ValueError(f"URI is not absolute: {uri!r}")
+        _check(result._sp.error)
+        return result
+
+    def _path_op(self, func, *args, target=None):
+        """A path from a C function of this path (and args), raising its error"""
         out = _SpPath()
-        _lib.sp_absolute_wrap(byref(self._sp), byref(out))
+        func(byref(self._sp), *args, byref(out))
+        _check(out.error, self, *([target] if target is not None else []))
         return self._from_sp(out)
+
+    def absolute(self):
+        return self._path_op(_lib.sp_absolute_wrap)
+
+    def expanduser(self):
+        """Expand ~ to user's home directory."""
+        return self._path_op(_lib.sp_expanduser_wrap)
+
+    def readlink(self):
+        """Return the path to which the symbolic link points."""
+        return self._path_op(_lib.sp_readlink_wrap)
+
+    def resolve(self, strict=False):
+        """Make the path absolute, resolving all symlinks."""
+        return self._path_op(_lib.sp_resolve_wrap, 1 if strict else 0)
 
     is_file = _follow_method('is_file')
     is_dir = _follow_method('is_dir')
@@ -630,33 +671,13 @@ class Path(PurePath):
 
     def stat(self, *, follow_symlinks=True):
         result = _SpStatResult()
-        if follow_symlinks:
-            _lib.sp_stat_wrap(byref(self._sp), byref(result))
-        else:
-            _lib.sp_lstat_wrap(byref(self._sp), byref(result))
-        if not result.valid:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
+        (_lib.sp_stat_wrap if follow_symlinks else _lib.sp_lstat_wrap)(byref(self._sp), byref(result))
+        _check(result.error, self)
         return result
 
     def lstat(self):
         """Like stat(), but does not follow symbolic links."""
         return self.stat(follow_symlinks=False)
-
-    def readlink(self):
-        """Return the path to which the symbolic link points."""
-        out = _SpPath()
-        _lib.sp_readlink_wrap(byref(self._sp), byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise OSError(22, "Invalid argument", str(self))
-        return self._from_sp(out)
-
-    def resolve(self, strict=False):
-        """Make the path absolute, resolving all symlinks."""
-        out = _SpPath()
-        _lib.sp_resolve_wrap(byref(self._sp), 1 if strict else 0, byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        return self._from_sp(out)
 
     def _sp_of(self, other):
         """C path for a PurePath or path-like argument (parsed in this path's flavor)"""
@@ -665,59 +686,46 @@ class Path(PurePath):
         sp = _SpPath()
         buf = _encode_buf(os.fspath(other))
         _lib.sp_path_new_len_wrap(buf, len(buf.raw), self._flavor, byref(sp))
+        _check(sp.error, other)
         return sp
 
     def symlink_to(self, target, target_is_directory=False):
         """Make this path a symlink pointing to target."""
-        if not _lib.sp_symlink_to_wrap(byref(self._sp), byref(self._sp_of(target)), 1 if target_is_directory else 0):
-            raise OSError(1, "Operation not permitted", str(self))
+        err = _lib.sp_symlink_to_wrap(byref(self._sp), byref(self._sp_of(target)), 1 if target_is_directory else 0)
+        _check(err, target, self)
 
     def hardlink_to(self, target):
         """Make this path a hard link pointing to target."""
-        if not _lib.sp_hardlink_to_wrap(byref(self._sp), byref(self._sp_of(target))):
-            raise OSError(1, "Operation not permitted", str(self))
+        _check(_lib.sp_hardlink_to_wrap(byref(self._sp), byref(self._sp_of(target))), target, self)
 
     def samefile(self, other_path):
         """Return True if both paths refer to the same file."""
-        # First check that both paths exist (Python raises FileNotFoundError if either doesn't exist)
-        if not self.exists():
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        other_sp = self._sp_of(other_path)
-        if not _lib.sp_exists_wrap(byref(other_sp), 1):
-            raise FileNotFoundError(2, "No such file or directory", str(other_path))
-        return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other_sp)))
+        # sp_samefile is false for a missing file, where pathlib raises stat()'s error
+        other = self._from_sp(self._sp_of(other_path))
+        self.stat()
+        other.stat()
+        return bool(_lib.sp_samefile_wrap(byref(self._sp), byref(other._sp)))
 
     def mkdir(self, mode=0o777, parents=False, exist_ok=False, *, parent_mode=None):
-        result = _lib.sp_mkdir_wrap(byref(self._sp), mode, 1 if parents else 0, 1 if exist_ok else 0,
-                                    0o777 if parent_mode is None else parent_mode)
-        if result == SP_OK:
-            return
-        path_str = str(self)
-        if result == SP_ERR_EXISTS or result == SP_ERR_EXISTS_NOT_DIR:
-            raise FileExistsError(17, "File exists", path_str)
-        elif result == SP_ERR_NOT_FOUND:
-            raise FileNotFoundError(2, "No such file or directory", path_str)
-        elif result == SP_ERR_NOT_DIR:
-            raise NotADirectoryError(20, "Not a directory", path_str)
-        elif result == SP_ERR_PERMISSION:
-            raise PermissionError(13, "Permission denied", path_str)
-        else:
-            raise OSError(0, "Unknown error", path_str)
+        flags = (SP_MKDIR_PARENTS if parents else 0) | (SP_MKDIR_EXIST_OK if exist_ok else 0)
+        err = _lib.sp_mkdir_wrap(byref(self._sp), mode, flags, 0o777 if parent_mode is None else parent_mode)
+        _check(err, self)
 
     def _glob(self, begin, pattern, case_sensitive, recurse_symlinks):
-        cs = SP_CASE_PLATFORM_DEFAULT if case_sensitive is None else (SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE)
         it = _SpGlobIter()
-        begin(byref(self._sp), _encode(os.fspath(pattern)), cs, 1 if recurse_symlinks else 0, byref(it))
+        begin(byref(self._sp), _encode(os.fspath(pattern)), _case(case_sensitive), 1 if recurse_symlinks else 0,
+              byref(it))
         err = _lib.sp_glob_error_wrap(byref(it))
         if err == SP_ERR_UNSUPPORTED:
             raise NotImplementedError("Non-relative patterns are unsupported")
-        if err != SP_OK:
+        if err == SP_ERR_INVALID_ARG:
             raise ValueError(f"Unacceptable pattern: {os.fspath(pattern)!r}")
         results = []
         match = _SpPath()
         while _lib.sp_glob_next_wrap(byref(it), byref(match)):
             results.append(self._from_sp(match))
         _lib.sp_glob_end_wrap(byref(it))
+        _check(_lib.sp_glob_error_wrap(byref(it)), self)
         return iter(results)
 
     def glob(self, pattern, *, case_sensitive=None, recurse_symlinks=False):
@@ -730,103 +738,73 @@ class Path(PurePath):
 
     def touch(self, mode=0o666, exist_ok=True):
         """Create file or update timestamps."""
-        if not _lib.sp_touch_wrap(byref(self._sp), mode, 1 if exist_ok else 0):
-            raise FileExistsError(17, "File exists", str(self))
+        _check(_lib.sp_touch_wrap(byref(self._sp), mode, 1 if exist_ok else 0), self)
 
     def unlink(self, missing_ok=False):
         """Remove the file."""
-        if not _lib.sp_unlink_wrap(byref(self._sp), 1 if missing_ok else 0):
-            raise FileNotFoundError(2, "No such file or directory", str(self))
+        _check(_lib.sp_unlink_wrap(byref(self._sp), 1 if missing_ok else 0), self)
 
     def rmdir(self):
         """Remove the empty directory."""
-        if not _lib.sp_rmdir_wrap(byref(self._sp)):
-            raise OSError(1, "Operation not permitted", str(self))
-
-    def _move(self, func, target):
-        out = _SpPath()
-        func(byref(self._sp), byref(self._sp_of(target)), byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise OSError(1, "Operation not permitted", str(self), str(target))
-        return self._from_sp(out)
-
-    def _transfer(self, func, target, *flags):
-        out = _SpPath()
-        func(byref(self._sp), byref(self._sp_of(target)), *flags, byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            _raise_for(_lib.sp_path_error_code_wrap(byref(out)), self, target)
-        return self._from_sp(out)
-
-    def copy(self, target, *, follow_symlinks=True, preserve_metadata=False):
-        """Recursively copy this file or directory tree to the given destination."""
-        return self._transfer(_lib.sp_copy_wrap, target, 1 if follow_symlinks else 0, 1 if preserve_metadata else 0)
-
-    def copy_into(self, target_dir, *, follow_symlinks=True, preserve_metadata=False):
-        """Copy this file or directory tree into the given existing directory."""
-        return self._transfer(_lib.sp_copy_into_wrap, target_dir, 1 if follow_symlinks else 0, 1 if preserve_metadata else 0)
-
-    def move(self, target):
-        """Recursively move this file or directory tree to the given destination."""
-        return self._transfer(_lib.sp_move_wrap, target)
-
-    def move_into(self, target_dir):
-        """Move this file or directory tree into the given existing directory."""
-        return self._transfer(_lib.sp_move_into_wrap, target_dir)
-
-    @classmethod
-    def from_uri(cls, uri):
-        """Return a new path from the given 'file' URI."""
-        result = cls.__new__(cls)
-        result._sp = _SpPath()
-        _lib.sp_from_uri_wrap(_encode(uri), result._flavor, byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
-            raise ValueError(f"URI is not absolute: {uri!r}")
-        return result
+        _check(_lib.sp_rmdir_wrap(byref(self._sp)), self)
 
     def rename(self, target):
         """Rename this file/directory to the given target."""
-        return self._move(_lib.sp_rename_wrap, target)
+        return self._path_op(_lib.sp_rename_wrap, byref(self._sp_of(target)), target=target)
 
     def replace(self, target):
         """Replace target with this file (atomic operation)."""
-        return self._move(_lib.sp_replace_wrap, target)
+        return self._path_op(_lib.sp_replace_wrap, byref(self._sp_of(target)), target=target)
 
-    def chmod(self, mode):
+    def copy(self, target, *, follow_symlinks=True, preserve_metadata=False):
+        """Recursively copy this file or directory tree to the given destination."""
+        flags = (SP_COPY_FOLLOW_SYMLINKS if follow_symlinks else 0) | (
+            SP_COPY_PRESERVE_METADATA if preserve_metadata else 0)
+        return self._path_op(_lib.sp_copy_wrap, byref(self._sp_of(target)), flags, target=target)
+
+    def copy_into(self, target_dir, *, follow_symlinks=True, preserve_metadata=False):
+        """Copy this file or directory tree into the given existing directory."""
+        flags = (SP_COPY_FOLLOW_SYMLINKS if follow_symlinks else 0) | (
+            SP_COPY_PRESERVE_METADATA if preserve_metadata else 0)
+        return self._path_op(_lib.sp_copy_into_wrap, byref(self._sp_of(target_dir)), flags, target=target_dir)
+
+    def move(self, target):
+        """Recursively move this file or directory tree to the given destination."""
+        return self._path_op(_lib.sp_move_wrap, byref(self._sp_of(target)), target=target)
+
+    def move_into(self, target_dir):
+        """Move this file or directory tree into the given existing directory."""
+        return self._path_op(_lib.sp_move_into_wrap, byref(self._sp_of(target_dir)), target=target_dir)
+
+    def chmod(self, mode, *, follow_symlinks=True):
         """Change the file mode (permissions)."""
-        if not _lib.sp_chmod_wrap(byref(self._sp), mode):
-            raise OSError(1, "Operation not permitted", str(self))
+        _check(_lib.sp_chmod_wrap(byref(self._sp), mode, 1 if follow_symlinks else 0), self)
+
+    def lchmod(self, mode):
+        """Like chmod(), but changes a symlink's own mode."""
+        self.chmod(mode, follow_symlinks=False)
 
     def read_bytes(self):
         """Read the file contents as bytes."""
-        st = self.stat()
-        size = st.st_size
-        if size == 0:
-            return b''
-        buf = create_string_buffer(size)
-        bytes_out = c_size_t()
-        error_out = c_int()
-        _lib.sp_read_file_wrap(byref(self._sp), buf, size, byref(bytes_out), byref(error_out))
-        err = error_out.value
-        if err == SP_ERR_OPEN:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        if err != SP_OK:
-            raise OSError(5, "I/O error", str(self))
-        return buf.raw[:bytes_out.value]
+        size = self.stat().st_size
+        while True:
+            buf = create_string_buffer(max(size, 1))
+            result = _SpIOResult()
+            _lib.sp_read_file_wrap(byref(self._sp), buf, size, byref(result))
+            if result.error != SP_ERR_TOO_LONG:
+                _check(result.error, self)
+                return buf.raw[:result.bytes]
+            size = max(result.bytes, size * 2, 4096)  # the file grew, or its size is unknown
 
     def write_bytes(self, data):
         """Write bytes to the file."""
         if not isinstance(data, (bytes, bytearray, memoryview)):
             raise TypeError(f"expected bytes-like object, not {type(data).__name__}")
         data = bytes(data)
-        bytes_out = c_size_t()
-        error_out = c_int()
-        _lib.sp_write_file_wrap(byref(self._sp), data, len(data), byref(bytes_out), byref(error_out))
-        err = error_out.value
-        if err == SP_ERR_OPEN:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        if err != SP_OK:
-            raise OSError(5, "I/O error", str(self))
-        return bytes_out.value
+        result = _SpIOResult()
+        _lib.sp_write_file_wrap(byref(self._sp), data, len(data), byref(result))
+        _check(result.error, self)
+        return result.bytes
 
     def read_text(self, encoding=None, errors=None):
         """Read the file contents as text."""
@@ -848,111 +826,61 @@ class Path(PurePath):
 
     def open(self, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
         """Open the file pointed to by this path."""
-        import io
         return io.open(str(self), mode, buffering, encoding, errors, newline)
 
-    @classmethod
-    def home(cls):
-        """Return user's home directory."""
-        result = cls.__new__(cls)
-        result._sp = _SpPath()
-        _lib.sp_home_wrap(result._flavor, byref(result._sp))
-        if _lib.sp_path_is_error_wrap(byref(result._sp)):
-            raise RuntimeError("Could not determine home directory")
-        return result
+    def _id_name(self, func, follow_symlinks):
+        term = _SpTerm()
+        func(byref(self._sp), 1 if follow_symlinks else 0, byref(term))
+        _check(term.error, self)
+        return _text(term)
 
-    def expanduser(self):
-        """Expand ~ to user's home directory."""
-        out = _SpPath()
-        _lib.sp_expanduser_wrap(byref(self._sp), byref(out))
-        if _lib.sp_path_is_error_wrap(byref(out)):
-            raise RuntimeError("Could not expand user")
-        return self._from_sp(out)
-
-    def _id_name(self, which):
-        if not _HAS_OWNER_GROUP:
-            raise NotImplementedError(f"Path.{which}() is unsupported on this system")
-        name = _term(getattr(_lib, f'sp_{which}_wrap'), self._sp)
-        if not name:
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        return name
-
-    def owner(self):
+    def owner(self, *, follow_symlinks=True):
         """Return the file owner name."""
-        return self._id_name('owner')
+        return self._id_name(_lib.sp_owner_wrap, follow_symlinks)
 
-    def group(self):
+    def group(self, *, follow_symlinks=True):
         """Return the file group name."""
-        return self._id_name('group')
+        return self._id_name(_lib.sp_group_wrap, follow_symlinks)
 
     def iterdir(self):
         """Yield path objects of directory contents."""
-        if not self.is_dir():
-            raise NotADirectoryError(20, "Not a directory", str(self))
         it = _SpIterdirIter()
         _lib.sp_iterdir_begin_wrap(byref(self._sp), byref(it))
-        if _lib.sp_iterdir_done_wrap(byref(it)) < 0:
-            raise OSError(1, "Operation not permitted", str(self))
+        _check(_lib.sp_iterdir_error_wrap(byref(it)), self)
+        return self._iterdir(it)
+
+    def _iterdir(self, it):
         try:
             out = _SpPath()
             while _lib.sp_iterdir_next_wrap(byref(it), byref(out)):
                 yield self._from_sp(out)
+            _check(_lib.sp_iterdir_error_wrap(byref(it)), self)
         finally:
             _lib.sp_iterdir_end_wrap(byref(it))
 
     def walk(self, top_down=True, on_error=None, follow_symlinks=False):
-        """Walk directory tree, yielding (dirpath, dirnames, filenames) tuples.
-        Uses iterdir + is_dir rather than sp_walk because Python's walk API
-        requires generator semantics with in-place dirnames pruning between yields,
-        which can't be expressed through a C callback that runs to completion."""
-        if not self.is_dir():
-            return
-
-        def _scan(dirpath):
-            try:
-                entries = sorted(dirpath.iterdir(), key=lambda e: str(e))
-            except OSError as e:
+        """Walk the directory tree, yielding (dirpath, dirnames, filenames) like os.walk"""
+        flags = (SP_WALK_TOP_DOWN if top_down else 0) | (SP_WALK_FOLLOW_SYMLINKS if follow_symlinks else 0)
+        buf = create_string_buffer(_WALK_BUF_SIZE)
+        it = _SpWalkIter()
+        _lib.sp_walk_begin_wrap(byref(self._sp), flags, buf, len(buf), byref(it))
+        pruned = []  # the dirnames given back to C, alive until the walk ends
+        while entry := _lib.sp_walk_next_wrap(byref(it)):
+            entry = entry.contents
+            dirpath = self._from_sp(entry.dirpath)
+            if entry.error != SP_OK:
                 if on_error is not None:
-                    on_error(e)
-                return None, None
-            dirs, files = [], []
-            for entry in entries:
-                if follow_symlinks:
-                    is_dir = entry.is_dir()
-                else:
-                    is_dir = entry.is_dir() and not entry.is_symlink()
-                if is_dir:
-                    dirs.append(entry.name)
-                else:
-                    files.append(entry.name)
-            return dirs, files
+                    on_error(_error(entry.error, dirpath))
+                continue
 
-        if top_down:
-            stack = [self]
-            while stack:
-                dirpath = stack.pop()
-                dirs, files = _scan(dirpath)
-                if dirs is None:
-                    continue
-                yield (dirpath, dirs, files)
-                stack.extend(reversed([dirpath / d for d in dirs]))
-        else:
-            stack = [(self, False)]
-            while stack:
-                dirpath, visited = stack[-1]
-                if visited:
-                    stack.pop()
-                    dirs, files = _scan(dirpath)
-                    if dirs is not None:
-                        yield (dirpath, dirs, files)
-                else:
-                    stack[-1] = (dirpath, True)
-                    dirs, files = _scan(dirpath)
-                    if dirs is None:
-                        stack.pop()
-                        continue
-                    for d in reversed(dirs):
-                        stack.append((dirpath / d, False))
+            dirnames = [_decode(entry.dirnames[i]) for i in range(entry.dirname_count)]
+            filenames = [_decode(entry.filenames[i]) for i in range(entry.filename_count)]
+            yield dirpath, dirnames, filenames
+            if top_down:
+                pruned.append((c_char_p * max(len(dirnames), 1))(*[_encode(d) for d in dirnames]))
+                entry.dirnames = ctypes.cast(pruned[-1], POINTER(c_char_p))
+                entry.dirname_count = len(dirnames)
+        _check(_lib.sp_walk_error_wrap(byref(it)), self)
 
 
 class PosixPath(Path, PurePosixPath):
@@ -965,7 +893,7 @@ class WindowsPath(Path, PureWindowsPath):
 
 __all__ = [
     'PurePath', 'PurePosixPath', 'PureWindowsPath',
-    'Path', 'PosixPath', 'WindowsPath',
+    'Path', 'PosixPath', 'WindowsPath', 'UnsupportedOperation',
 ]
 
 
@@ -1188,19 +1116,16 @@ EXPECTED_FAILURES = {
     "has no attribute '_delete'": [
         (cls, f"test_delete_{what}") for cls in _PATH
         for what in ["dir", "file", "missing", "on_named_pipe", "does_not_choke_on_failing_lstat",
-                     "inner_junction", "outer_junction"]
+                     "inner_junction", "outer_junction", "symlink", "inner_symlink", "unwritable"]
     ],
 
-    # Path.info (a caching PathInfo object), pathlib.types protocols and pathlib.UnsupportedOperation
+    # Path.info (a caching PathInfo object) and pathlib.types protocols
     "has no attribute 'info'": [
         (cls, test) for cls in _PATH
         for test in ["test_info_exists_caching", "test_info_is_dir_caching", "test_info_is_file_caching",
-                     "test_glob_posix"]
+                     "test_info_is_symlink_caching", "test_glob_posix"]
     ],
     "has no attribute 'types'": [(cls, "test_matches_writablepath_docstrings") for cls in _PATH],
-    "has no attribute 'UnsupportedOperation'": [
-        (cls, test) for cls in _PATH for test in ["test_hardlink_to_unsupported", "test_owner_windows", "test_group_windows"]
-    ] + [("UnsupportedOperationTest", "test_is_notimplemented")],
 
     # Pickling: C-backed objects with __slots__, and the pathlib._local module path of 3.13 pickles
     "cannot be pickled": [("PurePathSubclassTest", "test_pickling_common")],
@@ -1270,6 +1195,7 @@ def setup_pathlib_patch(testfn=None):
     pathlib_pkg.Path = Path
     pathlib_pkg.PosixPath = PosixPath
     pathlib_pkg.WindowsPath = WindowsPath
+    pathlib_pkg.UnsupportedOperation = UnsupportedOperation
     sys.modules['pathlib'] = pathlib_pkg
 
     # Stub test.support
@@ -1327,7 +1253,33 @@ def setup_pathlib_patch(testfn=None):
         def __init__(self, path): self.path = path
         def __fspath__(self): return self.path
     os_helper.FakePath = FakePath
-    os_helper.can_symlink = lambda: False
+    def probe(make):
+        """Whether this host can make the link or chmod that `make` tries in a scratch directory"""
+        scratch = tempfile.mkdtemp()
+        try:
+            make(os.path.join(scratch, 'target'), os.path.join(scratch, 'link'))
+            return True
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    def touch_then(action):
+        def make(target, link):
+            open(target, 'w').close()
+            action(target, link)
+        return make
+
+    def chmod_sticks(target, link):
+        os.chmod(target, 0o400)
+        if os.stat(target).st_mode & 0o777 != 0o400:
+            raise OSError('chmod does not stick')
+        os.chmod(target, 0o600)
+
+    have_symlink = probe(touch_then(os.symlink))
+    have_hardlink = probe(touch_then(lambda target, link: os.link(target, link)))
+    have_chmod = probe(touch_then(chmod_sticks))
+    os_helper.can_symlink = lambda: have_symlink
     os_helper.fs_is_case_insensitive = lambda path: False
     def rmtree(path):
         # Like CPython's os_helper.rmtree: tests leave unreadable dirs behind, so restore access and retry
@@ -1340,10 +1292,10 @@ def setup_pathlib_patch(testfn=None):
     os_helper.rmtree = rmtree
     # Skip decorators
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")
-    os_helper.skip_unless_working_chmod = unittest.skip("chmod not tested")
-    os_helper.skip_unless_symlink = unittest.skip("symlink not tested")
+    os_helper.skip_unless_working_chmod = unittest.skipUnless(have_chmod, "chmod does not work here")
+    os_helper.skip_unless_symlink = unittest.skipUnless(have_symlink, "symlinks do not work here")
     os_helper.skip_if_dac_override = lambda f: f
-    os_helper.skip_unless_hardlink = unittest.skip("hardlink not tested")
+    os_helper.skip_unless_hardlink = unittest.skipUnless(have_hardlink, "hard links do not work here")
     os_helper._longpath = lambda path: path
 
     @contextlib.contextmanager

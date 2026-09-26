@@ -19,22 +19,22 @@
 #define SP_EXPORT __attribute__((visibility("default")))
 #endif
 
-/* Wrapper macros for common patterns */
+/* One wrapper per library function the Python bindings (snakepath.py) call, results through pointers */
+
+#define WRAP_CONST(name) \
+    SP_EXPORT int sp_const_##name(void) { return name; }
 
 #define WRAP_TERM(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *len) { \
-        SpTerm t = sp_##fn(p); \
-        size_t n = t.len < buf_size - 1 ? t.len : buf_size - 1; \
-        memcpy(buf, t.buf, n); \
-        buf[n] = '\0'; \
-        *len = t.len; \
-    }
+    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpTerm *out) { *out = sp_##fn(p); }
 
 #define WRAP_PATH_UNARY(fn) \
     SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpPath *out) { *out = sp_##fn(p); }
 
 #define WRAP_PATH_CSTR(fn) \
     SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const char *s, SpPath *out) { *out = sp_##fn(p, s); }
+
+#define WRAP_PATH_BINARY(fn) \
+    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const SpPath *other, SpPath *out) { *out = sp_##fn(p, other); }
 
 #define WRAP_BOOL_UNARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *p) { return sp_##fn(p) ? 1 : 0; }
@@ -45,61 +45,124 @@
 #define WRAP_BOOL_BINARY(fn) \
     SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
 
-/* Path -> SpTerm (null-terminated component strings) */
+/* Constants */
+WRAP_CONST(SP_OK)
+WRAP_CONST(SP_ERR_IO)
+WRAP_CONST(SP_ERR_NOT_FOUND)
+WRAP_CONST(SP_ERR_EXISTS)
+WRAP_CONST(SP_ERR_NOT_DIR)
+WRAP_CONST(SP_ERR_IS_DIR)
+WRAP_CONST(SP_ERR_NOT_EMPTY)
+WRAP_CONST(SP_ERR_PERMISSION)
+WRAP_CONST(SP_ERR_LOOP)
+WRAP_CONST(SP_ERR_NOT_LINK)
+WRAP_CONST(SP_ERR_CROSS_DEVICE)
+WRAP_CONST(SP_ERR_SAME_FILE)
+WRAP_CONST(SP_ERR_NO_HOME)
+WRAP_CONST(SP_ERR_TOO_LONG)
+WRAP_CONST(SP_ERR_LIMIT)
+WRAP_CONST(SP_ERR_NUL)
+WRAP_CONST(SP_ERR_INVALID_ARG)
+WRAP_CONST(SP_ERR_NO_NAME)
+WRAP_CONST(SP_ERR_NOT_RELATIVE)
+WRAP_CONST(SP_ERR_NOT_ABSOLUTE)
+WRAP_CONST(SP_ERR_UNSUPPORTED)
+WRAP_CONST(SP_MKDIR_PARENTS)
+WRAP_CONST(SP_MKDIR_EXIST_OK)
+WRAP_CONST(SP_COPY_FOLLOW_SYMLINKS)
+WRAP_CONST(SP_COPY_PRESERVE_METADATA)
+WRAP_CONST(SP_WALK_TOP_DOWN)
+WRAP_CONST(SP_WALK_FOLLOW_SYMLINKS)
+WRAP_CONST(SP_CASE_DEFAULT)
+WRAP_CONST(SP_CASE_SENSITIVE)
+WRAP_CONST(SP_CASE_INSENSITIVE)
+WRAP_CONST(SP_PATH_MAX)
+WRAP_CONST(SP_MAX_SUFFIXES)
+SP_EXPORT const char *sp_error_str_wrap(int error) { return sp_error_str((SpError)error); }
+
+/* Struct sizes, for the opaque ones */
+SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
+SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
+SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
+SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
+SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
+
+/* Making and converting paths */
+SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
+    *out = sp_path_from_n(s, len, (SpFlavor)flavor);
+}
+SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
+    *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
+}
+SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = *p; }
+SP_EXPORT const char *sp_str_wrap(const SpPath *p) { return sp_str(p); }
+SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
+SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) { *out = sp_home((SpFlavor)flavor); }
+SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
+
+/* Path -> text */
 WRAP_TERM(drive)
 WRAP_TERM(root)
 WRAP_TERM(anchor)
 WRAP_TERM(name)
 WRAP_TERM(stem)
 WRAP_TERM(suffix)
+WRAP_TERM(as_posix)
+SP_EXPORT void sp_suffixes_wrap(const SpPath *p, SpSuffixes *out) { *out = sp_suffixes(p); }
+SP_EXPORT int sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) { return sp_as_uri(p, buf, buf_size); }
+SP_EXPORT void sp_owner_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_owner(p, follow_symlinks != 0); }
+SP_EXPORT void sp_group_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_group(p, follow_symlinks != 0); }
 
-/* Path -> Path */
+/* Path -> path */
 WRAP_PATH_UNARY(parent)
-
-/* Path + cstr -> Path */
+WRAP_PATH_UNARY(absolute)
+WRAP_PATH_UNARY(expanduser)
+WRAP_PATH_UNARY(readlink)
 WRAP_PATH_CSTR(with_name)
 WRAP_PATH_CSTR(with_stem)
 WRAP_PATH_CSTR(with_suffix)
-
+WRAP_PATH_BINARY(joinpath)
+WRAP_PATH_BINARY(rename)
+WRAP_PATH_BINARY(replace)
+WRAP_PATH_BINARY(move)
+WRAP_PATH_BINARY(move_into)
 SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, SpPath *out) {
     *out = sp_join_n(p, s, len);
 }
-
-/* Path + Path -> Path */
-SP_EXPORT void sp_joinpath_wrap(const SpPath *a, const SpPath *b, SpPath *out) { *out = sp_joinpath(a, b); }
-
-/* Multi-segment variants */
 SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t parts_count, SpPath *out) {
     *out = sp_with_segments(p, parts, parts_count);
 }
-
 SP_EXPORT void sp_relative_to_wrap(const SpPath *p, const SpPath *other, int walk_up, SpPath *out) {
     *out = sp_relative_to(p, other, walk_up != 0);
 }
-
-SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
-SP_EXPORT size_t sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) {
-    return sp_as_uri(p, buf, buf_size);
+SP_EXPORT void sp_resolve_wrap(const SpPath *p, int strict, SpPath *out) { *out = sp_resolve(p, strict != 0); }
+SP_EXPORT void sp_copy_wrap(const SpPath *p, const SpPath *target, unsigned int flags, SpPath *out) {
+    *out = sp_copy(p, target, flags);
+}
+SP_EXPORT void sp_copy_into_wrap(const SpPath *p, const SpPath *target_dir, unsigned int flags, SpPath *out) {
+    *out = sp_copy_into(p, target_dir, flags);
 }
 
-/* Path -> bool */
+/* Parts and parents */
+SP_EXPORT void sp_parts_iter_begin_wrap(const SpPath *p, SpPartsIter *out) { *out = sp_parts_begin(p); }
+SP_EXPORT int sp_parts_iter_next_wrap(SpPartsIter *it, SpStr *out) { return sp_parts_next(it, out) ? 1 : 0; }
+SP_EXPORT void sp_parents_iter_begin_wrap(const SpPath *p, SpParentsIter *out) { *out = sp_parents_begin(p); }
+SP_EXPORT int sp_parents_iter_next_wrap(SpParentsIter *it, SpPath *out) { return sp_parents_next(it, out) ? 1 : 0; }
+
+/* Comparisons and matching */
 WRAP_BOOL_UNARY(is_absolute)
-
-/* Path -> Path (cwd/absolute) */
-WRAP_PATH_UNARY(absolute)
-SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
-
-/* Path + Path -> bool */
 WRAP_BOOL_BINARY(path_eq)
 WRAP_BOOL_BINARY(is_relative_to)
-
-/* Additional functions */
 SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
 SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
-SP_EXPORT int sp_match_ex_wrap(const SpPath *p, const char *pattern, int case_sensitive) { return sp_match_ex(p, pattern, case_sensitive); }
-SP_EXPORT int sp_full_match_wrap(const SpPath *p, const char *pattern, int case_sensitive) {
-    return sp_full_match(p, pattern, case_sensitive) ? 1 : 0;
+SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern, int cs) {
+    return sp_match(p, pattern, (SpCaseSensitivity)cs) ? 1 : 0;
 }
+SP_EXPORT int sp_full_match_wrap(const SpPath *p, const char *pattern, int cs) {
+    return sp_full_match(p, pattern, (SpCaseSensitivity)cs) ? 1 : 0;
+}
+
+/* The file system */
 WRAP_BOOL_FOLLOW(is_file)
 WRAP_BOOL_FOLLOW(is_dir)
 WRAP_BOOL_FOLLOW(exists)
@@ -110,82 +173,35 @@ WRAP_BOOL_UNARY(is_fifo)
 WRAP_BOOL_UNARY(is_socket)
 WRAP_BOOL_UNARY(is_mount)
 WRAP_BOOL_UNARY(is_junction)
+WRAP_BOOL_BINARY(samefile)
 SP_EXPORT void sp_stat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_stat(p); }
 SP_EXPORT void sp_lstat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_lstat(p); }
 SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
-
-/* Symlink & link operations */
-SP_EXPORT void sp_readlink_wrap(const SpPath *p, SpPath *out) { *out = sp_readlink(p); }
-SP_EXPORT void sp_resolve_wrap(const SpPath *p, int strict, SpPath *out) { *out = sp_resolve(p, strict != 0); }
+SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, unsigned int flags, unsigned int parent_mode) {
+    return sp_mkdir(p, mode, flags, parent_mode);
+}
+SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) { return sp_touch(p, mode, exist_ok != 0); }
+SP_EXPORT int sp_unlink_wrap(const SpPath *p, int missing_ok) { return sp_unlink(p, missing_ok != 0); }
+SP_EXPORT int sp_rmdir_wrap(const SpPath *p) { return sp_rmdir(p); }
+SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode, int follow_symlinks) {
+    return sp_chmod(p, mode, follow_symlinks != 0);
+}
 SP_EXPORT int sp_symlink_to_wrap(const SpPath *p, const SpPath *target, int target_is_directory) {
-    return sp_symlink_to(p, target, target_is_directory != 0) ? 1 : 0;
+    return sp_symlink_to(p, target, target_is_directory != 0);
 }
-SP_EXPORT int sp_hardlink_to_wrap(const SpPath *p, const SpPath *target) {
-    return sp_hardlink_to(p, target) ? 1 : 0;
+SP_EXPORT int sp_hardlink_to_wrap(const SpPath *p, const SpPath *target) { return sp_hardlink_to(p, target); }
+SP_EXPORT void sp_read_file_wrap(const SpPath *p, char *buf, size_t buf_size, SpIOResult *out) {
+    *out = sp_read_file(p, buf, buf_size);
 }
-WRAP_BOOL_BINARY(samefile)
-SP_EXPORT int sp_path_is_error_wrap(const SpPath *p) { return sp_path_is_error(p) ? 1 : 0; }
-SP_EXPORT int sp_path_error_code_wrap(const SpPath *p) { return sp_path_error_code(p); }
-
-/* Special cases */
-
-SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
-    *out = sp_path_from_n(s, len, (SpFlavor)flavor);
+SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data_len, SpIOResult *out) {
+    *out = sp_write_file(p, data, data_len);
 }
 
-SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
-    *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
-}
-
-SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = *p; }
-SP_EXPORT const char *sp_str_wrap(const SpPath *p) { return sp_str(p); }
-SP_EXPORT void sp_as_posix_wrap(const SpPath *p, char *out, size_t out_size) { sp_as_posix(p, out, out_size); }
-
-SP_EXPORT size_t sp_suffixes_wrap(const SpPath *p, const char **data_arr, size_t *len_arr, size_t max_items) {
-    SpSuffixes s = sp_suffixes(p);
-    size_t count = s.count < max_items ? s.count : max_items;
-    for (size_t i = 0; i < count; i++) { data_arr[i] = s.items[i].data; len_arr[i] = s.items[i].len; }
-    return count;
-}
-
-SP_EXPORT void sp_parts_iter_begin_wrap(const SpPath *p, SpPartsIter *out) { *out = sp_parts_begin(p); }
-SP_EXPORT int sp_parts_iter_next_wrap(SpPartsIter *it, const char **data, size_t *len) {
-    SpStr part;
-    if (sp_parts_next(it, &part)) { *data = part.data; *len = part.len; return 1; }
-    return 0;
-}
-
-SP_EXPORT void sp_parents_iter_begin_wrap(const SpPath *p, SpParentsIter *out) { *out = sp_parents_begin(p); }
-SP_EXPORT int sp_parents_iter_next_wrap(SpParentsIter *it, SpPath *out) { return sp_parents_next(it, out) ? 1 : 0; }
-
-/* Struct sizes and constants */
-SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
-SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
-SP_EXPORT size_t sp_path_max(void) { return SP_PATH_MAX; }
-SP_EXPORT size_t sp_max_suffixes(void) { return SP_MAX_SUFFIXES; }
-
-/* Result and error codes */
-SP_EXPORT int sp_ok(void) { return SP_OK; }
-SP_EXPORT int sp_err_exists(void) { return SP_ERR_EXISTS; }
-SP_EXPORT int sp_err_not_found(void) { return SP_ERR_NOT_FOUND; }
-SP_EXPORT int sp_err_not_dir(void) { return SP_ERR_NOT_DIR; }
-SP_EXPORT int sp_err_permission(void) { return SP_ERR_PERMISSION; }
-SP_EXPORT int sp_err_exists_not_dir(void) { return SP_ERR_EXISTS_NOT_DIR; }
-SP_EXPORT int sp_err_open(void) { return SP_ERR_OPEN; }
-SP_EXPORT int sp_err_no_name(void) { return SP_ERR_NO_NAME; }
-SP_EXPORT int sp_err_invalid_arg(void) { return SP_ERR_INVALID_ARG; }
-SP_EXPORT int sp_err_unsupported(void) { return SP_ERR_UNSUPPORTED; }
-SP_EXPORT const char *sp_error_str_wrap(int error) { return sp_error_str(error); }
-SP_EXPORT int sp_match_yes(void) { return SP_MATCH_YES; }
-SP_EXPORT int sp_match_err_empty(void) { return SP_MATCH_ERR_EMPTY; }
-
-/* mkdir */
-SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok, unsigned int parent_mode) {
-    return sp_mkdir(p, mode, parents != 0, exist_ok != 0, parent_mode);
-}
-
-/* glob iterator */
-SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
+/* Iterators */
+SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) { *out = sp_iterdir_begin(p); }
+SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) { return sp_iterdir_next(it, out) ? 1 : 0; }
+SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) { sp_iterdir_end(it); }
+SP_EXPORT int sp_iterdir_error_wrap(const SpIterdirIter *it) { return it->error; }
 SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int cs, int recurse_symlinks, SpGlobIter *out) {
     *out = sp_glob_begin(p, pattern, (SpCaseSensitivity)cs, recurse_symlinks != 0);
 }
@@ -195,90 +211,11 @@ SP_EXPORT void sp_rglob_begin_wrap(const SpPath *p, const char *pattern, int cs,
 SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) { return sp_glob_next(it, out) ? 1 : 0; }
 SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) { sp_glob_end(it); }
 SP_EXPORT int sp_glob_error_wrap(const SpGlobIter *it) { return it->error; }
-
-/* Case sensitivity enum values */
-SP_EXPORT int sp_case_platform_default(void) { return SP_CASE_PLATFORM_DEFAULT; }
-SP_EXPORT int sp_case_sensitive(void) { return SP_CASE_SENSITIVE; }
-SP_EXPORT int sp_case_insensitive(void) { return SP_CASE_INSENSITIVE; }
-
-/* File/directory modification operations */
-SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) {
-    return sp_touch(p, mode, exist_ok != 0) ? 1 : 0;
+SP_EXPORT void sp_walk_begin_wrap(const SpPath *top, unsigned int flags, void *buf, size_t buf_size, SpWalkIter *out) {
+    *out = sp_walk_begin(top, flags, buf, buf_size);
 }
-SP_EXPORT int sp_unlink_wrap(const SpPath *p, int missing_ok) {
-    return sp_unlink(p, missing_ok != 0) ? 1 : 0;
-}
-SP_EXPORT int sp_rmdir_wrap(const SpPath *p) {
-    return sp_rmdir(p) ? 1 : 0;
-}
-SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
-    *out = sp_rename(p, target);
-}
-SP_EXPORT void sp_replace_wrap(const SpPath *p, const SpPath *target, SpPath *out) {
-    *out = sp_replace(p, target);
-}
-SP_EXPORT void sp_copy_wrap(const SpPath *p, const SpPath *target, int follow_symlinks, int preserve_metadata, SpPath *out) {
-    *out = sp_copy(p, target, follow_symlinks != 0, preserve_metadata != 0);
-}
-SP_EXPORT void sp_copy_into_wrap(const SpPath *p, const SpPath *target_dir, int follow_symlinks, int preserve_metadata,
-                                 SpPath *out) {
-    *out = sp_copy_into(p, target_dir, follow_symlinks != 0, preserve_metadata != 0);
-}
-SP_EXPORT void sp_move_wrap(const SpPath *p, const SpPath *target, SpPath *out) { *out = sp_move(p, target); }
-SP_EXPORT void sp_move_into_wrap(const SpPath *p, const SpPath *target_dir, SpPath *out) { *out = sp_move_into(p, target_dir); }
-SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode) {
-    return sp_chmod(p, mode) ? 1 : 0;
-}
-
-/* File I/O */
-SP_EXPORT void sp_read_file_wrap(const SpPath *p, char *buf, size_t buf_size, size_t *bytes_out, int *error_out) {
-    SpIOResult r = sp_read_file(p, buf, buf_size);
-    *bytes_out = r.bytes;
-    *error_out = r.error;
-}
-SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data_len, size_t *bytes_out, int *error_out) {
-    SpIOResult r = sp_write_file(p, data, data_len);
-    *bytes_out = r.bytes;
-    *error_out = r.error;
-}
-
-/* Home directory and user expansion */
-SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) {
-    *out = sp_home((SpFlavor)flavor);
-}
-
-SP_EXPORT void sp_expanduser_wrap(const SpPath *p, SpPath *out) {
-    *out = sp_expanduser(p);
-}
-
-/* User/group names (empty on error/not found); not built on Windows */
-#ifndef SP_WINDOWS
-WRAP_TERM(owner)
-WRAP_TERM(group)
-#endif
-
-/* iterdir iterator */
-SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
-
-SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) {
-    *out = sp_iterdir_begin(p);
-}
-
-SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) {
-    return sp_iterdir_next(it, out) ? 1 : 0;
-}
-
-SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) {
-    sp_iterdir_end(it);
-}
-
-SP_EXPORT int sp_iterdir_done_wrap(SpIterdirIter *it) {
-    return it->done;
-}
-
-/* walk - Python walk() composes iterdir + is_dir rather than wrapping sp_walk,
- * because Python's walk API requires generator semantics with in-place dirnames
- * pruning between yields, which can't be expressed through a C callback. */
+SP_EXPORT SpWalkEntry *sp_walk_next_wrap(SpWalkIter *it) { return sp_walk_next(it); }
+SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
 
 #else /* the tests */
 
@@ -302,7 +239,6 @@ static int tests_run = 0;
 static char test_dir_mkdir_temp[64];
 static char test_dir_mkdir_nested[64];
 static char test_dir_glob[64];
-static int walk_test_dir_count = 0;
 
 /* Inline string view comparison (like nob_sv_eq) */
 static int sv_eq(SpStr a, const char *b) {
@@ -332,13 +268,6 @@ typedef struct { const char *path; const char *arg; const char *expected; } Join
 
 #define P SP_FLAVOR_POSIX
 #define W SP_FLAVOR_WINDOWS
-
-/* Walk test callback */
-static bool walk_test_callback(struct SpWalkEntry *entry) {
-    (void)entry;
-    walk_test_dir_count++;
-    return true;
-}
 
 static void test_term(SpFlavor f, SpTerm (*fn)(const SpPath*), SVTest *tests, size_t n) {
     for (size_t i = 0; i < n; i++) {
@@ -372,11 +301,6 @@ static void test_with(SpFlavor f, SpPath (*fn)(const SpPath*, const char*), Join
 /* Fluent API tests: built with -DSNAKEPATH_FLUENT, run after everything in main().
  * Each test references Python pathlib documentation snippets.
  * https://docs.python.org/3/library/pathlib.html */
-#ifndef _WIN32
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
-#endif
 #define ASSERT_STR(got, exp) ASSERT(strcmp(got, exp) == 0)
 #define ASSERT_FLUENT(f, exp) do { SpPath _p = (f)->path(); ASSERT(strcmp(sp_str(&_p), exp) == 0); } while(0)
 
@@ -388,22 +312,15 @@ static void test_fluent_api(void) {
     /* >>> PurePath('setup.py') -> PurePosixPath('setup.py') */
     ASSERT_FLUENT(SPF("setup.py"), "setup.py");
 
-#ifndef _WIN32
-    /* Fluent chain must be terminated before starting another chain */
+    /* A chain started while another is running (here, one left without a terminator) carries SP_ERR_NESTED_CHAIN,
+     * and its terminator ends the error */
     {
-        pid_t pid = fork();
-        ASSERT(pid >= 0);
-        if (pid == 0) {
-            (void)SPF("a"); /* not terminated */
-            (void)SPF("b"); /* should assert() and abort */
-            exit(0);        /* should be unreachable */
-        }
-        int status = 0;
-        ASSERT(waitpid(pid, &status, 0) == pid);
-        ASSERT(WIFSIGNALED(status));
-        ASSERT(WTERMSIG(status) == SIGABRT);
+        SpPrivDontUseThisDirectly_ *unterminated = SPF("a")->join("b");
+        ASSERT(unterminated != NULL);
+        SpPath nested = SPF("c")->join("d")->path();
+        ASSERT(nested.error == SP_ERR_NESTED_CHAIN);
+        ASSERT_FLUENT(SPF("f"), "f");
     }
-#endif
 
     /* >>> PurePath('foo', 'some/path', 'bar') -> PurePosixPath('foo/some/path/bar') */
     ASSERT_FLUENT(SPF_P("foo")->join("some/path")->join("bar"), "foo/some/path/bar");
@@ -502,7 +419,7 @@ static void test_fluent_api(void) {
     /* ============ as_posix ============ */
 
     /* >>> PureWindowsPath('c:\\windows').as_posix() -> 'c:/windows' */
-    { SpPath p = SPF_W("c:\\windows")->path(); char buf[SP_PATH_MAX]; sp_as_posix(&p, buf, sizeof(buf)); ASSERT_STR(buf, "c:/windows"); }
+    { SpPath p = SPF_W("c:\\windows")->path(); ASSERT_TERM(sp_as_posix(&p), "c:/windows"); }
 
     /* ============ is_absolute ============ */
 
@@ -638,11 +555,11 @@ static void test_fluent_api(void) {
 
 #ifndef _WIN32
     /* Path(__FILE__).owner() returns non-empty string (POSIX only) */
-    { SpTerm o = SPF(__FILE__)->owner();
+    { SpTerm o = SPF(__FILE__)->owner(true);
       ASSERT(o.len > 0); }
 
     /* Path(__FILE__).group() returns non-empty string (POSIX only) */
-    { SpTerm g = SPF(__FILE__)->group();
+    { SpTerm g = SPF(__FILE__)->group(true);
       ASSERT(g.len > 0); }
 #endif
 
@@ -717,59 +634,53 @@ static void test_fluent_api(void) {
         ASSERT(memcmp(rbuf, "fluent io", 9) == 0);
 
         SpPath cleanup = sp_path(fluent_rw_path);
-        sp_unlink(&cleanup, true);
+        ASSERT(sp_unlink(&cleanup, true) == SP_OK);
     }
 
     /* ============ sp_error_str / sp_error_print ============ */
 
     ASSERT_STR(sp_error_str(SP_OK), "Success");
-    ASSERT_STR(sp_error_str(SP_ERR), "Operation failed");
+    ASSERT_STR(sp_error_str(SP_ERR_IO), "Input/output error");
     ASSERT_STR(sp_error_str(SP_ERR_EXISTS), "File exists");
     ASSERT_STR(sp_error_str(SP_ERR_NOT_FOUND), "No such file or directory");
     ASSERT_STR(sp_error_str(SP_ERR_NOT_DIR), "Not a directory");
     ASSERT_STR(sp_error_str(SP_ERR_PERMISSION), "Permission denied");
-    ASSERT_STR(sp_error_str(SP_ERR_EXISTS_NOT_DIR), "Path exists but is not a directory");
-    ASSERT_STR(sp_error_str(SP_ERR_OPEN), "Could not open file");
-    ASSERT_STR(sp_error_str(SP_ERR_READ), "Read failed");
-    ASSERT_STR(sp_error_str(SP_ERR_WRITE), "Write failed");
-    ASSERT_STR(sp_error_str(SP_ERR_TOO_LARGE), "File too large for buffer");
+    ASSERT_STR(sp_error_str(SP_ERR_TOO_LONG), "Result too long for its buffer");
     ASSERT_STR(sp_error_str(SP_ERR_NOT_RELATIVE), "Path is not relative to the other path");
     ASSERT_STR(sp_error_str(SP_ERR_NO_NAME), "Path has an empty name");
     ASSERT_STR(sp_error_str(SP_ERR_INVALID_ARG), "Invalid argument");
-    ASSERT_STR(sp_error_str(9999), "Unknown error");
+    ASSERT_STR(sp_error_str(SP_ERR_NESTED_CHAIN), "Fluent chain started inside another chain");
+    ASSERT_STR(sp_error_str((SpError)9999), "Unknown error");
 
     /* ============ stat / lstat (fluent) ============ */
 
     { SpStatResult st = SPF(__FILE__)->stat();
-      ASSERT(st.valid == true);
+      ASSERT(st.error == SP_OK);
       ASSERT(st.sp_size > 0); }
 
     { SpStatResult st = SPF(__FILE__)->lstat();
-      ASSERT(st.valid == true);
+      ASSERT(st.error == SP_OK);
       ASSERT(st.sp_size > 0); }
 
     /* Non-existent file stat */
     { SpStatResult st = SPF("/nonexistent_stat_test")->stat();
-      ASSERT(st.valid == false); }
+      ASSERT(st.error != SP_OK); }
 
     /* ============ as_posix (fluent) ============ */
 
-    { char buf[SP_PATH_MAX];
-      SPF_W("c:\\windows\\system32")->as_posix(buf, sizeof(buf));
-      ASSERT_STR(buf, "c:/windows/system32"); }
+    ASSERT_TERM(SPF_W("c:\\windows\\system32")->as_posix(), "c:/windows/system32");
 
     /* ============ as_uri (fluent) ============ */
 
     { char buf[SP_PATH_MAX];
-      size_t len = SPF_P("/etc/hosts")->as_uri(buf, sizeof(buf));
-      ASSERT(len > 0);
+      ASSERT(SPF_P("/etc/hosts")->as_uri(buf, sizeof(buf)) == SP_OK);
       ASSERT_STR(buf, "file:///etc/hosts"); }
 
     /* ============ match (fluent) ============ */
 
-    ASSERT(SPF_P("/foo/bar.py")->match("*.py") == SP_MATCH_YES);
-    ASSERT(SPF_P("/foo/bar.py")->match("*.txt") == SP_MATCH_NO);
-    ASSERT(SPF_P("/foo/bar.py")->match("foo/*.py") == SP_MATCH_YES);
+    ASSERT(SPF_P("/foo/bar.py")->match("*.py"));
+    ASSERT(SPF_P("/foo/bar.py")->match("*.txt") == false);
+    ASSERT(SPF_P("/foo/bar.py")->match("foo/*.py"));
     ASSERT(SPF_P("/foo/bar.py")->full_match("/**/*.py"));
     ASSERT(!SPF_P("/foo/bar.py")->full_match("*.py"));
 
@@ -793,16 +704,16 @@ static void test_fluent_api(void) {
 
         /* Create target file and symlink */
         SpPath tp = sp_path(target_path);
-        sp_touch(&tp, 0644, true);
+        ASSERT(sp_touch(&tp, 0644, true) == SP_OK);
         SpPath lp = sp_path(link_path);
-        sp_symlink_to(&lp, &tp, false);
+        ASSERT(sp_symlink_to(&lp, &tp, false) == SP_OK);
 
         /* readlink should return the target */
         { SpPath rl = SPF(link_path)->readlink()->path();
           ASSERT(rl.len > 0); }
 
-        sp_unlink(&lp, true);
-        sp_unlink(&tp, true);
+        ASSERT(sp_unlink(&lp, true) == SP_OK);
+        ASSERT(sp_unlink(&tp, true) == SP_OK);
     }
 #endif
 
@@ -816,7 +727,7 @@ static void test_fluent_api(void) {
 
         /* Create source, rename it */
         SpPath srcp = sp_path(src_path);
-        sp_touch(&srcp, 0644, true);
+        ASSERT(sp_touch(&srcp, 0644, true) == SP_OK);
         SpPath dp = sp_path(dst_path);
 
         SpPath result = SPF(src_path)->rename(&dp)->path();
@@ -824,7 +735,7 @@ static void test_fluent_api(void) {
 
         /* Clean up */
         SpPath cleanup = sp_path(dst_path);
-        sp_unlink(&cleanup, true);
+        ASSERT(sp_unlink(&cleanup, true) == SP_OK);
     }
 
     {
@@ -835,16 +746,16 @@ static void test_fluent_api(void) {
 
         /* Create both files, replace dst with src */
         SpPath srcp2 = sp_path(src_path);
-        sp_touch(&srcp2, 0644, true);
+        ASSERT(sp_touch(&srcp2, 0644, true) == SP_OK);
         SpPath dp2 = sp_path(dst_path);
-        sp_touch(&dp2, 0644, true);
+        ASSERT(sp_touch(&dp2, 0644, true) == SP_OK);
 
         SpPath result = SPF(src_path)->replace(&dp2)->path();
         ASSERT_STR(sp_str(&result), dst_path);
 
         /* Clean up */
         SpPath cleanup = sp_path(dst_path);
-        sp_unlink(&cleanup, true);
+        ASSERT(sp_unlink(&cleanup, true) == SP_OK);
     }
 
     /* ============ mkdir (fluent) ============ */
@@ -854,16 +765,16 @@ static void test_fluent_api(void) {
         char dir_path[128];
         snprintf(dir_path, sizeof(dir_path), "test_fluent_mkdir_%ld", fpid);
 
-        ASSERT(SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE) == SP_OK);
+        ASSERT(SPF(dir_path)->mkdir(0755, 0, SP_MODE_DIR) == SP_OK);
 
         /* mkdir again without exist_ok should fail */
-        ASSERT(SPF(dir_path)->mkdir(0755, false, false, SP_MKDIR_DEF_MODE) == SP_ERR_EXISTS);
+        ASSERT(SPF(dir_path)->mkdir(0755, 0, SP_MODE_DIR) == SP_ERR_EXISTS);
 
         /* mkdir with exist_ok should succeed */
-        ASSERT(SPF(dir_path)->mkdir(0755, false, true, SP_MKDIR_DEF_MODE) == SP_OK);
+        ASSERT(SPF(dir_path)->mkdir(0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
         SpPath cleanup = sp_path(dir_path);
-        sp_rmdir(&cleanup);
+        ASSERT(sp_rmdir(&cleanup) == SP_OK);
     }
 
     /* ============ touch (fluent) ============ */
@@ -873,13 +784,13 @@ static void test_fluent_api(void) {
         char touch_path[128];
         snprintf(touch_path, sizeof(touch_path), "test_fluent_touch_%ld.tmp", fpid);
 
-        ASSERT(SPF(touch_path)->touch(0644, true));
+        ASSERT(SPF(touch_path)->touch(0644, true) == SP_OK);
 
         /* Verify file exists */
         ASSERT(SPF(touch_path)->exists(true) == true);
 
         SpPath cleanup = sp_path(touch_path);
-        sp_unlink(&cleanup, true);
+        ASSERT(sp_unlink(&cleanup, true) == SP_OK);
     }
 
     /* ============ unlink (fluent) ============ */
@@ -890,15 +801,15 @@ static void test_fluent_api(void) {
         snprintf(unlink_path, sizeof(unlink_path), "test_fluent_unlink_%ld.tmp", fpid);
 
         SpPath p = sp_path(unlink_path);
-        sp_touch(&p, 0644, true);
+        ASSERT(sp_touch(&p, 0644, true) == SP_OK);
 
-        ASSERT(SPF(unlink_path)->unlink(false));
+        ASSERT(SPF(unlink_path)->unlink(false) == SP_OK);
 
         /* Unlink non-existent without missing_ok should fail */
-        ASSERT(!SPF(unlink_path)->unlink(false));
+        ASSERT(SPF(unlink_path)->unlink(false) == SP_ERR_NOT_FOUND);
 
         /* Unlink non-existent with missing_ok should succeed */
-        ASSERT(SPF(unlink_path)->unlink(true));
+        ASSERT(SPF(unlink_path)->unlink(true) == SP_OK);
     }
 
     /* ============ rmdir (fluent) ============ */
@@ -909,12 +820,12 @@ static void test_fluent_api(void) {
         snprintf(rmdir_path, sizeof(rmdir_path), "test_fluent_rmdir_%ld", fpid);
 
         SpPath p = sp_path(rmdir_path);
-        sp_mkdir(&p, 0755, false, false, SP_MKDIR_DEF_MODE);
+        ASSERT(sp_mkdir(&p, 0755, 0, SP_MODE_DIR) == SP_OK);
 
-        ASSERT(SPF(rmdir_path)->rmdir());
+        ASSERT(SPF(rmdir_path)->rmdir() == SP_OK);
 
         /* Rmdir non-existent should fail */
-        ASSERT(!SPF(rmdir_path)->rmdir());
+        ASSERT(SPF(rmdir_path)->rmdir() == SP_ERR_NOT_FOUND);
     }
 
     /* ============ chmod (fluent) ============ */
@@ -926,11 +837,11 @@ static void test_fluent_api(void) {
         snprintf(chmod_path, sizeof(chmod_path), "test_fluent_chmod_%ld.tmp", fpid);
 
         SpPath p = sp_path(chmod_path);
-        sp_touch(&p, 0644, true);
+        ASSERT(sp_touch(&p, 0644, true) == SP_OK);
 
-        ASSERT(SPF(chmod_path)->chmod(0600));
+        ASSERT(SPF(chmod_path)->chmod(0600, true) == SP_OK);
 
-        sp_unlink(&p, true);
+        ASSERT(sp_unlink(&p, true) == SP_OK);
     }
 #endif
 
@@ -945,20 +856,24 @@ static void test_fluent_api(void) {
         snprintf(hard_path, sizeof(hard_path), "test_fluent_hard_%ld.tmp", fpid);
 
         SpPath tp = sp_path(target_path);
-        sp_touch(&tp, 0644, true);
+        ASSERT(sp_touch(&tp, 0644, true) == SP_OK);
 
         /* symlink_to */
-        ASSERT(SPF(sym_path)->symlink_to(&tp, false));
+        ASSERT(SPF(sym_path)->symlink_to(&tp, false) == SP_OK);
         ASSERT(SPF(sym_path)->is_symlink() == true);
 
         /* hardlink_to */
-        ASSERT(SPF(hard_path)->hardlink_to(&tp));
+#ifdef __ANDROID__
+        ASSERT(SPF(hard_path)->hardlink_to(&tp) == SP_ERR_UNSUPPORTED);
+#else
+        ASSERT(SPF(hard_path)->hardlink_to(&tp) == SP_OK);
+#endif
 
         SpPath sp2 = sp_path(sym_path);
         SpPath hp = sp_path(hard_path);
-        sp_unlink(&sp2, true);
-        sp_unlink(&hp, true);
-        sp_unlink(&tp, true);
+        ASSERT(sp_unlink(&sp2, true) == SP_OK);
+        ASSERT(sp_unlink(&hp, true) == SP_OK);
+        ASSERT(sp_unlink(&tp, true) == SP_OK);
     }
 #endif
 
@@ -1064,8 +979,8 @@ int main(void) {
     
     SpPath ea = sp_path_f("a/b", P), eb = sp_path_f("a/b", P); ASSERT(sp_path_eq(&ea, &eb));
     
-    SpPath pap = sp_path_f("a/b/c", P); char bap[SP_PATH_MAX];
-    sp_as_posix(&pap, bap, sizeof(bap)); ASSERT(strcmp(bap, "a/b/c") == 0);
+    SpPath pap = sp_path_f("a/b/c", P);
+    ASSERT_TERM(sp_as_posix(&pap), "a/b/c");
     
     printf("  POSIX tests OK\n");
     
@@ -1128,8 +1043,8 @@ int main(void) {
     /* Case-insensitive matching follows re.IGNORECASE, including its extra case groups (s and long s, k and Kelvin) */
     {
         SpPath longs = sp_path_f("\xc5\xbf", P), kelvin = sp_path_f("\xe2\x84\xaa", P), sigma = sp_path_f("\xce\xa3", P);
-        ASSERT(sp_full_match(&longs, "S", 0) && sp_full_match(&kelvin, "k", 0) && sp_full_match(&sigma, "[\xcf\x83]", 0));
-        ASSERT(!sp_full_match(&kelvin, "k", 1));
+        ASSERT(sp_full_match(&longs, "S", SP_CASE_INSENSITIVE) && sp_full_match(&kelvin, "k", SP_CASE_INSENSITIVE) && sp_full_match(&sigma, "[\xcf\x83]", SP_CASE_INSENSITIVE));
+        ASSERT(!sp_full_match(&kelvin, "k", SP_CASE_SENSITIVE));
     }
 
     SpPath win_ws_base = sp_path_f("ignored", W);
@@ -1166,8 +1081,8 @@ int main(void) {
     
     ASSERT_PATH(sp_path_f("C:/a\\b/c", W), "C:\\a\\b\\c");
     
-    SpPath wap = sp_path_f("C:\\a\\b\\c", W); char wbuf[SP_PATH_MAX];
-    sp_as_posix(&wap, wbuf, sizeof(wbuf)); ASSERT(strcmp(wbuf, "C:/a/b/c") == 0);
+    SpPath wap = sp_path_f("C:\\a\\b\\c", W);
+    ASSERT_TERM(sp_as_posix(&wap), "C:/a/b/c");
     
     SpPath wr1 = sp_path_f("C:/a/b/c", W), wo1 = sp_path_f("C:/a", W);
     ASSERT_PATH(sp_relative_to(&wr1, &wo1, false), "b\\c");
@@ -1202,9 +1117,9 @@ int main(void) {
     /* Failed path results are described by sp_error_str (their codes must not collide with SP_ERR_*) */
     SpPath er1 = sp_path_f("/", P), er2 = sp_path_f("/a/b", P), er3 = sp_path_f("/c", P);
     SpPath ee1 = sp_with_name(&er1, "x"), ee2 = sp_with_name(&er2, ""), ee3 = sp_relative_to(&er2, &er3, false);
-    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee1)), "Path has an empty name") == 0);
-    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee2)), "Invalid argument") == 0);
-    ASSERT(strcmp(sp_error_str(sp_path_error_code(&ee3)), "Path is not relative to the other path") == 0);
+    ASSERT(strcmp(sp_error_str(ee1.error), "Path has an empty name") == 0);
+    ASSERT(strcmp(sp_error_str(ee2.error), "Invalid argument") == 0);
+    ASSERT(strcmp(sp_error_str(ee3.error), "Path is not relative to the other path") == 0);
 
     printf("  Edge cases OK\n");
 
@@ -1261,20 +1176,20 @@ int main(void) {
     /* Test stat - existing file */
     SpPath stat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
     SpStatResult stat_result = sp_stat(&stat_file);
-    ASSERT(stat_result.valid == true);
+    ASSERT(stat_result.error == SP_OK);
     ASSERT(stat_result.sp_size > 0);
     ASSERT((stat_result.sp_mode & 0170000) == 0100000);  /* S_IFREG - regular file */
 
     /* Test stat - existing directory */
     SpPath stat_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
     SpStatResult dir_result = sp_stat(&stat_dir);
-    ASSERT(dir_result.valid == true);
+    ASSERT(dir_result.error == SP_OK);
     ASSERT((dir_result.sp_mode & 0170000) == 0040000);  /* S_IFDIR - directory */
 
     /* Test stat - nonexistent path */
     SpPath stat_nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
     SpStatResult nonexistent_result = sp_stat(&stat_nonexistent);
-    ASSERT(nonexistent_result.valid == false);
+    ASSERT(nonexistent_result.error != SP_OK);
 
     /* Test sp_stat_eq */
     ASSERT(sp_stat_eq(&stat_result, &stat_result) == true);
@@ -1308,16 +1223,16 @@ int main(void) {
     test_rmdir(sp_str(&mkdir_test));
 
     /* Test basic mkdir */
-    int mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false, SP_MKDIR_DEF_MODE);
+    SpError mkdir_result = sp_mkdir(&mkdir_test, 0755, 0, SP_MODE_DIR);
     ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_test, true) == true);
 
     /* Test mkdir with exist_ok=false should fail when dir exists */
-    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, false, SP_MKDIR_DEF_MODE);
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, 0, SP_MODE_DIR);
     ASSERT(mkdir_result == SP_ERR_EXISTS);
 
     /* Test mkdir with exist_ok=true should succeed when dir exists */
-    mkdir_result = sp_mkdir(&mkdir_test, 0755, false, true, SP_MKDIR_DEF_MODE);
+    mkdir_result = sp_mkdir(&mkdir_test, 0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR);
     ASSERT(mkdir_result == SP_OK);
 
     /* Cleanup */
@@ -1328,7 +1243,7 @@ int main(void) {
     snprintf(nested_path, sizeof(nested_path), "%s/subdir/deep", test_dir_mkdir_nested);
     snprintf(nested_sub, sizeof(nested_sub), "%s/subdir", test_dir_mkdir_nested);
     SpPath mkdir_nested = sp_path_f(nested_path, SP_FLAVOR_NATIVE);
-    mkdir_result = sp_mkdir(&mkdir_nested, 0755, true, false, SP_MKDIR_DEF_MODE);
+    mkdir_result = sp_mkdir(&mkdir_nested, 0755, SP_MKDIR_PARENTS, SP_MODE_DIR);
     ASSERT(mkdir_result == SP_OK);
     ASSERT(sp_is_dir(&mkdir_nested, true) == true);
 
@@ -1339,7 +1254,7 @@ int main(void) {
 
     /* Test mkdir without parents should fail if parent doesn't exist */
     SpPath mkdir_no_parent = sp_path_f("./nonexistent_parent/subdir", SP_FLAVOR_NATIVE);
-    mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, false, false, SP_MKDIR_DEF_MODE);
+    mkdir_result = sp_mkdir(&mkdir_no_parent, 0755, 0, SP_MODE_DIR);
     ASSERT(mkdir_result == SP_ERR_NOT_FOUND);
 
     printf("  mkdir tests OK\n");
@@ -1350,13 +1265,13 @@ int main(void) {
     /* Test lstat on regular file */
     SpPath lstat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
     SpStatResult lstat_res = sp_lstat(&lstat_file);
-    ASSERT(lstat_res.valid == true);
+    ASSERT(lstat_res.error == SP_OK);
     ASSERT(lstat_res.sp_size > 0);
 
     /* Test lstat on nonexistent file */
     SpPath lstat_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
     SpStatResult lstat_nonexist_res = sp_lstat(&lstat_nonexist);
-    ASSERT(lstat_nonexist_res.valid == false);
+    ASSERT(lstat_nonexist_res.error != SP_OK);
 
     printf("  lstat tests OK\n");
 
@@ -1373,13 +1288,30 @@ int main(void) {
     SpPath resolve_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
     SpPath resolved_file = sp_resolve(&resolve_file, true);
     ASSERT(sp_is_absolute(&resolved_file));
-    ASSERT(!sp_path_is_error(&resolved_file));
+    ASSERT(resolved_file.error == SP_OK);
 
     /* Test resolve strict mode on nonexistent path */
     SpPath resolve_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
     SpPath resolved_nonexist = sp_resolve(&resolve_nonexist, true);
-    ASSERT(sp_path_is_error(&resolved_nonexist));
-    ASSERT(strcmp(sp_error_str(sp_path_error_code(&resolved_nonexist)), "Operation failed") == 0);
+    ASSERT(resolved_nonexist.error == SP_ERR_NOT_FOUND);
+
+#ifndef SP_WINDOWS
+    /* A symlink loop: strict resolve reports it, and non-strict resolve leaves the looping part as it is */
+    {
+        char loop_name[64];
+        snprintf(loop_name, sizeof(loop_name), "test_resolve_loop_%ld", pid);
+        SpPath loop = sp_path(loop_name);
+        ASSERT(sp_symlink_to(&loop, &loop, false) == SP_OK);
+        ASSERT(sp_resolve(&loop, true).error == SP_ERR_LOOP);
+        SpPath loop_child = sp_join_one(&loop, "x");
+        SpPath abs_child = sp_absolute(&loop_child);
+        SpPath lenient = sp_resolve(&loop_child, false);
+        ASSERT(lenient.error == SP_OK && sp_path_eq(&lenient, &abs_child));
+        ASSERT(sp_readlink(&loop).error == SP_OK);
+        ASSERT(sp_readlink(&resolve_file).error == SP_ERR_NOT_LINK);
+        ASSERT(sp_unlink(&loop, false) == SP_OK);
+    }
+#endif
 
     printf("  resolve tests OK\n");
 
@@ -1414,10 +1346,10 @@ int main(void) {
     snprintf(glob_f3, sizeof(glob_f3), "%s/subdir/file3.txt", test_dir_glob);
 
     SpPath glob_base = sp_path_f(test_dir_glob, SP_FLAVOR_NATIVE);
-    sp_mkdir(&glob_base, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&glob_base, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     SpPath glob_sub = sp_path_f(glob_sub_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&glob_sub, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&glob_sub, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     /* Create test files by touching them (just need the glob to find them) */
     FILE *f1 = fopen(glob_f1, "w");
@@ -1429,7 +1361,7 @@ int main(void) {
 
     /* Test basic glob *.txt using iterator */
     int txt_count = 0;
-    SpGlobIter git = sp_glob_begin(&glob_base, "*.txt", SP_CASE_PLATFORM_DEFAULT, false);
+    SpGlobIter git = sp_glob_begin(&glob_base, "*.txt", SP_CASE_DEFAULT, false);
     SpPath gmatch;
     while (sp_glob_next(&git, &gmatch)) {
         if (strstr(sp_str(&gmatch), ".txt")) txt_count++;
@@ -1469,31 +1401,31 @@ int main(void) {
     SpPath touch_file = sp_path_f(touch_file_path, SP_FLAVOR_NATIVE);
 
     /* Test touch creates new file */
-    ASSERT(sp_touch(&touch_file, 0644, true) == true);
+    ASSERT(sp_touch(&touch_file, 0644, true) == SP_OK);
     ASSERT(sp_exists(&touch_file, true) == true);
     ASSERT(sp_is_file(&touch_file, true) == true);
 
     /* Test touch with exist_ok=false on existing file fails */
-    ASSERT(sp_touch(&touch_file, 0644, false) == false);
+    ASSERT(sp_touch(&touch_file, 0644, false) == SP_ERR_EXISTS);
 
     /* Test touch with exist_ok=true on existing file succeeds */
-    ASSERT(sp_touch(&touch_file, 0644, true) == true);
+    ASSERT(sp_touch(&touch_file, 0644, true) == SP_OK);
 
     /* Test chmod */
-    ASSERT(sp_chmod(&touch_file, 0444) == true);
+    ASSERT(sp_chmod(&touch_file, 0444, true) == SP_OK);
 
     /* Restore write permission before unlink (required on Windows) */
-    ASSERT(sp_chmod(&touch_file, 0644) == true);
+    ASSERT(sp_chmod(&touch_file, 0644, true) == SP_OK);
 
     /* Test unlink */
-    ASSERT(sp_unlink(&touch_file, false) == true);
+    ASSERT(sp_unlink(&touch_file, false) == SP_OK);
     ASSERT(sp_exists(&touch_file, true) == false);
 
     /* Test unlink with missing_ok=false on nonexistent file fails */
-    ASSERT(sp_unlink(&touch_file, false) == false);
+    ASSERT(sp_unlink(&touch_file, false) == SP_ERR_NOT_FOUND);
 
     /* Test unlink with missing_ok=true on nonexistent file succeeds */
-    ASSERT(sp_unlink(&touch_file, true) == true);
+    ASSERT(sp_unlink(&touch_file, true) == SP_OK);
 
     printf("  touch/unlink/chmod tests OK\n");
 
@@ -1507,23 +1439,23 @@ int main(void) {
     SpPath rename_dst = sp_path_f(rename_dst_path, SP_FLAVOR_NATIVE);
 
     /* Create source file */
-    ASSERT(sp_touch(&rename_src, 0644, true) == true);
+    ASSERT(sp_touch(&rename_src, 0644, true) == SP_OK);
 
     /* Test rename */
     SpPath rename_result = sp_rename(&rename_src, &rename_dst);
-    ASSERT(!sp_path_is_error(&rename_result));
+    ASSERT(rename_result.error == SP_OK);
     ASSERT(sp_exists(&rename_src, true) == false);
     ASSERT(sp_exists(&rename_dst, true) == true);
 
     /* Test replace (create src again, replace dst) */
-    ASSERT(sp_touch(&rename_src, 0644, true) == true);
+    ASSERT(sp_touch(&rename_src, 0644, true) == SP_OK);
     SpPath replace_result = sp_replace(&rename_src, &rename_dst);
-    ASSERT(!sp_path_is_error(&replace_result));
+    ASSERT(replace_result.error == SP_OK);
     ASSERT(sp_exists(&rename_src, true) == false);
     ASSERT(sp_exists(&rename_dst, true) == true);
 
     /* Cleanup */
-    sp_unlink(&rename_dst, true);
+    ASSERT(sp_unlink(&rename_dst, true) == SP_OK);
 
     printf("  rename/replace tests OK\n");
 
@@ -1535,15 +1467,15 @@ int main(void) {
     SpPath rmdir_dir = sp_path_f(rmdir_path, SP_FLAVOR_NATIVE);
 
     /* Create directory */
-    ASSERT(sp_mkdir(&rmdir_dir, 0755, false, false, SP_MKDIR_DEF_MODE) == SP_OK);
+    ASSERT(sp_mkdir(&rmdir_dir, 0755, 0, SP_MODE_DIR) == SP_OK);
     ASSERT(sp_is_dir(&rmdir_dir, true) == true);
 
     /* Test rmdir on empty directory */
-    ASSERT(sp_rmdir(&rmdir_dir) == true);
+    ASSERT(sp_rmdir(&rmdir_dir) == SP_OK);
     ASSERT(sp_exists(&rmdir_dir, true) == false);
 
     /* Test rmdir on nonexistent directory fails */
-    ASSERT(sp_rmdir(&rmdir_dir) == false);
+    ASSERT(sp_rmdir(&rmdir_dir) == SP_ERR_NOT_FOUND);
 
     printf("  rmdir tests OK\n");
 
@@ -1551,32 +1483,31 @@ int main(void) {
     printf("\npathlib 3.15 Tests:\n");
     {
         SpPath p = sp_path_f("/a/b/c.py", SP_FLAVOR_POSIX), empty = sp_path_f("", SP_FLAVOR_POSIX);
-        ASSERT(sp_match_ex(&p, "/**/*.py", -1) == SP_MATCH_NO); /* '**' is an ordinary wildcard in match() */
-        ASSERT(sp_match_ex(&p, "/a/**/*.py", -1) == SP_MATCH_YES);
-        ASSERT(sp_match_ex(&empty, "**", -1) == SP_MATCH_NO);
-        ASSERT(sp_match_ex(&p, ".", -1) == SP_MATCH_ERR_EMPTY);
-        ASSERT(sp_full_match(&p, "/a/**", -1));
-        ASSERT(sp_full_match(&p, "**/*.py", -1));
-        ASSERT(!sp_full_match(&p, "*.py", -1));
-        ASSERT(sp_full_match(&p, "/[a-c]/?/[!x]*", -1));
-        ASSERT(sp_full_match(&empty, "**", -1));
-        ASSERT(!sp_full_match(&empty, "*", -1));
-        ASSERT(sp_full_match(&empty, "***", -1));
-        ASSERT(sp_full_match(&p, "**/**/**/c.py", -1));
-        ASSERT(!sp_full_match(&p, "**/**/**/absent", -1));
+        ASSERT(!sp_match(&p, "/**/*.py", SP_CASE_DEFAULT)); /* '**' is an ordinary wildcard in match() */
+        ASSERT(sp_match(&p, "/a/**/*.py", SP_CASE_DEFAULT));
+        ASSERT(!sp_match(&empty, "**", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&p, "/a/**", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&p, "**/*.py", SP_CASE_DEFAULT));
+        ASSERT(!sp_full_match(&p, "*.py", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&p, "/[a-c]/?/[!x]*", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&empty, "**", SP_CASE_DEFAULT));
+        ASSERT(!sp_full_match(&empty, "*", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&empty, "***", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&p, "**/**/**/c.py", SP_CASE_DEFAULT));
+        ASSERT(!sp_full_match(&p, "**/**/**/absent", SP_CASE_DEFAULT));
         SpPath rooted = sp_path_f("/a", SP_FLAVOR_POSIX);
-        ASSERT(sp_full_match(&rooted, "[!x]a", -1)); /* Classes, unlike '*' and '?', may match a separator. */
-        ASSERT(!sp_full_match(&rooted, "?a", -1));
+        ASSERT(sp_full_match(&rooted, "[!x]a", SP_CASE_DEFAULT)); /* Classes, unlike '*' and '?', may match a separator. */
+        ASSERT(!sp_full_match(&rooted, "?a", SP_CASE_DEFAULT));
         SpPath w = sp_path_f("c:/a/B.Py", SP_FLAVOR_WINDOWS);
-        ASSERT(sp_full_match(&w, "C:/A/*.pY", -1));
-        ASSERT(!sp_full_match(&w, "C:/A/*.pY", 1));
-        ASSERT(sp_match_ex(&w, "*:/*/*.py", -1) == SP_MATCH_YES);
+        ASSERT(sp_full_match(&w, "C:/A/*.pY", SP_CASE_DEFAULT));
+        ASSERT(!sp_full_match(&w, "C:/A/*.pY", SP_CASE_SENSITIVE));
+        ASSERT(sp_match(&w, "*:/*/*.py", SP_CASE_DEFAULT));
         ASSERT_PATH(sp_path_f("//a//b", SP_FLAVOR_WINDOWS), "\\\\a\\\\b"); /* //server/share with an empty share */
         SpPath dotted = sp_path_f("a/x.", SP_FLAVOR_POSIX), back = sp_path_f("a\\b", SP_FLAVOR_POSIX);
         ASSERT_TERM(sp_suffix(&dotted), ".");                     /* a trailing dot is a suffix */
         ASSERT_TERM(sp_stem(&dotted), "x");
         ASSERT_PATH(sp_with_suffix(&dotted, "."), "a/x.");
-        { char posix[16]; sp_as_posix(&back, posix, sizeof(posix)); ASSERT(strcmp(posix, "a\\b") == 0); }
+        ASSERT_TERM(sp_as_posix(&back), "a\\b");
         SpPath dotdot = sp_path_f("../a/b", SP_FLAVOR_POSIX), up = sp_path_f("../c", SP_FLAVOR_POSIX);
         ASSERT_PATH(sp_relative_to(&dotdot, &up, true), "../a/b"); /* ".." shared by both is not walked */
         SpPath dot = sp_path_f("", SP_FLAVOR_POSIX), star = sp_path_f("*", SP_FLAVOR_POSIX);
@@ -1585,8 +1516,8 @@ int main(void) {
         ASSERT_PATH(sp_parent(&protected_drive), ".");
         SpPath drive_child = sp_join_one(&protected_drive, "x"), win_empty = sp_path_f("", SP_FLAVOR_WINDOWS);
         ASSERT(sp_parts_count(&drive_child) == 2);
-        ASSERT(sp_match_ex(&drive_child, "./c:/*", -1) == SP_MATCH_YES);
-        ASSERT(sp_match_ex(&drive_child, "c:/*", -1) == SP_MATCH_NO);
+        ASSERT(sp_match(&drive_child, "./c:/*", SP_CASE_DEFAULT));
+        ASSERT(!sp_match(&drive_child, "c:/*", SP_CASE_DEFAULT));
         ASSERT_PATH(sp_relative_to(&drive_child, &protected_drive, false), "x");
         ASSERT_PATH(sp_relative_to(&drive_child, &win_empty, false), ".\\c:\\x");
     }
@@ -1596,30 +1527,40 @@ int main(void) {
         memcpy(raw.buf, "a///b//", 8);
         raw.len = 7;
         ASSERT(sp_parts_count(&raw) == 2);
-        ASSERT(sp_match_ex(&raw, "a/b", -1) == SP_MATCH_YES);
-        ASSERT(sp_match_ex(&raw, "b", -1) == SP_MATCH_YES);
-        ASSERT(sp_full_match(&raw, "a/**/b/**", -1));
+        ASSERT(sp_match(&raw, "a/b", SP_CASE_DEFAULT));
+        ASSERT(sp_match(&raw, "b", SP_CASE_DEFAULT));
+        ASSERT(sp_full_match(&raw, "a/**/b/**", SP_CASE_DEFAULT));
         ASSERT_PATH(sp_relative_to(&raw, &base, false), "b");
         SpPath above = sp_path_f("a/../c", SP_FLAVOR_POSIX), result = sp_relative_to(&raw, &above, true);
-        ASSERT(sp_path_error_code(&result) == SP_ERR_NOT_RELATIVE);
+        ASSERT(result.error == SP_ERR_NOT_RELATIVE);
     }
     {
-        /* Oversized joined pieces are skipped whole, including when a rooted join keeps a Windows drive. */
-        char full[SP_PATH_MAX];
+        /* A result too long for SP_PATH_MAX is an error, including when a rooted join keeps a Windows drive, and the
+         * error passes through what comes after */
+        char full[SP_PATH_MAX + 1];
         memset(full, 'x', sizeof(full) - 1);
         full[sizeof(full) - 1] = '\0';
+        ASSERT(sp_path_f(full, SP_FLAVOR_POSIX).error == SP_ERR_TOO_LONG);
+        full[sizeof(full) - 2] = '\0';
         SpPath base = sp_path_f("a", SP_FLAVOR_POSIX);
-        ASSERT_PATH(sp_join_one(&base, full), "a");
+        SpPath too_long = sp_join_one(&base, full);
+        ASSERT(too_long.error == SP_ERR_TOO_LONG && too_long.len == 0);
+        SpPath still = sp_join_one(&too_long, "b");
+        SpPath parent_of = sp_parent(&still);
+        ASSERT(sp_with_name(&parent_of, "c").error == SP_ERR_TOO_LONG);
+        ASSERT(sp_name(&still).error == SP_ERR_TOO_LONG);
+        ASSERT(sp_mkdir(&still, 0777, 0, 0777) == SP_ERR_TOO_LONG);
+        ASSERT(sp_stat(&still).error == SP_ERR_TOO_LONG);
         full[0] = '/';
         base = sp_path_f("C:/base", SP_FLAVOR_WINDOWS);
-        ASSERT_PATH(sp_join_one(&base, full), "C:");
+        ASSERT(sp_join_one(&base, full).error == SP_ERR_TOO_LONG);
         /* Exercise streaming comparisons with the maximum number of parts. */
-        for (size_t i = 0; i + 1 < sizeof(full); i++) full[i] = i % 2 ? '/' : 'a';
+        for (size_t i = 0; i + 2 < sizeof(full); i++) full[i] = i % 2 ? '/' : 'a';
         SpPath deep = sp_path_f(full, SP_FLAVOR_POSIX), empty = sp_path_f("", SP_FLAVOR_POSIX);
         SpPath relative = sp_relative_to(&deep, &empty, false);
         ASSERT(sp_path_eq(&relative, &deep));
-        ASSERT(sp_match_ex(&deep, "a/a/a", -1) == SP_MATCH_YES);
-        ASSERT(!sp_full_match(&deep, "**/**/**/**/absent", -1));
+        ASSERT(sp_match(&deep, "a/a/a", SP_CASE_DEFAULT));
+        ASSERT(!sp_full_match(&deep, "**/**/**/**/absent", SP_CASE_DEFAULT));
     }
     {
         char buf[SP_PATH_MAX * 3];
@@ -1630,28 +1571,34 @@ int main(void) {
         };
         for (size_t i = 0; i < ARRAY_LEN(uris); i++) {
             SpPath u = sp_path_f(uris[i][0], uris[i][1][0] == 'p' ? SP_FLAVOR_POSIX : SP_FLAVOR_WINDOWS);
-            ASSERT(sp_as_uri(&u, buf, sizeof(buf)) == strlen(uris[i][2]));
+            SpError err = sp_as_uri(&u, buf, sizeof(buf));
+            ASSERT(err == (uris[i][2][0] ? SP_OK : SP_ERR_NOT_ABSOLUTE));
             ASSERT(strcmp(buf, uris[i][2]) == 0);
         }
+        SpPath long_uri = sp_path_f("/a b", SP_FLAVOR_POSIX);
+        ASSERT(sp_as_uri(&long_uri, buf, 13) == SP_ERR_TOO_LONG && buf[0] == '\0');
+        ASSERT(sp_as_uri(&long_uri, buf, 14) == SP_OK);
         ASSERT_PATH(sp_from_uri("file:///foo/bar", SP_FLAVOR_POSIX), "/foo/bar");
         ASSERT_PATH(sp_from_uri("file://localhost/foo", SP_FLAVOR_POSIX), "/foo");
         ASSERT_PATH(sp_from_uri("file:////foo/bar", SP_FLAVOR_POSIX), "//foo/bar");
         ASSERT_PATH(sp_from_uri("FILE:///a%20b?q#f", SP_FLAVOR_POSIX), "/a b");
         ASSERT_PATH(sp_from_uri("file:///c|/x", SP_FLAVOR_WINDOWS), "c:\\x");
         ASSERT_PATH(sp_from_uri("file://server/share/x", SP_FLAVOR_WINDOWS), "\\\\server\\share\\x");
-        const char *bad_uris[] = {"file://host/x", "file:foo", "http://x/y", "/foo"};
+        const char *bad_uris[] = {"file://host/x", "http://x/y", "/foo"};
         for (size_t i = 0; i < ARRAY_LEN(bad_uris); i++) {
             SpPath u = sp_from_uri(bad_uris[i], SP_FLAVOR_POSIX);
-            ASSERT(sp_path_error_code(&u) == SP_ERR_INVALID_ARG);
+            ASSERT(u.error == SP_ERR_INVALID_ARG);
         }
+        ASSERT(sp_from_uri("file:foo", SP_FLAVOR_POSIX).error == SP_ERR_NOT_ABSOLUTE);
     }
     {
         char root_path[64];
         snprintf(root_path, sizeof(root_path), "./test_315_%ld", pid);
         SpPath root = sp_path(root_path), sub = sp_join_one(&root, "sub"), txt = sp_join_one(&root, "a.txt");
         SpPath hidden = sp_join_one(&root, ".hidden"), sub_txt = sp_join_one(&sub, "b.txt");
-        ASSERT(sp_mkdir(&sub, 0755, true, false, SP_MKDIR_DEF_MODE) == SP_OK);
-        ASSERT(sp_touch(&txt, 0644, true) && sp_touch(&hidden, 0644, true) && sp_touch(&sub_txt, 0644, true));
+        ASSERT(sp_mkdir(&sub, 0755, SP_MKDIR_PARENTS, SP_MODE_DIR) == SP_OK);
+        ASSERT(sp_touch(&txt, 0644, true) == SP_OK && sp_touch(&hidden, 0644, true) == SP_OK);
+        ASSERT(sp_touch(&sub_txt, 0644, true) == SP_OK);
         ASSERT(sp_is_dir(&sub, false) && !sp_is_file(&sub, false) && sp_exists(&txt, false));
 
         struct { const char *pattern; bool rglob; int count, follow_count; } globs[] = {
@@ -1661,59 +1608,65 @@ int main(void) {
         };
         for (size_t i = 0; i < ARRAY_LEN(globs); i++) {
             for (int follow = 0; follow < 2; follow++) {
-                SpGlobIter it = (globs[i].rglob ? sp_rglob_begin : sp_glob_begin)(&root, globs[i].pattern, SP_CASE_PLATFORM_DEFAULT, follow != 0);
+                SpGlobIter it = (globs[i].rglob ? sp_rglob_begin : sp_glob_begin)(&root, globs[i].pattern, SP_CASE_DEFAULT, follow != 0);
                 int n = 0;
                 for (SpPath m; sp_glob_next(&it, &m);) n++;
                 sp_glob_end(&it);
                 ASSERT(it.error == SP_OK && n == (follow ? globs[i].follow_count : globs[i].count));
             }
         }
-        /* A trailing slash beyond the copied pattern limit still requires a directory. */
+        /* A pattern that fills SP_GLOB_PATTERN_MAX is past the limit; one character shorter, its trailing slash still
+         * requires a directory. */
         char full_pattern[SP_GLOB_PATTERN_MAX + 1];
         memset(full_pattern, '*', sizeof(full_pattern) - 2);
         full_pattern[sizeof(full_pattern) - 2] = '/';
         full_pattern[sizeof(full_pattern) - 1] = '\0';
-        SpGlobIter bounded = sp_glob_begin(&root, full_pattern, SP_CASE_PLATFORM_DEFAULT, true);
+        SpGlobIter bounded = sp_glob_begin(&root, full_pattern, SP_CASE_DEFAULT, true);
+        ASSERT(bounded.error == SP_ERR_LIMIT && !sp_glob_next(&bounded, &sub_txt));
+        sp_glob_end(&bounded);
+        bounded = sp_glob_begin(&root, full_pattern + 1, SP_CASE_DEFAULT, true);
         int bounded_count = 0;
         for (SpPath m; sp_glob_next(&bounded, &m);) {
             ASSERT(sp_path_eq(&m, &sub));
             bounded_count++;
         }
         sp_glob_end(&bounded);
-        ASSERT(bounded_count == 1);
-        SpGlobIter bad = sp_glob_begin(&root, "", SP_CASE_PLATFORM_DEFAULT, false);
+        ASSERT(bounded.error == SP_OK && bounded_count == 1);
+        SpGlobIter bad = sp_glob_begin(&root, "", SP_CASE_DEFAULT, false);
         ASSERT(bad.error == SP_ERR_INVALID_ARG);
-        bad = sp_glob_begin(&root, "/x", SP_CASE_PLATFORM_DEFAULT, false);
+        bad = sp_glob_begin(&root, "/x", SP_CASE_DEFAULT, false);
         ASSERT(bad.error == SP_ERR_UNSUPPORTED);
 
         SpPath sub2 = sp_join_one(&root, "sub2"), sub3 = sp_join_one(&root, "sub3"), inside = sp_join_one(&sub, "x");
-        ASSERT_PATH(sp_copy(&sub, &sub2, true, true), sp_str(&sub2));
+        ASSERT_PATH(sp_copy(&sub, &sub2, SP_COPY_FOLLOW_SYMLINKS | SP_COPY_PRESERVE_METADATA), sp_str(&sub2));
         SpPath copied = sp_join_one(&sub2, "b.txt");
         ASSERT(sp_is_file(&copied, true));
-        SpPath err = sp_copy(&sub, &inside, true, false);
-        ASSERT(sp_path_error_code(&err) == SP_ERR_INVALID_ARG);
-        err = sp_copy(&sub, &sub2, true, false);
-        ASSERT(sp_path_error_code(&err) == SP_ERR_EXISTS);
-        SpPath into = sp_copy_into(&txt, &sub, true, false);
-        ASSERT(!sp_path_is_error(&into) && sp_is_file(&into, true));
+        SpPath err = sp_copy(&sub, &inside, SP_COPY_FOLLOW_SYMLINKS);
+        ASSERT(err.error == SP_ERR_SAME_FILE);
+        err = sp_copy(&sub, &sub2, SP_COPY_FOLLOW_SYMLINKS);
+        ASSERT(err.error == SP_ERR_EXISTS);
+        err = sp_copy(&sub, &sub2, SP_MKDIR_PARENTS);
+        ASSERT(err.error == SP_ERR_INVALID_ARG);
+        SpPath into = sp_copy_into(&txt, &sub, SP_COPY_FOLLOW_SYMLINKS);
+        ASSERT(into.error == SP_OK && sp_is_file(&into, true));
         ASSERT_PATH(sp_move(&sub2, &sub3), sp_str(&sub3));
         ASSERT(!sp_exists(&sub2, false));
         err = sp_move(&txt, &txt);
-        ASSERT(sp_path_error_code(&err) == SP_ERR_INVALID_ARG);
+        ASSERT(err.error == SP_ERR_SAME_FILE);
         SpPath moved = sp_move_into(&sub3, &sub), moved_txt = sp_join_one(&moved, "b.txt");
         ASSERT(sp_is_file(&moved_txt, true) && !sp_exists(&sub3, false));
         SpPath nameless = sp_path_f("", SP_FLAVOR_NATIVE);
         err = sp_move_into(&nameless, &sub);
-        ASSERT(sp_path_error_code(&err) == SP_ERR_NO_NAME);
+        ASSERT(err.error == SP_ERR_NO_NAME);
 
-        sp_unlink(&moved_txt, false);
-        sp_rmdir(&moved);
-        sp_unlink(&into, false);
-        sp_unlink(&sub_txt, false);
-        sp_rmdir(&sub);
-        sp_unlink(&txt, false);
-        sp_unlink(&hidden, false);
-        ASSERT(sp_rmdir(&root));
+        ASSERT(sp_unlink(&moved_txt, false) == SP_OK);
+        ASSERT(sp_rmdir(&moved) == SP_OK);
+        ASSERT(sp_unlink(&into, false) == SP_OK);
+        ASSERT(sp_unlink(&sub_txt, false) == SP_OK);
+        ASSERT(sp_rmdir(&sub) == SP_OK);
+        ASSERT(sp_unlink(&txt, false) == SP_OK);
+        ASSERT(sp_unlink(&hidden, false) == SP_OK);
+        ASSERT(sp_rmdir(&root) == SP_OK);
     }
     printf("  pathlib 3.15 tests OK\n");
 
@@ -1754,7 +1707,7 @@ int main(void) {
     {
         char tiny[1];
         SpIOResult rd = sp_read_file(&rw_file, tiny, sizeof(tiny));
-        ASSERT(rd.error == SP_ERR_TOO_LARGE);
+        ASSERT(rd.error == SP_ERR_TOO_LONG);
         ASSERT(rd.bytes == 2);  /* reports actual file size */
     }
 
@@ -1763,14 +1716,14 @@ int main(void) {
         SpPath nofile = sp_path_f("/nonexistent/file.txt", P);
         char rbuf[64];
         SpIOResult rd = sp_read_file(&nofile, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_ERR_OPEN);
+        ASSERT(rd.error == SP_ERR_NOT_FOUND);
     }
 
     /* Write to nonexistent directory */
     {
         SpPath nodir = sp_path_f("/nonexistent/dir/file.txt", P);
         SpIOResult wr = sp_write_file(&nodir, "x", 1);
-        ASSERT(wr.error == SP_ERR_OPEN);
+        ASSERT(wr.error == SP_ERR_NOT_FOUND);
     }
 
     /* Read directory (should fail with OPEN error) */
@@ -1795,21 +1748,21 @@ int main(void) {
         SpIOResult rd = sp_read_file(&empty_file, rbuf, sizeof(rbuf));
         ASSERT(rd.error == SP_OK);
         ASSERT(rd.bytes == 0);
-        sp_unlink(&empty_file, false);
+        ASSERT(sp_unlink(&empty_file, false) == SP_OK);
     }
 
-    /* Embedded null in path -> OPEN error */
+    /* Embedded null in path -> NUL error */
     {
         SpPath null_path = sp_path_from_n("file\0hidden", 11, SP_FLAVOR_NATIVE);
         char rbuf[64];
         SpIOResult rd = sp_read_file(&null_path, rbuf, sizeof(rbuf));
-        ASSERT(rd.error == SP_ERR_OPEN);
+        ASSERT(rd.error == SP_ERR_NUL);
         SpIOResult wr = sp_write_file(&null_path, "x", 1);
-        ASSERT(wr.error == SP_ERR_OPEN);
+        ASSERT(wr.error == SP_ERR_NUL);
     }
 
     /* Cleanup */
-    sp_unlink(&rw_file, true);
+    ASSERT(sp_unlink(&rw_file, true) == SP_OK);
 
     printf("  read_file/write_file tests OK\n");
 
@@ -1818,7 +1771,7 @@ int main(void) {
 
     /* Test home - should return a valid path */
     SpPath home = sp_home(SP_FLAVOR_NATIVE);
-    ASSERT(!sp_path_is_error(&home));
+    ASSERT(home.error == SP_OK);
     ASSERT(home.len > 0);
     ASSERT(sp_is_absolute(&home));
     ASSERT(sp_is_dir(&home, true));
@@ -1826,13 +1779,13 @@ int main(void) {
     /* Test expanduser with ~ */
     SpPath tilde = sp_path_f("~", SP_FLAVOR_NATIVE);
     SpPath expanded = sp_expanduser(&tilde);
-    ASSERT(!sp_path_is_error(&expanded));
+    ASSERT(expanded.error == SP_OK);
     ASSERT(sp_path_eq(&expanded, &home));
 
     /* Test expanduser with ~/subdir */
     SpPath tilde_sub = sp_path_f("~/subdir", SP_FLAVOR_NATIVE);
     SpPath expanded_sub = sp_expanduser(&tilde_sub);
-    ASSERT(!sp_path_is_error(&expanded_sub));
+    ASSERT(expanded_sub.error == SP_OK);
     ASSERT(sp_is_absolute(&expanded_sub));
     ASSERT(sp_is_relative_to(&expanded_sub, &home));
 
@@ -1849,27 +1802,27 @@ int main(void) {
 #ifndef SP_WINDOWS
     /* Test owner - should return non-empty string for existing file (POSIX only) */
     SpPath owner_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    SpTerm owner_str = sp_owner(&owner_file);
-    ASSERT(owner_str.len > 0);
+    SpTerm owner_str = sp_owner(&owner_file, true);
+    ASSERT(owner_str.error == SP_OK && owner_str.len > 0);
     ASSERT(owner_str.buf[0] != '\0');
 
     /* Test group - should return non-empty string for existing file (POSIX only) */
-    SpTerm group_str = sp_group(&owner_file);
-    ASSERT(group_str.len > 0);
+    SpTerm group_str = sp_group(&owner_file, false);
+    ASSERT(group_str.error == SP_OK && group_str.len > 0);
     ASSERT(group_str.buf[0] != '\0');
 
-    /* Test owner on nonexistent file - should return empty */
+    /* Test owner on nonexistent file - the stat error */
     SpPath owner_nonexist = sp_path_f("/nonexistent/file", P);
-    SpTerm owner_none = sp_owner(&owner_nonexist);
-    ASSERT(owner_none.len == 0);
+    SpTerm owner_none = sp_owner(&owner_nonexist, true);
+    ASSERT(owner_none.error == SP_ERR_NOT_FOUND && owner_none.len == 0);
 #else
-    /* On Windows, owner/group are not implemented - should return empty */
+    /* On Windows, owner/group are unsupported */
     SpPath owner_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    SpTerm owner_str = sp_owner(&owner_file);
-    ASSERT(owner_str.len == 0);
+    SpTerm owner_str = sp_owner(&owner_file, true);
+    ASSERT(owner_str.error == SP_ERR_UNSUPPORTED && owner_str.len == 0);
 
-    SpTerm group_str = sp_group(&owner_file);
-    ASSERT(group_str.len == 0);
+    SpTerm group_str = sp_group(&owner_file, true);
+    ASSERT(group_str.error == SP_ERR_UNSUPPORTED && group_str.len == 0);
 #endif
 
     printf("  owner/group tests OK\n");
@@ -1885,10 +1838,10 @@ int main(void) {
     snprintf(iterdir_sub, sizeof(iterdir_sub), "%s/subdir", iterdir_path);
 
     SpPath iterdir_base = sp_path_f(iterdir_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&iterdir_base, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&iterdir_base, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     SpPath iterdir_subdir = sp_path_f(iterdir_sub, SP_FLAVOR_NATIVE);
-    sp_mkdir(&iterdir_subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&iterdir_subdir, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     /* Create test files */
     FILE *if1 = fopen(iterdir_f1, "w"); if (if1) fclose(if1);
@@ -1931,20 +1884,55 @@ int main(void) {
     snprintf(walk_f3, sizeof(walk_f3), "%s/subdir/file3.txt", walk_path);
 
     SpPath walk_base = sp_path_f(walk_path, SP_FLAVOR_NATIVE);
-    sp_mkdir(&walk_base, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&walk_base, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     SpPath walk_subdir = sp_path_f(walk_sub, SP_FLAVOR_NATIVE);
-    sp_mkdir(&walk_subdir, 0755, true, true, SP_MKDIR_DEF_MODE);
+    ASSERT(sp_mkdir(&walk_subdir, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_OK);
 
     /* Create test files */
     FILE *wf1 = fopen(walk_f1, "w"); if (wf1) fclose(wf1);
     FILE *wf2 = fopen(walk_f2, "w"); if (wf2) fclose(wf2);
     FILE *wf3 = fopen(walk_f3, "w"); if (wf3) fclose(wf3);
 
-    /* Test walk top-down (callback-based) */
-    walk_test_dir_count = 0;
-    sp_walk(&walk_base, true, false, walk_test_callback, NULL, NULL);
-    ASSERT(walk_test_dir_count == 2);  /* walk_base and walk_sub */
+    /* Top-down: each directory, its sorted listing, before its subdirectories */
+    {
+        static char names[4096];
+        SpWalkIter it = sp_walk_begin(&walk_base, SP_WALK_TOP_DOWN, names, sizeof(names));
+        SpWalkEntry *e = sp_walk_next(&it);
+        ASSERT(e && e->error == SP_OK && sp_path_eq(&e->dirpath, &walk_base));
+        ASSERT(e->dirname_count == 1 && strcmp(e->dirnames[0], "subdir") == 0);
+        ASSERT(e->filename_count == 2 && strcmp(e->filenames[0], "file1.txt") == 0);
+        ASSERT(strcmp(e->filenames[1], "file2.txt") == 0);
+        e = sp_walk_next(&it);
+        ASSERT(e && e->error == SP_OK && sp_path_eq(&e->dirpath, &walk_subdir));
+        ASSERT(e->dirname_count == 0 && e->filename_count == 1 && strcmp(e->filenames[0], "file3.txt") == 0);
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+
+        /* Pruning: the walk goes into no subdirectory left out of dirnames */
+        it = sp_walk_begin(&walk_base, SP_WALK_TOP_DOWN, names, sizeof(names));
+        e = sp_walk_next(&it);
+        e->dirname_count = 0;
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+
+        /* Bottom-up: subdirectories first */
+        it = sp_walk_begin(&walk_base, 0, names, sizeof(names));
+        e = sp_walk_next(&it);
+        ASSERT(e && sp_path_eq(&e->dirpath, &walk_subdir));
+        e = sp_walk_next(&it);
+        ASSERT(e && sp_path_eq(&e->dirpath, &walk_base) && e->dirname_count == 1 && e->filename_count == 2);
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+
+        /* A buffer too small for the names, a flag walk doesn't take, and a directory that can't be listed */
+        it = sp_walk_begin(&walk_base, SP_WALK_TOP_DOWN, names, 40);
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_ERR_TOO_LONG);
+        it = sp_walk_begin(&walk_base, SP_MKDIR_PARENTS, names, sizeof(names));
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_ERR_INVALID_ARG);
+        SpPath missing = sp_join_one(&walk_base, "missing");
+        it = sp_walk_begin(&missing, SP_WALK_TOP_DOWN, names, sizeof(names));
+        e = sp_walk_next(&it);
+        ASSERT(e && e->error == SP_ERR_NOT_FOUND && e->dirname_count == 0 && sp_path_eq(&e->dirpath, &missing));
+        ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+    }
 
     /* Cleanup */
     remove(walk_f1);
@@ -1954,6 +1942,81 @@ int main(void) {
     test_rmdir(walk_path);
 
     printf("  walk tests OK\n");
+
+    /* ============ Error Tests ============ */
+    printf("\nerror Tests:\n");
+    {
+        /* Past SP_MAX_SUFFIXES suffixes */
+        char many[2 * SP_MAX_SUFFIXES + 3] = "a";
+        for (size_t i = 0; i <= SP_MAX_SUFFIXES; i++)
+            strcat(many, ".x");
+        SpPath many_path = sp_path_f(many, P);
+        SpSuffixes limited = sp_suffixes(&many_path);
+        ASSERT(limited.error == SP_ERR_LIMIT && limited.count == 0);
+
+        /* Errors from the OS, specific */
+        char err_dir[64];
+        snprintf(err_dir, sizeof(err_dir), "./test_errors_%ld", pid);
+        SpPath root_dir = sp_path(err_dir), file = sp_join_one(&root_dir, "f"), below = sp_join_one(&file, "x");
+        ASSERT(sp_mkdir(&root_dir, 0755, 0, SP_MODE_DIR) == SP_OK);
+        ASSERT(sp_touch(&file, 0644, false) == SP_OK);
+        ASSERT(sp_mkdir(&root_dir, 0755, SP_MKDIR_EXIST_OK | SP_COPY_FOLLOW_SYMLINKS, SP_MODE_DIR) == SP_ERR_INVALID_ARG);
+        ASSERT(sp_mkdir(&file, 0755, SP_MKDIR_EXIST_OK, SP_MODE_DIR) == SP_ERR_EXISTS);
+        ASSERT(sp_mkdir(&below, 0755, 0, SP_MODE_DIR) == SP_ERR_NOT_DIR);
+        ASSERT(sp_touch(&file, 0644, false) == SP_ERR_EXISTS);
+        ASSERT(sp_rmdir(&root_dir) == SP_ERR_NOT_EMPTY);
+        SpIterdirIter bad_dir = sp_iterdir_begin(&file);
+        SpPath listed;
+        ASSERT(bad_dir.error == SP_ERR_NOT_DIR && !sp_iterdir_next(&bad_dir, &listed));
+        sp_iterdir_end(&bad_dir);
+        SpIterdirIter listing = sp_iterdir_begin(&root_dir);
+        ASSERT(sp_iterdir_next(&listing, &listed) && sp_path_eq(&listed, &file));
+        ASSERT(!sp_iterdir_next(&listing, &listed) && listing.error == SP_OK);
+        sp_iterdir_end(&listing);
+
+#ifndef SP_WINDOWS
+        /* Mode 0 is a mode */
+        SpPath closed = sp_join_one(&root_dir, "closed");
+        ASSERT(sp_mkdir(&closed, 0, 0, SP_MODE_DIR) == SP_OK);
+        ASSERT((sp_stat(&closed).sp_mode & 0777) == 0);
+        ASSERT(sp_chmod(&closed, 0755, true) == SP_OK);
+        ASSERT(sp_rmdir(&closed) == SP_OK);
+
+        /* Symlinks: chmod through one, and copying one onto another */
+        SpPath link = sp_join_one(&root_dir, "link"), link2 = sp_join_one(&root_dir, "link2");
+        SpPath to_file = sp_path("f"), to_dir = sp_path(".");
+        ASSERT(sp_symlink_to(&link, &to_file, false) == SP_OK);
+        ASSERT(sp_symlink_to(&link2, &to_dir, true) == SP_OK);
+        ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file).sp_mode & 0777) == 0600);
+        SpError no_follow = sp_chmod(&link, 0644, false);
+        ASSERT(no_follow == SP_OK || no_follow == SP_ERR_UNSUPPORTED);
+        ASSERT(sp_copy(&link, &link2, 0).error == SP_ERR_EXISTS);
+        ASSERT(sp_copy(&link, &link2, SP_COPY_FOLLOW_SYMLINKS).error == SP_ERR_IS_DIR);
+        ASSERT(sp_unlink(&link, false) == SP_OK && sp_unlink(&link2, false) == SP_OK);
+#endif
+
+        /* A glob deeper than SP_GLOB_MAX_DEPTH */
+        SpPath deepest = root_dir;
+        for (int i = 0; i < SP_GLOB_MAX_DEPTH; i++)
+            deepest = sp_join_one(&deepest, "d");
+        ASSERT(sp_mkdir(&deepest, 0755, SP_MKDIR_PARENTS, SP_MODE_DIR) == SP_OK);
+        SpGlobIter deep = sp_glob_begin(&root_dir, "**", SP_CASE_DEFAULT, false);
+        int found = 0;
+        while (sp_glob_next(&deep, &listed))
+            found++;
+        sp_glob_end(&deep);
+        ASSERT(deep.error == SP_ERR_LIMIT && found < SP_GLOB_MAX_DEPTH + 2);
+        for (; !sp_path_eq(&deepest, &root_dir); deepest = sp_parent(&deepest))
+            ASSERT(sp_rmdir(&deepest) == SP_OK);
+
+        /* An embedded NUL can't reach the OS */
+        SpPath nul = sp_path_from_n("a\0b", 3, P);
+        ASSERT(sp_mkdir(&nul, 0755, 0, SP_MODE_DIR) == SP_ERR_NUL && sp_stat(&nul).error == SP_ERR_NUL);
+        ASSERT(sp_resolve(&nul, false).error == SP_ERR_NUL);
+
+        ASSERT(sp_unlink(&file, false) == SP_OK && sp_rmdir(&root_dir) == SP_OK);
+    }
+    printf("  error tests OK\n");
 
     /* ============ Struct Size Tests ============ */
     printf("\nStruct Size Tests:\n");
@@ -1968,6 +2031,7 @@ int main(void) {
     printf("  SpSuffixes:      %4zu bytes\n", sizeof(SpSuffixes));
     printf("  SpStatResult:    %4zu bytes\n", sizeof(SpStatResult));
     printf("  SpWalkEntry:     %4zu bytes\n", sizeof(SpWalkEntry));
+    printf("  SpWalkIter:      %4zu bytes\n", sizeof(SpWalkIter));
     printf("  SpStr:           %4zu bytes\n", sizeof(SpStr));
 
     /* Struct sizes expressed relative to SP_PATH_MAX / sizeof(SpPath) so they
@@ -1976,15 +2040,16 @@ int main(void) {
 #if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__) || (defined(_WIN32) && defined(_WIN64))
     /* 64-bit (POSIX and Windows) */
     ASSERT_SIZE(sizeof(SpPath), SP_PATH_MAX + 16);
-    ASSERT_SIZE(sizeof(SpTerm), SP_TERM_MAX + 8);
+    ASSERT_SIZE(sizeof(SpTerm), SP_PATH_MAX + 16);
     ASSERT_SIZE(sizeof(SpStr), 16);
     ASSERT_SIZE(sizeof(SpPartsIter), 32);
     ASSERT_SIZE(sizeof(SpParentsIter), 16);
-    ASSERT_SIZE(sizeof(SpSuffixes), 264);
+    ASSERT_SIZE(sizeof(SpSuffixes), 272);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
-    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 16);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 24);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
-    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 1560);
+    ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 2840);
 #endif
 
     printf("  struct size tests OK\n");
