@@ -2668,6 +2668,8 @@ static SpError sp_priv_link_to_impl(const SpPrivChar *link_path, const SpPrivCha
     return ok ? SP_OK : sp_priv_last_error();
 }
 
+/* CPython's os.symlink: on Windows a link to an existing directory (the target taken from the link's directory) is a
+ * directory link even without target_is_directory */
 SpError sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory) {
     SpPrivChar link_buf[SP_PRIV_NATIVE_MAX];
     SpPrivChar target_buf[SP_PRIV_NATIVE_MAX];
@@ -2676,7 +2678,22 @@ SpError sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_dire
     SpError err = sp_priv_native(p, link_buf, &link_path);
     SpError target_err = sp_priv_native(target, target_buf, &target_path);
     err = err != SP_OK ? err : target_err;
-    return err != SP_OK ? err : sp_priv_link_to_impl(link_path, target_path, true, target_is_directory);
+    if (err != SP_OK)
+        return err;
+
+#ifdef SP_WINDOWS
+    if (!target_is_directory) {
+        SpPath dir = sp_parent(p);
+        SpPath resolved = sp_priv_join_len(&dir, target->buf, target->len);
+        wchar_t resolved_buf[SP_PATH_MAX];
+        const wchar_t *resolved_path;
+        DWORD attrs = INVALID_FILE_ATTRIBUTES;
+        if (sp_priv_native(&resolved, resolved_buf, &resolved_path) == SP_OK)
+            attrs = GetFileAttributesW(resolved_path);
+        target_is_directory = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+    }
+#endif
+    return sp_priv_link_to_impl(link_path, target_path, true, target_is_directory);
 }
 
 SpError sp_hardlink_to(const SpPath *p, const SpPath *target) {
