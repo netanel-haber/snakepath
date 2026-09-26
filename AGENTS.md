@@ -136,6 +136,8 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - Python bindings should use `os.fspath()` directly (no `str()` fallback) so non-pathlike types raise `TypeError`.
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - `owner`/`group` return `SP_ERR_UNSUPPORTED` on Windows (the bindings raise `pathlib.UnsupportedOperation`), so their wrappers are built everywhere.
+- Windows goes through the wide (W) API only: `sp_priv_native` turns a path into what the OS takes (UTF-16 from WTF-8 in a `SP_PRIV_NATIVE_MAX` buffer on Windows, the path's own bytes on POSIX), and `sp_priv_from_wide` brings text back. Files are read and written through native handles (`sp_priv_open`/`read`/`write`/`close`), never the C runtime, so error codes come straight from the OS.
+- Windows link behavior follows CPython: `lstat` reports `S_IFLNK` only for symlinks, `symlink_to` makes a directory link to an existing directory, `unlink` removes directory links, `readlink` returns the substitute name, `resolve` is `ntpath.realpath`, and files are copied with `CopyFile2`.
 - `walk` is an iterator (`sp_walk_begin`/`sp_walk_next`) keeping names in the caller's buffer, in `os.walk`'s shape: the bindings drive it as a generator and hand pruned `dirnames` back between yields, with no walk logic in Python.
 - `sp_with_segments` now takes a `parts_count` (no NULL-terminated arrays); use `SP_ARRAY_LEN`.
 - New functionality goes in `snakepath.h` first; then mirror wrappers in the `SP_FFI` section of `test.c` and in `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
