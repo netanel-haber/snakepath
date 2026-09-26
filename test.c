@@ -1095,10 +1095,15 @@ int main(void) {
     };
     test_join(W, win_join, ARRAY_LEN(win_join));
     
-    JoinTest win_with_name[] = {{"C:/a/b", "d.xml", "C:\\a\\d.xml"}};
+    /* A drive without a root takes the name directly, like PureWindowsPath('c:x').with_name('y') -> 'c:y' */
+    JoinTest win_with_name[] = {{"C:/a/b", "d.xml", "C:\\a\\d.xml"}, {"c:x", "y", "c:y"}, {"c:x/y", "z", "c:x\\z"},
+                                {"c:/x", "y", "c:\\y"}, {"//s/h/x", "y", "\\\\s\\h\\y"}};
     test_with(W, sp_with_name, win_with_name, ARRAY_LEN(win_with_name));
     
-    JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}};
+    JoinTest win_with_stem[] = {{"c:x.py", "y", "c:y.py"}};
+    test_with(W, sp_with_stem, win_with_stem, ARRAY_LEN(win_with_stem));
+    
+    JoinTest win_with_suffix[] = {{"C:/a/b.py", ".gz", "C:\\a\\b.gz"}, {"c:x.py", ".gz", "c:x.gz"}};
     test_with(W, sp_with_suffix, win_with_suffix, ARRAY_LEN(win_with_suffix));
     
     SpPath win_ws_base = sp_path_f("ignored", W);
