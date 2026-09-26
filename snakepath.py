@@ -1068,6 +1068,96 @@ def check_docs(root: pathlib.Path) -> int:
     return 0 if ok else 1
 
 
+def _outcome(fn):
+    """What fn() returns, as comparable text, or the name of the exception it raises"""
+    try:
+        value = fn()
+    except Exception as exc:  # the exception type is the behavior being compared
+        return f"<{type(exc).__name__}>"
+    if isinstance(value, (list, tuple)):
+        return repr([str(v) for v in value])
+    return repr(value) if isinstance(value, (bool, int)) else str(value)
+
+
+def fuzz_inputs():
+    """Deterministic path strings: every short string over an alphabet of anchors, dots and wildcards, token
+    sequences for prefixes random generation never hits (UNC and device prefixes, drives, non-ASCII case pairs),
+    and seeded random strings"""
+    import itertools
+    import random
+    alphabet = ["/", "\\", "a", "c", ":", ".", "*", "?"]
+    inputs = ["".join(t) for n in range(5) for t in itertools.product(alphabet, repeat=n)]
+    tokens = ["\\\\?\\UNC\\", "\\\\.\\", "\\\\?\\", "//", "/", "\\", "c:", "C:", "..", ".", "a", "b.tar.gz", "~",
+              "x.", ".y", "srv", "sh", "\xe9", "\xc9", "\u0130", "i", "\u03a3", "\u03c3", "\u00df", "[a-c]", "**"]
+    inputs += ["".join(t) for n in (2, 3) for t in itertools.product(tokens, repeat=n)][::7]
+    rng = random.Random(1729)
+    wide = alphabet + ["b", "C", "~", "%", "|", " ", "[", "]", "!", "-", "\xe9", "\u03a3", "\u03c3", "\u0130", "\xdf",
+                       "\u212a", "\u017f", "\U0001f600"]
+    inputs += ["".join(rng.choice(wide) for _ in range(rng.randrange(1, 24))) for _ in range(1500)]
+    return inputs
+
+
+FUZZ_OTHERS = ["", ".", "a", "a/b", "/", "/a", "c:", "c:/", "c:a", "C:x", "//s/h", "//s/h/x", "\\\\?\\UNC\\s\\h\\x",
+               "..", "../a", "~", "b.txt", ".hidden", "a.", "*", "**", "*.txt", "a/*", "[ab]*", "?", "x/./y",
+               "\xe9", "\xc9", "\u03c3"]
+
+
+def check_fuzz(limit=20):
+    """Compare the bindings with the running Python's pathlib on generated paths, in both flavors"""
+    import warnings
+    warnings.simplefilter("ignore", DeprecationWarning)
+    inputs = fuzz_inputs()
+    mismatches = []
+    checks = 0
+
+    def compare(what, ours, real):
+        nonlocal checks
+        checks += 1
+        a, b = _outcome(ours), _outcome(real)
+        if a != b:
+            mismatches.append(f"  {what}: snakepath {a!r}, pathlib {b!r}")
+
+    for ours_cls, real_cls in [(PurePosixPath, pathlib.PurePosixPath), (PureWindowsPath, pathlib.PureWindowsPath)]:
+        name = real_cls.__name__
+        for i, s in enumerate(inputs):
+            ours, real = ours_cls(s), real_cls(s)
+            for attr in ["drive", "root", "anchor", "name", "stem", "suffix", "suffixes", "parts", "parent"]:
+                compare(f"{name}({s!r}).{attr}", lambda: getattr(ours, attr), lambda: getattr(real, attr))
+            compare(f"str({name}({s!r}))", lambda: str(ours), lambda: str(real))
+            compare(f"{name}({s!r}).parents", lambda: list(ours.parents), lambda: list(real.parents))
+            for method in ["is_absolute", "as_posix"]:
+                compare(f"{name}({s!r}).{method}()", getattr(ours, method), getattr(real, method))
+            if i % 20:
+                continue  # binary operations on every 20th input keep the run short
+            for o in FUZZ_OTHERS:
+                oo, ro = ours_cls(o), real_cls(o)
+                compare(f"{name}({s!r}) / {o!r}", lambda: ours / o, lambda: real / o)
+                compare(f"{name}({o!r}) / {s!r}", lambda: oo / s, lambda: ro / s)
+                for method in ["with_name", "with_stem", "with_suffix"]:
+                    compare(f"{name}({s!r}).{method}({o!r})",
+                            lambda: getattr(ours, method)(o), lambda: getattr(real, method)(o))
+                compare(f"{name}({s!r}).relative_to({o!r})", lambda: ours.relative_to(o), lambda: real.relative_to(o))
+                compare(f"{name}({s!r}).relative_to({o!r}, walk_up=True)",
+                        lambda: ours.relative_to(o, walk_up=True), lambda: real.relative_to(o, walk_up=True))
+                compare(f"{name}({s!r}).is_relative_to({o!r})", lambda: ours.is_relative_to(o),
+                        lambda: real.is_relative_to(o))
+                compare(f"{name}({s!r}) == {o!r}", lambda: ours == oo, lambda: real == ro)
+                compare(f"{name}({s!r}) < {o!r}", lambda: ours < oo, lambda: real < ro)
+                for cs in [None, True, False]:
+                    compare(f"{name}({s!r}).match({o!r}, case_sensitive={cs})",
+                            lambda: ours.match(o, case_sensitive=cs), lambda: real.match(o, case_sensitive=cs))
+                    compare(f"{name}({o!r}).full_match({s!r}, case_sensitive={cs})",
+                            lambda: oo.full_match(s, case_sensitive=cs), lambda: ro.full_match(s, case_sensitive=cs))
+            if ours == ours_cls(s.upper()):
+                compare(f"hash({name}({s!r})) == hash of its upper case", lambda: hash(ours) == hash(ours_cls(s.upper())),
+                        lambda: True)
+
+    print(f"fuzz check: {checks} comparisons with pathlib, {len(mismatches)} mismatches")
+    for line in mismatches[:limit]:
+        print(line)
+    return 1 if mismatches else 0
+
+
 THIS_DIR = pathlib.Path(__file__).resolve().parent
 TEST_DIR = THIS_DIR / "cpython_tests"
 # CPython's own pathlib tests: the 3.15 branch's Lib/test/test_pathlib/test_pathlib.py. The other
@@ -1124,8 +1214,6 @@ EXPECTED_FAILURES = {
         (cls, "test_copy_error_handling") for cls in ["PathTest", "PathSubclassTest", "PosixPathTest"] if os.name != 'nt'
     ],
 
-    # Turkish dotted I case folding needs full Unicode lowercasing; the C library folds ASCII only
-    "('İ') != ": [(cls, "test_eq_windows") for cls in _PURE + _PATH],
 }
 
 # Build reverse lookup: (class_name, test_name) -> expected_error_substring
@@ -1471,7 +1559,7 @@ def main():
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    checks_failed = check_call_depth(THIS_DIR / "snakepath.h", 4) | check_docs(THIS_DIR)
+    checks_failed = check_call_depth(THIS_DIR / "snakepath.h", 4) | check_docs(THIS_DIR) | check_fuzz()
     return run_tests() or checks_failed
 
 
