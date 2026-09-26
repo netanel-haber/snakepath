@@ -7,6 +7,7 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 ## Code Philosophy
 - All logic in `snakepath.h`. Code outside it is glue or Python-specific only (argument coercion, exception classes and messages, Python protocols like `NotImplemented`, harness stubs); path semantics always go in C first.
 - Minimize API surface, share `sp_priv_*` internals
+- No one uses the library yet, so backward compatibility is not a constraint: judge API and behavior changes on their merits (correctness, simplicity, CPython fidelity)
 - No special-casing in wrappers
 - Fluent API has near-parity with boring API — only iterators missing; a fluent method returns what the function it forwards to returns
 - Port only what is meaningful in C: Python-only pathlib machinery becomes an expected failure, never binding code.

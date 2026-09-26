@@ -1373,9 +1373,13 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
     return si == slen;
 }
 
+static bool sp_priv_case_insensitive(int case_sensitive, SpFlavor flavor) {
+    return case_sensitive == -1 ? flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
+}
+
 bool sp_full_match(const SpPath *p, const char *pattern, int case_sensitive) {
     SpPath pat = sp_path_new(pattern, p->flavor);
-    bool ci = case_sensitive == -1 ? p->flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
+    bool ci = sp_priv_case_insensitive(case_sensitive, p->flavor);
     return sp_priv_match_path(pat.buf, pat.len, p->buf, p->len, ci, true, p->flavor);
 }
 
@@ -1391,7 +1395,7 @@ int sp_match_ex(const SpPath *p, const char *pattern, int case_sensitive) {
     if (total < count || (total > count && pattern_parts.anchor > 0))
         return SP_MATCH_NO;
 
-    bool ci = case_sensitive == -1 ? p->flavor == SP_FLAVOR_WINDOWS : case_sensitive == 0;
+    bool ci = sp_priv_case_insensitive(case_sensitive, p->flavor);
     SpStr pp, sp;
     for (size_t skip = total - count; sp_parts_next(&path, &sp);)
         if (skip > 0)
@@ -1804,6 +1808,10 @@ bool sp_chmod(const SpPath *p, unsigned int mode) {
 }
 
 SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
+    const char *path_str;
+    if (!sp_priv_path_cstr(p, &path_str))
+        return sp_priv_io_result(0, SP_ERR_OPEN);
+
     SpStatResult st = sp_stat(p);
     if (!st.valid || st.sp_size < 0)
         return sp_priv_io_result(0, SP_ERR_OPEN);
@@ -1811,7 +1819,7 @@ SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
     if (sz > buf_size)
         return sp_priv_io_result(sz, SP_ERR_TOO_LARGE);
 
-    FILE *f = fopen(sp_str(p), "rb"); /* stat() succeeded, so there is no embedded NUL */
+    FILE *f = fopen(path_str, "rb");
     if (!f)
         return sp_priv_io_result(0, SP_ERR_OPEN);
     size_t got = fread(buf, 1, sz, f);
@@ -2024,15 +2032,14 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, bool follow_symlinks, bool
     return err == SP_OK ? *target : sp_priv_error_path(target->flavor, err);
 }
 
-/* CPython's Path._delete: symlinks and junctions (links too to lstat() on Windows) are unlinked, directories removed
- * recursively */
+/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
 static int sp_priv_delete(const SpPath *p) {
     const char *path_str;
     if (!sp_priv_path_cstr(p, &path_str))
         return SP_ERR_INVALID_ARG;
 
     bool dir = (sp_priv_stat_impl(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
-    if (!dir || (sp_priv_stat_impl(p, false).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK)
+    if (!dir || (sp_priv_stat_impl(p, false).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK || sp_is_junction(p))
         return sp_priv_unlink(path_str) == 0 ? SP_OK : sp_priv_last_error();
 
     void *handle = SP_PRIV_NULL;
