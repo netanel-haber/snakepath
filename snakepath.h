@@ -583,73 +583,37 @@ static SpFlavor sp_priv_flavor(SpFlavor flavor) {
 
 /* The last failed OS call's error */
 static SpError sp_priv_last_error(void) {
+    static const struct {
+        unsigned long code;
+        SpError error;
+    } errors[] = {
 #ifdef SP_WINDOWS
-    switch (GetLastError()) {
-    case ERROR_FILE_NOT_FOUND:
-    case ERROR_PATH_NOT_FOUND:
-    case ERROR_INVALID_DRIVE:
-    case ERROR_BAD_NETPATH:
-        return SP_ERR_NOT_FOUND;
-    case ERROR_ALREADY_EXISTS:
-    case ERROR_FILE_EXISTS:
-        return SP_ERR_EXISTS;
-    case ERROR_ACCESS_DENIED:
-    case ERROR_SHARING_VIOLATION:
-    case ERROR_PRIVILEGE_NOT_HELD:
-        return SP_ERR_PERMISSION;
-    case ERROR_DIRECTORY:
-        return SP_ERR_NOT_DIR;
-    case ERROR_DIR_NOT_EMPTY:
-        return SP_ERR_NOT_EMPTY;
-    case ERROR_CANT_RESOLVE_FILENAME:
-        return SP_ERR_LOOP;
-    case ERROR_NOT_A_REPARSE_POINT:
-        return SP_ERR_NOT_LINK;
-    case ERROR_NOT_SAME_DEVICE:
-        return SP_ERR_CROSS_DEVICE;
-    case ERROR_FILENAME_EXCED_RANGE:
-    case ERROR_INSUFFICIENT_BUFFER:
-        return SP_ERR_TOO_LONG;
-    case ERROR_INVALID_NAME:
-    case ERROR_INVALID_PARAMETER:
-        return SP_ERR_INVALID_ARG;
-    case ERROR_NOT_SUPPORTED:
-    case ERROR_INVALID_FUNCTION:
-        return SP_ERR_UNSUPPORTED;
-    default:
-        return SP_ERR_IO;
-    }
+        {ERROR_FILE_NOT_FOUND, SP_ERR_NOT_FOUND},      {ERROR_PATH_NOT_FOUND, SP_ERR_NOT_FOUND},
+        {ERROR_INVALID_DRIVE, SP_ERR_NOT_FOUND},       {ERROR_BAD_NETPATH, SP_ERR_NOT_FOUND},
+        {ERROR_ALREADY_EXISTS, SP_ERR_EXISTS},         {ERROR_FILE_EXISTS, SP_ERR_EXISTS},
+        {ERROR_ACCESS_DENIED, SP_ERR_PERMISSION},      {ERROR_SHARING_VIOLATION, SP_ERR_PERMISSION},
+        {ERROR_PRIVILEGE_NOT_HELD, SP_ERR_PERMISSION}, {ERROR_DIRECTORY, SP_ERR_NOT_DIR},
+        {ERROR_DIR_NOT_EMPTY, SP_ERR_NOT_EMPTY},       {ERROR_CANT_RESOLVE_FILENAME, SP_ERR_LOOP},
+        {ERROR_NOT_A_REPARSE_POINT, SP_ERR_NOT_LINK},  {ERROR_NOT_SAME_DEVICE, SP_ERR_CROSS_DEVICE},
+        {ERROR_FILENAME_EXCED_RANGE, SP_ERR_TOO_LONG}, {ERROR_INSUFFICIENT_BUFFER, SP_ERR_TOO_LONG},
+        {ERROR_INVALID_NAME, SP_ERR_INVALID_ARG},      {ERROR_INVALID_PARAMETER, SP_ERR_INVALID_ARG},
+        {ERROR_NOT_SUPPORTED, SP_ERR_UNSUPPORTED},     {ERROR_INVALID_FUNCTION, SP_ERR_UNSUPPORTED},
+    };
+    unsigned long code = GetLastError();
 #else
-    switch (errno) {
-    case ENOENT:
-        return SP_ERR_NOT_FOUND;
-    case EEXIST:
-        return SP_ERR_EXISTS;
-    case EACCES:
-    case EPERM:
-        return SP_ERR_PERMISSION;
-    case ENOTDIR:
-        return SP_ERR_NOT_DIR;
-    case EISDIR:
-        return SP_ERR_IS_DIR;
-    case ENOTEMPTY:
-        return SP_ERR_NOT_EMPTY;
-    case ELOOP:
-        return SP_ERR_LOOP;
-    case EXDEV:
-        return SP_ERR_CROSS_DEVICE;
-    case ENAMETOOLONG:
-    case ERANGE:
-        return SP_ERR_TOO_LONG;
-    case EINVAL:
-        return SP_ERR_INVALID_ARG;
-    case ENOSYS:
-    case ENOTSUP:
-        return SP_ERR_UNSUPPORTED;
-    default:
-        return SP_ERR_IO;
-    }
+        {ENOENT, SP_ERR_NOT_FOUND},      {EEXIST, SP_ERR_EXISTS},       {EACCES, SP_ERR_PERMISSION},
+        {EPERM, SP_ERR_PERMISSION},      {ENOTDIR, SP_ERR_NOT_DIR},     {EISDIR, SP_ERR_IS_DIR},
+        {ENOTEMPTY, SP_ERR_NOT_EMPTY},   {ELOOP, SP_ERR_LOOP},          {EXDEV, SP_ERR_CROSS_DEVICE},
+        {ENAMETOOLONG, SP_ERR_TOO_LONG}, {ERANGE, SP_ERR_TOO_LONG},     {EINVAL, SP_ERR_INVALID_ARG},
+        {ENOSYS, SP_ERR_UNSUPPORTED},    {ENOTSUP, SP_ERR_UNSUPPORTED},
+    };
+    unsigned long code = SP_PRIV_CAST(unsigned long, errno);
 #endif
+
+    for (size_t i = 0; i < SP_ARRAY_LEN(errors); i++)
+        if (errors[i].code == code)
+            return errors[i].error;
+    return SP_ERR_IO;
 }
 
 /* The path as the OS takes it ("." when empty): its own bytes, or on Windows UTF-16 in buf (SP_PRIV_NATIVE_MAX).
@@ -2470,8 +2434,11 @@ static DWORD sp_priv_final_path(const SpPath *p, SpPath *out) {
 static bool sp_priv_real_name(const SpPath *p, SpPath *name) {
     wchar_t buf[SP_PATH_MAX];
     const wchar_t *path;
+    if (sp_priv_native(p, buf, &path) != SP_OK)
+        return false;
+
     WIN32_FIND_DATAW fd;
-    HANDLE h = sp_priv_native(p, buf, &path) == SP_OK ? FindFirstFileW(path, &fd) : INVALID_HANDLE_VALUE;
+    HANDLE h = FindFirstFileW(path, &fd);
     if (h == INVALID_HANDLE_VALUE)
         return false;
 
@@ -2802,13 +2769,13 @@ static SpError sp_priv_remove_impl(const SpPrivChar *path, bool is_dir, bool mis
 #ifdef SP_WINDOWS
     DWORD attrs = GetFileAttributesW(path);
     DWORD dir_link = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
-    WIN32_FIND_DATAW fd;
-    HANDLE find = !is_dir && attrs != INVALID_FILE_ATTRIBUTES && (attrs & dir_link) == dir_link
-                      ? FindFirstFileW(path, &fd)
-                      : INVALID_HANDLE_VALUE;
-    if (find != INVALID_HANDLE_VALUE) {
-        FindClose(find);
-        is_dir = fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT;
+    if (!is_dir && attrs != INVALID_FILE_ATTRIBUTES && (attrs & dir_link) == dir_link) {
+        WIN32_FIND_DATAW fd;
+        HANDLE find = FindFirstFileW(path, &fd);
+        if (find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            is_dir = fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT;
+        }
     }
     bool ok = (is_dir ? RemoveDirectoryW(path) : DeleteFileW(path)) != 0;
 #else
@@ -2847,8 +2814,11 @@ SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks) {
         DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
         DWORD access = FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES;
         HANDLE h = CreateFileW(path, access, share, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+            return sp_priv_last_error();
+
         FILE_BASIC_INFO info;
-        bool ok = h != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(h, FileBasicInfo, &info, sizeof(info));
+        bool ok = GetFileInformationByHandleEx(h, FileBasicInfo, &info, sizeof(info)) != 0;
         if (ok) {
             info.FileAttributes = (mode & 0200) ? info.FileAttributes & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)
                                                 : info.FileAttributes | FILE_ATTRIBUTE_READONLY;
@@ -2857,8 +2827,7 @@ SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks) {
             ok = SetFileInformationByHandle(h, FileBasicInfo, &info, sizeof(info)) != 0;
         }
         err = ok ? SP_OK : sp_priv_last_error();
-        if (h != INVALID_HANDLE_VALUE)
-            CloseHandle(h);
+        CloseHandle(h);
         return err;
     }
 
