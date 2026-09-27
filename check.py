@@ -690,7 +690,9 @@ runpy.run_module(sys.argv[0], run_name='__main__', alter_sys=True)
 
 def bench(runs, cwd, program):
     """Time program under pathlib and under snakepath, alternating sides so drift hits both alike, after one warm-up
-    run each (which also fills the bytecode caches); both sides must print the same, timings aside"""
+    run each (which fills the bytecode caches and makes whatever else a first run leaves behind); the timed runs must
+    succeed and print the same on both sides, timings aside"""
+    import difflib
     import statistics
     import time
 
@@ -698,34 +700,37 @@ def bench(runs, cwd, program):
         start = time.perf_counter()
         done = subprocess.run([sys.executable, "-c", SWAP_LAUNCHER, side, *program], cwd=cwd, capture_output=True,
                               text=True)
-        return time.perf_counter() - start, (done.returncode, re.sub(r"[\d.]+s\b", "", done.stdout), done.stderr)
+        output = re.sub(r"[\d.]+s\b|\(\d+:\d\d:\d\d\)", "", done.stdout) + done.stderr
+        return time.perf_counter() - start, done.returncode, output
 
     sides = ["pathlib", "snakepath"]
-    outputs = {side: run(side)[1] for side in sides}
     for side in sides:
-        if outputs[side][0] != 0:
-            print(f"python -m {' '.join(program)} failed with {side} (exit {outputs[side][0]}):")
-            print(outputs[side][1][-3000:], outputs[side][2][-3000:])
-            return 1
+        run(side)
     times = {side: [] for side in sides}
+    results = {}
     for i in range(runs):
         for side in sides if i % 2 == 0 else sides[::-1]:
-            times[side].append(run(side)[0])
+            elapsed, *results[side] = run(side)
+            times[side].append(elapsed)
 
     print(f"python -m {' '.join(program)} in {cwd}, {runs} runs per side:")
     for side in sides:
         print(f"  {side:9}  median {statistics.median(times[side]):7.3f} s  min {min(times[side]):7.3f} s")
     print(f"  snakepath is {statistics.median(times['pathlib']) / statistics.median(times['snakepath']):.2f}x "
           f"as fast (medians)")
-    last = outputs["snakepath"][1].strip().splitlines()[-1:]
+    last = results["snakepath"][1].strip().splitlines()[-1:]
     print(f"  last line: {last[0] if last else ''}")
-    if outputs["pathlib"] != outputs["snakepath"]:
-        print("  OUTPUTS DIFFER:")
-        for side in sides:
-            print(f"--- {side}: exit {outputs[side][0]}\n{outputs[side][1][-3000:]}\n{outputs[side][2][-3000:]}")
+    failed = [side for side in sides if results[side][0] != 0]
+    for side in failed:
+        print(f"  {side} failed (exit {results[side][0]}):\n{results[side][1][-3000:]}")
+    if results["pathlib"][1] != results["snakepath"][1]:
+        print("  the outputs differ:")
+        diff = difflib.unified_diff(results["pathlib"][1].splitlines(), results["snakepath"][1].splitlines(),
+                                    "pathlib", "snakepath", n=1, lineterm="")
+        print("\n".join(list(diff)[:80]))
         return 1
     print("  same output on both sides")
-    return 0
+    return 1 if failed else 0
 
 
 def main():
