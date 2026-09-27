@@ -3,6 +3,7 @@
 
    Build: cc -x c -o nob nob.h && ./nob     (quiet: add -DSNAKEPATH_QUIET; MSVC: cl /Tcnob.h)
    Format: ./nob format                    (snakepath.h's clang-format layout, which ./nob checks)
+   Diff: ./nob diff [ref]                  (the pure path API against the header at a git ref, default origin/main)
    Builds run in parallel across the available CPU cores.
 
    The nob part was trimmed from upstream: its docs, prefix-stripped aliases, deprecated and unused
@@ -51,6 +52,7 @@
 #    define _IMM_
 #    define _WINCON_
 #    include <windows.h>
+#    include <direct.h>
 #else
 #    include <sys/types.h>
 #    include <sys/wait.h>
@@ -1209,16 +1211,174 @@ static bool run_clang_format(bool rewrite) {
     return nob_cmd_run(&cmd);
 }
 
+
+/* ./nob diff [ref]: the pure path API of the working tree's snakepath.h against the header at a git ref (default
+   origin/main), through test.c's SP_DIFF driver, which -I points at one header or the other. Every result for
+   exhaustive short strings, token sequences and random strings, at SP_PATH_MAX 64 and 16, one hash per line, compared
+   line by line; a difference is shown in full. The input sets are sized for CI's Windows runner to finish in a few
+   minutes. An intentional behavior change differs by design, so CI runs this as an informational job. */
+#define DIFF_BASE_DIR "diff_base"
+static const char *diff_specs[][2] = {{"exhaustive", "5"}, {"tokens", "3"}, {"random", "100000"}};
+static const char *diff_sizes[] = {"64", "16"};
+static const char *diff_sides[] = {"base", "head"};
+
+static const char *diff_exe(const char *side, const char *size) {
+#ifdef _WIN32
+    return nob_temp_sprintf("diff_%s_%s.exe", side, size);
+#else
+    return nob_temp_sprintf("./diff_%s_%s", side, size);
+#endif
+}
+
+static const char *diff_out(const char *side, const char *size, const char *spec) {
+    return nob_temp_sprintf("diff_%s_%s_%s.txt", side, size, spec);
+}
+
+/* The header at ref, as DIFF_BASE_DIR/snakepath.h */
+static bool write_base_header(const char *ref) {
+#ifdef _WIN32
+    _mkdir(DIFF_BASE_DIR);
+    FILE *git = _popen(nob_temp_sprintf("git show %s:snakepath.h", ref), "rb");
+#else
+    mkdir(DIFF_BASE_DIR, 0777);
+    FILE *git = popen(nob_temp_sprintf("git show %s:snakepath.h", ref), "r");
+#endif
+    FILE *out = fopen(DIFF_BASE_DIR "/snakepath.h", "wb");
+    if (!git || !out) {
+        nob_log(NOB_ERROR, "Could not run git show or write " DIFF_BASE_DIR "/snakepath.h");
+        return false;
+    }
+
+    char buf[1 << 16];
+    size_t total = 0;
+    for (size_t n; (n = fread(buf, 1, sizeof buf, git)) > 0; total += n)
+        fwrite(buf, 1, n, out);
+#ifdef _WIN32
+    int status = _pclose(git);
+#else
+    int status = pclose(git);
+#endif
+    if (fclose(out) != 0 || status != 0 || total == 0) {
+        nob_log(NOB_ERROR, "git show %s:snakepath.h failed (fetch the ref first?)", ref);
+        return false;
+    }
+    return true;
+}
+
+/* test.c as the SP_DIFF driver, against the snakepath.h in include_dir, at SP_PATH_MAX size */
+static bool build_diff_driver(const char *include_dir, const char *size, const char *output, Nob_Procs *procs) {
+    Nob_Cmd cmd = {0};
+#ifdef _WIN32
+    nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/W4", "/O2", "/DSP_DIFF");
+    nob_cmd_append(&cmd, nob_temp_sprintf("/DSP_PATH_MAX=%s", size), nob_temp_sprintf("/I%s", include_dir));
+    nob_cmd_append(&cmd, nob_temp_sprintf("/Fo%.*s.obj", (int)(strlen(output) - 4), output), "/Fe:", output);
+#else
+    nob_cmd_append(&cmd, skip_gcc ? "clang" : "gcc", "-std=c99", "-O2", "-Wall", "-Wextra", "-DSP_DIFF");
+    nob_cmd_append(&cmd, nob_temp_sprintf("-DSP_PATH_MAX=%s", size), "-I", include_dir, "-o", output);
+#endif
+    nob_cmd_append(&cmd, "test.c");
+    return nob_cmd_run(&cmd, .async = procs);
+}
+
+/* The first line where two files differ (1-based), 0 when they are the same, -1 when one can't be read */
+static long first_differing_line(const char *a_path, const char *b_path) {
+    FILE *a = fopen(a_path, "rb");
+    FILE *b = fopen(b_path, "rb");
+    long line = a && b ? 1 : -1;
+    for (int ca = 0, cb = 0; line > 0 && ca != EOF; ) {
+        ca = getc(a);
+        cb = getc(b);
+        if (ca != cb)
+            break;
+        if (ca == '\n')
+            line++;
+        if (ca == EOF)
+            line = 0;
+    }
+    if (a) fclose(a);
+    if (b) fclose(b);
+    return line;
+}
+
+static bool run_diff(const char *ref) {
+    if (!write_base_header(ref)) return false;
+    Nob_Procs procs = {0};
+
+    LOG_INFO( "=== Building the differential drivers (base: %s) ===", ref);
+    for (size_t s = 0; s < 2; s++) {
+        build_diff_driver(DIFF_BASE_DIR, diff_sizes[s], diff_exe("base", diff_sizes[s]), &procs);
+        build_diff_driver(".", diff_sizes[s], diff_exe("head", diff_sizes[s]), &procs);
+    }
+    if (!nob_procs_flush(&procs)) {
+        nob_log(NOB_ERROR, "Building the differential drivers failed: %s may have a different API than the working tree", ref);
+        return false;
+    }
+
+    LOG_INFO( "=== Running the input sets against both headers, in parallel ===");
+    for (size_t s = 0; s < 2; s++)
+        for (size_t i = 0; i < 3; i++)
+            for (size_t side = 0; side < 2; side++) {
+                Nob_Cmd cmd = {0};
+                nob_cmd_append(&cmd, diff_exe(diff_sides[side], diff_sizes[s]), diff_specs[i][0], diff_specs[i][1]);
+                nob_cmd_append(&cmd, diff_out(diff_sides[side], diff_sizes[s], diff_specs[i][0]));
+                nob_cmd_run(&cmd, .async = &procs);
+            }
+    if (!nob_procs_flush(&procs)) {
+        nob_log(NOB_ERROR, "A differential driver failed");
+        return false;
+    }
+
+    bool same = true;
+    for (size_t s = 0; s < 2; s++)
+        for (size_t i = 0; i < 3; i++) {
+            const char *spec = diff_specs[i][0];
+            long line = first_differing_line(diff_out("base", diff_sizes[s], spec), diff_out("head", diff_sizes[s], spec));
+            if (line == 0) {
+                LOG_INFO( "  SAME  SP_PATH_MAX=%s %s %s", diff_sizes[s], spec, diff_specs[i][1]);
+                continue;
+            }
+            same = false;
+            nob_log(NOB_ERROR, "  DIFF  SP_PATH_MAX=%s %s %s, first at line %ld:", diff_sizes[s], spec, diff_specs[i][1], line);
+            for (size_t side = 0; line > 0 && side < 2; side++) {
+                Nob_Cmd cmd = {0};
+                printf("--- %s (%s) ---\n", diff_sides[side], side == 0 ? ref : "working tree");
+                fflush(stdout);
+                nob_cmd_append(&cmd, diff_exe(diff_sides[side], diff_sizes[s]), spec, diff_specs[i][1], "-");
+                nob_cmd_append(&cmd, nob_temp_sprintf("%ld", line));
+                nob_cmd_run(&cmd);
+            }
+        }
+    nob_da_free(procs);
+    return same;
+}
+
+static bool delete_if_exists(const char *path) {
+    return nob_file_exists(path) != 1 || nob_delete_file(path);
+}
+
 static bool clean_artifacts(void) {
     bool all_ok = true;
     LOG_INFO( "Cleaning build artifacts...");
-    for (size_t i = 0; all_artifacts[i] != NULL; i++) {
-        if (nob_file_exists(all_artifacts[i])) {
-            if (!nob_delete_file(all_artifacts[i])) {
-                all_ok = false;
-            }
+    for (size_t i = 0; all_artifacts[i] != NULL; i++)
+        all_ok = delete_if_exists(all_artifacts[i]) && all_ok;
+
+    /* ./nob diff's drivers, outputs and base header */
+    for (size_t s = 0; s < 2; s++)
+        for (size_t side = 0; side < 2; side++) {
+            const char *exe = diff_exe(diff_sides[side], diff_sizes[s]);
+            all_ok = delete_if_exists(exe) && all_ok;
+#ifdef _WIN32
+            all_ok = delete_if_exists(nob_temp_sprintf("%.*s.obj", (int)(strlen(exe) - 4), exe)) && all_ok;
+#endif
+            for (size_t i = 0; i < 3; i++)
+                all_ok = delete_if_exists(diff_out(diff_sides[side], diff_sizes[s], diff_specs[i][0])) && all_ok;
         }
-    }
+    all_ok = delete_if_exists(DIFF_BASE_DIR "/snakepath.h") && all_ok;
+#ifdef _WIN32
+    _rmdir(DIFF_BASE_DIR);
+#else
+    rmdir(DIFF_BASE_DIR);
+#endif
     return all_ok;
 }
 
@@ -1233,6 +1393,10 @@ int main(int argc, char **argv) {
 
     const char *program = nob_shift(argv, argc);
     (void)program;
+#ifndef _WIN32
+    skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;
+    use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
+#endif
 
     if (argc > 0) {
         const char *subcmd = nob_shift(argv, argc);
@@ -1260,9 +1424,17 @@ int main(int argc, char **argv) {
             return 0;
         } else if (strcmp(subcmd, "format") == 0) {
             return run_clang_format(true) ? 0 : 1;
+        } else if (strcmp(subcmd, "diff") == 0) {
+            const char *ref = argc > 0 ? nob_shift(argv, argc) : "origin/main";
+            if (!run_diff(ref)) {
+                nob_log(NOB_ERROR, "snakepath.h's pure path API differs from %s (or the check could not run)", ref);
+                return 1;
+            }
+            LOG_INFO( "snakepath.h's pure path API matches %s.", ref);
+            return 0;
         } else {
             nob_log(NOB_ERROR, "Unknown subcommand: %s", subcmd);
-            LOG_INFO( "Usage: ./nob [clean|python|format]");
+            LOG_INFO( "Usage: ./nob [clean|python|format|diff [ref]]");
             return 1;
         }
     }
@@ -1280,8 +1452,6 @@ int main(int argc, char **argv) {
     };
     BuildConfig demo_config = {COMPILER_MSVC, false, false, "Demo", "api_demo.exe"};
 #else
-    skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;
-    use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
     if (skip_gcc) LOG_INFO( "SNAKEPATH_SKIP_GCC set - using clang only");
     else if (use_sanitizers) LOG_INFO( "SNAKEPATH_SANITIZE set - including sanitizer builds");
 

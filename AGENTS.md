@@ -65,12 +65,13 @@ Required workflow:
 2. Identify the largest repeated or wrapper-heavy regions.
 3. If macros are involved, inspect the preprocessed view of the touched region.
 4. Make only the changes that are simpler in both source and expanded form.
-5. When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with an old-vs-new differential driver. The driver includes `snakepath.h` from `main` and from the working tree and prints every public result per input. Run it over exhaustive short strings (for example over `/\ac:.?U`), token sequences (including `\\?\UNC\` and `\\.\` prefixes, which random generation never hits) and random strings, in both flavors and with `SP_PATH_MAX` 64 and 16. Then compare the outputs. Run every comparison at once (one background process per input set and `SP_PATH_MAX`, exhaustive sets sharded by first character), never one after another: the serial suite takes over half an hour on a phone, the parallel one minutes.
+5. When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with `./nob diff` (default base `origin/main`). It builds `test.c` as the `SP_DIFF` driver against both headers, which prints every public result per input over exhaustive short strings over `/\ac:.?U`, token sequences (`\\?\UNC\` and `\\.\` prefixes, drives, case-folding pairs, which random generation never hits) and random strings, in both flavors and at `SP_PATH_MAX` 64 and 16, runs all comparisons in parallel and prints a difference in full with labeled results. CI runs the same check against the PR's base on Linux and Windows (`diff-linux`, `diff-windows`), the only differential coverage of Windows-only pure logic such as `collapse_dots`: read its report. An intentional behavior change differs by design, so the job is informational and never blocks a merge.
 6. Run `./nob format`, then verify with `nob`.
 7. If a failure may be local-environment noise, baseline against clean `main` with `./nob clean` before calling it a regression.
 
 Required final report:
 - Net LOC delta for the target file, post format.
+- The `./nob diff` result, locally and from CI's `diff-windows` job.
 - Which changes survived and why they are simpler.
 - Which tempting changes were rejected because they only compressed source text, not expanded code.
 
@@ -83,6 +84,7 @@ cc -x c -o nob nob.h && ./nob   # everything: builds, C/C++/fluent tests, Python
 ./nob format                    # rewrite snakepath.h in its clang-format layout
 ./nob python                    # only the Python bindings, their checks and CPython's pathlib tests
 ./nob clean                     # remove build artifacts (use before baseline comparisons)
+./nob diff [ref]                # the pure path API against the header at a git ref (default origin/main), old vs new
 ```
 
 MSVC builds nob with `cl /Tcnob.h`, and `-DSNAKEPATH_QUIET` quiets nob's command echo. Requirements are a C compiler, Python 3 (CI uses 3.15, matching the vendored `test_pathlib.py`), and clang-format 21. Environment knobs:
@@ -146,6 +148,8 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - New functionality goes in `snakepath.h` first; then mirror wrappers in the `SP_FFI` section of `test.c` and in `snakepath.py`, plus tests in `test.c` (fluent API tests under `#ifdef SNAKEPATH_FLUENT`).
 - When API examples change, update `api_demo.c` first, then its copy in `README.md` (GitHub Pages renders that file as the website through `_layouts/default.html`), and record any new learnings here. `nob` fails (`snakepath.py`) if the copy drifts.
 - The `SP_FFI` section of `test.c` exports exactly what `snakepath.py` calls; when a Python caller goes away, drop its C wrapper and `_sig` line too.
+- `test.c` has three modes, all glue without path logic: the tests, `SP_FFI` (the bindings' library) and `SP_DIFF` (`./nob diff`'s driver, which includes `<snakepath.h>` so `-I` picks the base ref's copy or the working tree's, and takes `SP_PATH_MAX` from the command line).
+- Proof the maintainer asked for runs in CI, in parallel, not by hand on a developer's machine: the differential check is a non-blocking CI job (`continue-on-error`), because a PR that changes behavior on purpose must differ from its base.
 - `nob.h` is the build script plus upstream nob trimmed to what it uses (see its header). If it needs more of nob, re-vendor upstream and re-trim instead of hand-copying pieces.
 - Don't add config or support files to the repo; tool settings go on nob's command lines (like the clang-format style), documented here.
 - For `"."` behavior, keep `SpPath` canonical as empty (`len == 0`) and let string conversion render `"."`; storing literal `"."` breaks equality/parents semantics.

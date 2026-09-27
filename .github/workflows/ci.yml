@@ -60,3 +60,46 @@ jobs:
 
       - name: Run build and tests
         run: .\nob.exe
+
+  # Informational: the pure path API against the PR's base branch through ./nob diff. A PR that changes behavior on
+  # purpose differs by design, so this never blocks a merge; the report is for the reviewer.
+  diff-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch the base branch
+        run: git fetch --depth=1 origin ${{ github.base_ref }}
+
+      - name: Build nob
+        run: cc -x c -o nob nob.h
+
+      - name: Differential check against the base branch
+        run: ./nob diff origin/${{ github.base_ref }}
+
+  diff-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch the base branch
+        run: git fetch --depth=1 origin ${{ github.base_ref }}
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build nob
+        run: cl.exe /Fe:nob.exe /Tcnob.h
+
+      - name: Differential check against the base branch
+        run: .\nob.exe diff origin/${{ github.base_ref }}

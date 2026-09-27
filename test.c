@@ -1,18 +1,25 @@
 /* test.c - Rigorous pathlib tests for snakepath.h (plus the fluent API with -DSNAKEPATH_FLUENT).
- * With -DSP_FFI -shared it builds the library the Python bindings (snakepath.py) load instead. */
+ * With -DSP_FFI -shared it builds the library the Python bindings (snakepath.py) load instead, and with -DSP_DIFF
+ * the driver ./nob diff compares two versions of the header with. */
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
 #endif
+#ifndef SP_PATH_MAX /* ./nob diff picks it */
 #ifdef _WIN32
 #define SP_PATH_MAX SP_PATH_MAX_WINDOWS
 #else
 #define SP_PATH_MAX SP_PATH_MAX_LINUX
 #endif
+#endif
 #ifndef SP_FFI
 #define SP_GLOB_MAX_DEPTH 16 /* a glob past it needs a tree this deep, which Windows paths must be short enough for */
 #endif
 #define SNAKEPATH_IMPLEMENTATION
+#ifdef SP_DIFF
+#include <snakepath.h> /* the one -I points at: the base ref's copy, or the working tree's */
+#else
 #include "snakepath.h"
+#endif
 
 #ifdef SP_FFI
 
@@ -220,6 +227,257 @@ SP_EXPORT void sp_walk_begin_wrap(const SpPath *top, unsigned int flags, void *b
 }
 SP_EXPORT SpWalkEntry *sp_walk_next_wrap(SpWalkIter *it) { return sp_walk_next(it); }
 SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
+
+#elif defined(SP_DIFF)
+
+/* ./nob diff's driver: every pure result for generated inputs, in both flavors, one hash per line into a file, so two
+ * builds of this file against two versions of snakepath.h compare line by line.
+ *   test_diff exhaustive <length> <out>   every string over "/\ac:.?U" up to that length
+ *   test_diff tokens <depth> <out>        every sequence of up to that many tokens (prefixes, drives, case pairs)
+ *   test_diff random <count> <out>        that many random strings over a path, pattern and case-folding alphabet
+ * A fifth argument, a line number, prints that line's input and labeled results in full on stdout instead. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char results[1 << 17];
+static size_t results_len;
+static long line_no, dump_line; /* the line being produced, and the one to print in full (0: hash them all) */
+static FILE *out_file;
+
+static void put(const char *label, const char *s, size_t n) {
+    size_t label_len = strlen(label);
+    if (results_len + label_len + n + 2 >= sizeof(results))
+        return;
+    memcpy(results + results_len, label, label_len);
+    results_len += label_len;
+    results[results_len++] = '=';
+    memcpy(results + results_len, s, n);
+    results_len += n;
+    results[results_len++] = '|';
+}
+
+static void put_num(const char *label, long long v) {
+    char b[32];
+    snprintf(b, sizeof b, "%lld", v);
+    put(label, b, strlen(b));
+}
+
+static void put_path(const char *label, const SpPath *p) {
+    char b[SP_PATH_MAX + 16];
+    int n = snprintf(b, sizeof b, "%d:%.*s", (int)p->error, (int)p->len, p->buf);
+    put(label, b, (size_t)n);
+}
+
+static void put_term(const char *label, SpTerm t) {
+    char b[SP_PATH_MAX + 16];
+    int n = snprintf(b, sizeof b, "%d:%.*s", (int)t.error, (int)t.len, t.buf);
+    put(label, b, (size_t)n);
+}
+
+/* A label built from a format and one string, in a buffer that lives until the next call */
+static const char *lbl(const char *fmt, const char *s) {
+    static char b[256];
+    snprintf(b, sizeof b, fmt, s);
+    return b;
+}
+
+static const char *companions[] = {"",   "a",   "/",       "/a",     "c:", "c:/",  "c:a", "//s/h",
+                                   "..", "a/b", "C:\\A", "\\\\?\\UNC\\s\\h\\x", "~",  "~u/x", "."};
+static const char *patterns[] = {"*",   "**",  "**/", "*.?", "[a-c]", "[!a]", "[A-Z]*", "a*", "?", "**/*", "[K]",
+                                 "[\xe2\x84\xaa]", "[\xce\xa3]", "[i]", "[\xc4\xb0]", "*[!.]", "[", "[]a]", "[a-]",
+                                 "**/a/**", "c:*", "/**"};
+
+/* Every pure result for s (NUL-terminated at len) in flavor fl, as one output line */
+static void one(const char *s, size_t len, SpFlavor fl) {
+    line_no++;
+    if (dump_line != 0 && line_no != dump_line)
+        return;
+    results_len = 0;
+
+    SpPath p = sp_path_from_n(s, len, fl);
+    put_path("path", &p);
+    put_term("drive", sp_drive(&p));
+    put_term("root", sp_root(&p));
+    put_term("anchor", sp_anchor(&p));
+    put_term("name", sp_name(&p));
+    put_term("stem", sp_stem(&p));
+    put_term("suffix", sp_suffix(&p));
+    put_term("as_posix", sp_as_posix(&p));
+    SpSuffixes suffixes = sp_suffixes(&p);
+    put_num("suffixes.error", suffixes.error);
+    for (size_t i = 0; i < suffixes.count; i++)
+        put("suffixes", suffixes.items[i].data, suffixes.items[i].len);
+    SpPath parent = sp_parent(&p);
+    put_path("parent", &parent);
+    SpPath expanded = sp_expanduser(&p);
+    put_path("expanduser", &expanded);
+    SpPath from_uri = sp_from_uri(s, fl);
+    put_path("from_uri", &from_uri);
+    SpPath converted = sp_path_convert(s, fl, fl == SP_FLAVOR_POSIX ? SP_FLAVOR_WINDOWS : SP_FLAVOR_POSIX);
+    put_path("convert", &converted);
+    SpGlobIter glob = sp_glob_begin(&p, s, SP_CASE_DEFAULT, false);
+    put_num("glob.error", glob.error);
+    put("glob.pattern", glob.priv_.pattern_buf, glob.priv_.pattern_len);
+    SpGlobIter rglob = sp_rglob_begin(&p, s, SP_CASE_INSENSITIVE, true);
+    put_num("rglob.error", rglob.error);
+    put("rglob.pattern", rglob.priv_.pattern_buf, rglob.priv_.pattern_len);
+    sp_glob_end(&glob);
+    sp_glob_end(&rglob);
+
+    /* Functions returning a bool or a number take a path without an error */
+    if (p.error == SP_OK) {
+        put_num("is_absolute", sp_is_absolute(&p));
+        put_num("hash", (long long)sp_path_hash(&p));
+        put_num("parts_count", (long long)sp_parts_count(&p));
+        put_num("parents_count", (long long)sp_parents_count(&p));
+        SpPartsIter parts = sp_parts_begin(&p);
+        SpStr part;
+        while (sp_parts_next(&parts, &part))
+            put("part", part.data, part.len);
+        SpParentsIter parents = sp_parents_begin(&p);
+        SpPath ancestor;
+        while (sp_parents_next(&parents, &ancestor))
+            put_path("parents", &ancestor);
+        char uri[SP_PATH_MAX * 3];
+        put_num("as_uri.error", sp_as_uri(&p, uri, sizeof uri));
+        put("as_uri", uri, strlen(uri));
+        for (size_t i = 0; i < SP_ARRAY_LEN(patterns); i++) {
+            /* Both flavors run, so the default already covers sensitive and insensitive matching */
+            put_num(lbl("full_match(%s)", patterns[i]), sp_full_match(&p, patterns[i], SP_CASE_DEFAULT));
+            put_num(lbl("full_match_ci(%s)", patterns[i]), sp_full_match(&p, patterns[i], SP_CASE_INSENSITIVE));
+            put_num(lbl("match(%s)", patterns[i]), sp_match(&p, patterns[i], SP_CASE_DEFAULT));
+        }
+    }
+
+    /* With each companion path, and as a pattern (which must have a part) against it */
+    bool is_pattern = p.error == SP_OK && sp_parts_count(&p) > 0;
+    for (size_t i = 0; i < SP_ARRAY_LEN(companions); i++) {
+        const char *c = companions[i];
+        SpPath o = sp_path_f(c, fl);
+        SpPath joined = sp_join_one(&p, c);
+        put_path(lbl("join(%s)", c), &joined);
+        SpPath joinpath = sp_joinpath(&p, &o);
+        put_path(lbl("joinpath(%s)", c), &joinpath);
+        SpPath named = sp_with_name(&p, c);
+        put_path(lbl("with_name(%s)", c), &named);
+        SpPath stemmed = sp_with_stem(&p, c);
+        put_path(lbl("with_stem(%s)", c), &stemmed);
+        SpPath suffixed = sp_with_suffix(&p, c);
+        put_path(lbl("with_suffix(%s)", c), &suffixed);
+        SpPath relative = sp_relative_to(&p, &o, false);
+        put_path(lbl("relative_to(%s)", c), &relative);
+        SpPath walked_up = sp_relative_to(&p, &o, true);
+        put_path(lbl("relative_to_walk_up(%s)", c), &walked_up);
+        SpPath reverse = sp_relative_to(&o, &p, true);
+        put_path(lbl("companion_relative_to_walk_up(%s)", c), &reverse);
+        if (p.error != SP_OK || o.error != SP_OK)
+            continue;
+        put_num(lbl("is_relative_to(%s)", c), sp_is_relative_to(&p, &o));
+        put_num(lbl("cmp(%s)", c), sp_path_cmp(&p, &o));
+        put_num(lbl("eq(%s)", c), sp_path_eq(&p, &o));
+        if (is_pattern) {
+            put_num(lbl("companion_full_match_ci(%s)", c), sp_full_match(&o, s, SP_CASE_INSENSITIVE));
+            put_num(lbl("companion_match(%s)", c), sp_match(&o, s, SP_CASE_DEFAULT));
+        }
+    }
+
+    if (dump_line != 0) {
+        for (size_t i = 0; i < len; i++) {
+            unsigned char ch = (unsigned char)s[i];
+            if (ch >= 0x20 && ch < 0x7f && ch != '\\')
+                putchar(ch);
+            else
+                printf("\\x%02x", ch);
+        }
+        printf(" [%s]\n", fl == SP_FLAVOR_POSIX ? "posix" : "windows");
+        fwrite(results, 1, results_len, stdout);
+        printf("\n");
+        return;
+    }
+    unsigned long long h = 1469598103934665603ULL;
+    for (size_t i = 0; i < results_len; i++)
+        h = (h ^ (unsigned char)results[i]) * 1099511628211ULL;
+    fprintf(out_file, "%016llx\n", h);
+}
+
+static void both(char *buf, size_t len) {
+    buf[len] = '\0';
+    one(buf, len, SP_FLAVOR_POSIX);
+    one(buf, len, SP_FLAVOR_WINDOWS);
+}
+
+static const char alphabet[] = "/\\ac:.?U";
+
+static void exhaustive(char *buf, size_t len, size_t max) {
+    both(buf, len);
+    if (len == max)
+        return;
+    for (size_t i = 0; i < sizeof(alphabet) - 1; i++) {
+        buf[len] = alphabet[i];
+        exhaustive(buf, len + 1, max);
+    }
+}
+
+static const char *tokens[] = {"/", "\\", "//", "\\\\", "\\\\?\\UNC\\", "\\\\.\\", "//?/UNC/", "//./", "\\\\?\\",
+                               "c:", "C:", "\xc4\xb0:", "\xf0\x90\x90\x80:", "server", "share", "a", "..", ".", "~",
+                               "~user", "*", "**", "?", "[a-c]", "[!x]", "K", "\xe2\x84\xaa", "\xce\xa3", "\xcf\x82",
+                               "\xcf\x83", "i", "I", "\xc4\xb1", "\xc3\x9f", "\xe1\xba\x9e", "x.tar.gz", ".hidden",
+                               "a.", "?.txt", "\xff", "\xc0\x80", "\xed\xa0\x80"};
+
+static void token_sequences(char *buf, size_t len, long depth) {
+    both(buf, len);
+    if (depth == 0)
+        return;
+    for (size_t i = 0; i < SP_ARRAY_LEN(tokens); i++) {
+        size_t n = strlen(tokens[i]);
+        if (len + n >= 200)
+            continue;
+        memcpy(buf + len, tokens[i], n);
+        token_sequences(buf, len + n, depth - 1);
+    }
+}
+
+static unsigned long long rng = 88172645463325252ULL;
+
+static unsigned int next_random(void) {
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    return (unsigned int)rng;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 4) {
+        fprintf(stderr, "usage: test_diff exhaustive|tokens|random <n> <out> [line]\n");
+        return 2;
+    }
+    long n = atol(argv[2]);
+    dump_line = argc > 4 ? atol(argv[4]) : 0;
+    if (dump_line == 0 && !(out_file = fopen(argv[3], "wb"))) {
+        perror(argv[3]);
+        return 2;
+    }
+
+    char buf[256];
+    if (strcmp(argv[1], "exhaustive") == 0) {
+        exhaustive(buf, 0, n > 0 && n < 200 ? (size_t)n : 5);
+    } else if (strcmp(argv[1], "tokens") == 0) {
+        token_sequences(buf, 0, n);
+    } else if (strcmp(argv[1], "random") == 0) {
+        static const char rich[] = "/\\ac:.?U*[]!-~KkiI\xe2\x84\xaa\xc4\xb0\xce\xa3\xcf\x82\xcf\x83\xc3\x9f\xff\xc0\xed\xa0\x80";
+        for (long k = 0; k < n; k++) {
+            size_t len = next_random() % 40;
+            for (size_t i = 0; i < len; i++)
+                buf[i] = (next_random() & 3) ? rich[next_random() % (sizeof(rich) - 1)] : (char)(next_random() % 255 + 1);
+            both(buf, len);
+        }
+    } else {
+        fprintf(stderr, "unknown input set: %s\n", argv[1]);
+        return 2;
+    }
+    return out_file && fclose(out_file) != 0 ? 2 : 0;
+}
 
 #else /* the tests */
 
