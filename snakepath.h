@@ -246,10 +246,12 @@ SP_NODISCARD bool sp_iterdir_next(SpIterdirIter *it, SpPath *out); /* returns ch
 void sp_iterdir_end(SpIterdirIter *it);
 
 /* clang-format off */
+/* Every path an iterator gives, closing it at the end */
+#define SP_PRIV_FOREACH(Iter, ctx, begin, next, end, var) \
+    for (struct { Iter it; int done; } ctx = { begin, 0 }; !ctx.done; end(&ctx.it), ctx.done = 1) \
+    for (SpPath var; next(&ctx.it, &var); )
 #define SP_ITERDIR_FOREACH(dir, entry_var) \
-    for (struct { SpIterdirIter it; int done; } sp_ictx_ = { sp_iterdir_begin(dir), 0 }; \
-         !sp_ictx_.done; sp_iterdir_end(&sp_ictx_.it), sp_ictx_.done = 1) \
-    for (SpPath entry_var; sp_iterdir_next(&sp_ictx_.it, &entry_var); )
+    SP_PRIV_FOREACH(SpIterdirIter, sp_ictx_, sp_iterdir_begin(dir), sp_iterdir_next, sp_iterdir_end, entry_var)
 /* clang-format on */
 
 /* Glob frames: one per directory level a recursive "**" goes down (the OS stops a symlink cycle at 40 levels on Linux,
@@ -440,9 +442,7 @@ void sp_glob_end(SpGlobIter *it);
 /* Every match, closing the iterator at the end; options is an SpGlobOptions value */
 /* clang-format off */
 #define SP_GLOB_FOREACH(base, pattern, options, match_var) \
-    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_glob_begin(base, pattern, options), 0 }; \
-         !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
-    for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
+    SP_PRIV_FOREACH(SpGlobIter, sp_gctx_, sp_glob_begin(base, pattern, options), sp_glob_next, sp_glob_end, match_var)
 /* clang-format on */
 
 /* ============ Fluent API ============ */
@@ -1327,13 +1327,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
     return r;
 }
 
-SpPath sp_join_one(const SpPath *base, const char *other) {
-    if (base->error != SP_OK || !other[0])
-        return *base;
-
-    SP_ASSERT_PATH_INVARIANT(base);
-    return sp_priv_join_len(base, other, strlen(other));
-}
+SpPath sp_join_one(const SpPath *base, const char *other) { return sp_join_n(base, other, strlen(other)); }
 
 SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
     if (base->error != SP_OK || len == 0)
@@ -1432,8 +1426,9 @@ bool sp_is_absolute(const SpPath *p) {
            (p->len > after + 1 && p->buf[after] == ':' && p->buf[after + 1] == '\\');
 }
 
-/* os.getcwd() as a path of the given (resolved) flavor */
-static SpPath sp_priv_cwd(SpFlavor flavor) {
+/* os.getcwd() as a path */
+SpPath sp_cwd(SpFlavor flavor) {
+    flavor = sp_priv_flavor(flavor);
     SpPath p = sp_priv_error_path(flavor, SP_OK);
 #ifdef SP_WINDOWS
     wchar_t wide[SP_PATH_MAX];
@@ -1455,14 +1450,12 @@ static SpPath sp_priv_cwd(SpFlavor flavor) {
     return p;
 }
 
-SpPath sp_cwd(SpFlavor flavor) { return sp_priv_cwd(sp_priv_flavor(flavor)); }
-
 /* A relative path joined to the current directory */
 SpPath sp_absolute(const SpPath *p) {
     if (p->error != SP_OK || sp_is_absolute(p))
         return *p;
 
-    SpPath cwd = sp_priv_cwd(p->flavor);
+    SpPath cwd = sp_cwd(p->flavor);
     return cwd.error != SP_OK ? cwd : sp_priv_join_len(&cwd, p->buf, p->len);
 }
 
@@ -1886,7 +1879,7 @@ bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions options) {
     return true;
 }
 
-static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
+SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     SpStatResult result = SP_PRIV_ZERO;
     SpPrivNative native;
     result.error = sp_priv_native(p, &native);
@@ -1985,8 +1978,6 @@ static SpStatResult sp_priv_stat_impl(const SpPath *p, bool follow_symlinks) {
     return result;
 }
 
-SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) { return sp_priv_stat_impl(p, follow_symlinks); }
-
 bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
     return a->error == SP_OK && b->error == SP_OK && a->sp_mode == b->sp_mode && a->sp_ino == b->sp_ino &&
            a->sp_dev == b->sp_dev && a->sp_nlink == b->sp_nlink && a->sp_uid == b->sp_uid && a->sp_gid == b->sp_gid &&
@@ -2013,12 +2004,12 @@ static bool sp_priv_is_mount(const SpPath *p) {
         plen--;
     return sp_priv_fold_cmp(s, plen, vol, vlen) == 0;
 #else
-    SpStatResult st_path = sp_priv_stat_impl(p, false);
+    SpStatResult st_path = sp_stat(p, false);
     if ((st_path.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
         return false;
 
     SpPath parent = sp_parent(p);
-    SpStatResult st_parent = sp_priv_stat_impl(&parent, false);
+    SpStatResult st_parent = sp_stat(&parent, false);
     return st_parent.error == SP_OK && (st_path.sp_dev != st_parent.sp_dev || st_path.sp_ino == st_parent.sp_ino);
 #endif
 }
@@ -2032,27 +2023,27 @@ bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks) {
         return sp_priv_is_mount(p);
 
     bool link = type == SP_SYMLINK || type == SP_JUNCTION;
-    SpStatResult st = sp_priv_stat_impl(p, follow_symlinks && !link);
+    SpStatResult st = sp_stat(p, follow_symlinks && !link);
     if (type == SP_JUNCTION)
         return st.error == SP_OK && st.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT;
     return st.error == SP_OK && (type == SP_ANY || (st.sp_mode & SP_PRIV_IFMT) == modes[type]);
 }
 
-/* os.readlink(): the unparsed target of the symlink (or junction) at p into out, as the OS gives it (not normalized),
- * when SP_OK is returned. On Windows that is the substitute name, with its "\??\" prefix read as "\\?\". */
-static SpError sp_priv_readlink_impl(const SpPath *p, SpPath *out) {
+/* os.readlink(), as a path: the target of the symlink (or junction) at p. On Windows that is the substitute name,
+ * with its "\??\" prefix read as "\\?\". */
+SpPath sp_readlink(const SpPath *p) {
+    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     SpPrivNative native;
-    *out = sp_priv_error_path(p->flavor, SP_OK);
     SpError err = sp_priv_native(p, &native);
     if (err != SP_OK)
-        return err;
+        return sp_priv_error_path(p->flavor, err);
 
 #ifdef SP_WINDOWS
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
     HANDLE h = CreateFileW(native.path, 0, share, NULL, OPEN_EXISTING, flags, NULL);
     if (h == INVALID_HANDLE_VALUE)
-        return sp_priv_last_error();
+        return sp_priv_error_path(p->flavor, sp_priv_last_error());
 
     /* REPARSE_DATA_BUFFER: the tag at 0, the substitute name's offset and length at 8, the names after the flags
      * (at 20) for a symlink, right after the lengths (at 16) for a junction */
@@ -2067,7 +2058,7 @@ static SpError sp_priv_readlink_impl(const SpPath *p, SpPath *out) {
     err = read ? SP_OK : sp_priv_last_error();
     CloseHandle(h);
     if (!read)
-        return err;
+        return sp_priv_error_path(p->flavor, err);
 
     DWORD tag;
     WORD offset;
@@ -2077,31 +2068,25 @@ static SpError sp_priv_readlink_impl(const SpPath *p, SpPath *out) {
     memcpy(&bytes, data.bytes + 10, sizeof(bytes));
     size_t names = tag == IO_REPARSE_TAG_SYMLINK ? 20 : tag == IO_REPARSE_TAG_MOUNT_POINT ? 16 : 0;
     if (names == 0)
-        return SP_ERR_NOT_LINK;
+        return sp_priv_error_path(p->flavor, SP_ERR_NOT_LINK);
     if (names + offset + bytes > got || offset % 2 != 0)
-        return SP_ERR_IO;
+        return sp_priv_error_path(p->flavor, SP_ERR_IO);
     if (bytes / 2 >= SP_PATH_MAX)
-        return SP_ERR_TOO_LONG;
+        return sp_priv_error_path(p->flavor, SP_ERR_TOO_LONG);
 
     wchar_t *target = data.wide + (names + offset) / 2;
     if (bytes / 2 > 4 && memcmp(target, L"\\??\\", 4 * sizeof(wchar_t)) == 0)
         target[1] = L'\\';
-    return sp_priv_from_wide(target, bytes / 2, out->buf, SP_PATH_MAX, &out->len);
+    err = sp_priv_from_wide(target, bytes / 2, r.buf, SP_PATH_MAX, &r.len);
 #else
-    ssize_t n = readlink(native.path, out->buf, SP_PATH_MAX);
+    ssize_t n = readlink(native.path, r.buf, SP_PATH_MAX);
     if (n < 0)
-        return errno == EINVAL ? SP_ERR_NOT_LINK : sp_priv_last_error();
+        return sp_priv_error_path(p->flavor, errno == EINVAL ? SP_ERR_NOT_LINK : sp_priv_last_error());
     if (n >= SP_PATH_MAX)
-        return SP_ERR_TOO_LONG;
-    out->len = SP_PRIV_CAST(size_t, n);
-    out->buf[n] = '\0';
-    return SP_OK;
+        return sp_priv_error_path(p->flavor, SP_ERR_TOO_LONG);
+    r.len = SP_PRIV_CAST(size_t, n);
+    r.buf[n] = '\0';
 #endif
-}
-
-SpPath sp_readlink(const SpPath *p) {
-    SpPath r;
-    SpError err = sp_priv_readlink_impl(p, &r);
     if (err != SP_OK)
         return sp_priv_error_path(p->flavor, err);
 
@@ -2183,11 +2168,10 @@ static bool sp_priv_real_name(const SpPath *p, SpPath *name) {
  * relative), 0 when there is nothing more to follow (an error it expects, or a relative target of anything but a
  * symlink), -1 when reading the link failed otherwise */
 static int sp_priv_readlink_step(SpPath *path) {
-    SpPath target;
-    SpError err = sp_priv_readlink_impl(path, &target);
-    if (err == SP_ERR_NOT_LINK)
+    SpPath target = sp_readlink(path);
+    if (target.error == SP_ERR_NOT_LINK)
         return 0;
-    if (err != SP_OK) {
+    if (target.error != SP_OK) {
         static const DWORD stops[] = {1, 2, 3, 5, 21, 32, 50, 67, 87, 4390, 4392, 4393};
         DWORD e = GetLastError();
         for (size_t i = 0; i < SP_ARRAY_LEN(stops); i++)
@@ -2196,12 +2180,11 @@ static int sp_priv_readlink_step(SpPath *path) {
         return -1;
     }
 
-    sp_priv_normalize(&target);
     if (sp_is_absolute(&target)) {
         *path = target;
         return 1;
     }
-    if ((sp_priv_stat_impl(path, false).sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFLNK)
+    if ((sp_stat(path, false).sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFLNK)
         return 0;
 
     /* normpath(join(dirname(link), target)) */
@@ -2393,13 +2376,15 @@ SpError sp_link_to(const SpPath *p, const SpPath *target, SpLinkOptions options)
 bool sp_samefile(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
     SP_ASSERT_PATH_INVARIANT(b);
-    SpStatResult stat_a = sp_priv_stat_impl(a, true);
-    SpStatResult stat_b = sp_priv_stat_impl(b, true);
+    SpStatResult stat_a = sp_stat(a, true);
+    SpStatResult stat_b = sp_stat(b, true);
     return stat_a.error == SP_OK && stat_b.error == SP_OK && stat_a.sp_dev == stat_b.sp_dev &&
            stat_a.sp_ino == stat_b.sp_ino;
 }
 
-static SpError sp_priv_mkdir_impl(const SpPath *p, unsigned int mode) {
+/* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
+ * failure is fine with exist_ok when the path is a directory (Windows reports some of those as access denied) */
+SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options) {
     SpPrivNative native;
     SpError err = sp_priv_native(p, &native);
     if (err != SP_OK)
@@ -2411,16 +2396,7 @@ static SpError sp_priv_mkdir_impl(const SpPath *p, unsigned int mode) {
 #else
     bool ok = mkdir(native.path, SP_PRIV_CAST(mode_t, mode)) == 0;
 #endif
-    return ok ? SP_OK : sp_priv_last_error();
-}
-
-/* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
- * failure is fine with exist_ok when the path is a directory (Windows reports some of those as access denied) */
-SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options) {
-    if (p->error != SP_OK)
-        return p->error;
-
-    SpError err = sp_priv_mkdir_impl(p, mode);
+    err = ok ? SP_OK : sp_priv_last_error();
     if (err == SP_OK)
         return SP_OK;
 
@@ -2432,7 +2408,8 @@ SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options) {
         options.parents = false;
         return err == SP_OK ? sp_mkdir(p, mode, options) : err;
     }
-    return options.exist_ok && sp_is(p, SP_DIR, true) ? SP_OK : err;
+    /* sp_stat directly: through sp_is, is_mount's chain would put copy_tree past the frame limit */
+    return options.exist_ok && (sp_stat(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR ? SP_OK : err;
 }
 
 /* CPython's Path.touch: with exist_ok, bump an existing file's times; otherwise create the file */
@@ -2444,7 +2421,7 @@ SpError sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
 
 #ifdef SP_WINDOWS
     (void)mode;
-    bool exists = sp_priv_stat_impl(p, true).error == SP_OK;
+    bool exists = sp_stat(p, true).error == SP_OK;
     if (exists && !exist_ok)
         return SP_ERR_EXISTS;
 
@@ -2531,7 +2508,7 @@ SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks) {
                    ? SP_OK
                    : sp_priv_last_error();
 #else
-    SpStatResult st = sp_priv_stat_impl(p, false);
+    SpStatResult st = sp_stat(p, false);
     if (!follow_symlinks && st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK)
         return SP_ERR_UNSUPPORTED;
 #endif
@@ -2634,7 +2611,7 @@ SpIOResult sp_read_file(const SpPath *p, char *buf, size_t buf_size) {
 
     /* Too long: the file's size, for a buffer that fits */
     if (err == SP_ERR_TOO_LONG)
-        got = SP_PRIV_CAST(size_t, sp_priv_stat_impl(p, true).sp_size);
+        got = SP_PRIV_CAST(size_t, sp_stat(p, true).sp_size);
     return sp_priv_io_result(got, err);
 }
 
@@ -2825,22 +2802,23 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         return err != SP_OK ? err : to_err;
 
     /* Like CPython, anything that can't be stat()ed as a directory or symlink is copied as a file */
-    SpStatResult st = sp_priv_stat_impl(src, follow_symlinks);
+    SpStatResult st = sp_stat(src, follow_symlinks);
     unsigned int type = st.error == SP_OK ? st.sp_mode & SP_PRIV_IFMT : 0;
     if (type == SP_PRIV_IFLNK) {
-        SpPath target;
-        err = sp_priv_readlink_impl(src, &target);
-        bool target_is_dir = (sp_priv_stat_impl(src, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+        SpPath target = sp_readlink(src);
+        bool target_is_dir = (sp_stat(src, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+        err = target.error;
         if (err == SP_OK)
             err = sp_priv_link_to_impl(dst, &target, true, target_is_dir);
     } else if (type == SP_PRIV_IFDIR) {
         /* Children are listed before dst is created, so an unreadable src leaves no dst behind */
         void *handle = SP_PRIV_NULL;
         SpPath child;
+        SpMkdirOptions plain = SP_PRIV_ZERO;
         size_t n = sp_priv_readdir_next(&handle, src, &child);
         err = n == 0 ? child.error : SP_OK;
         if (err == SP_OK)
-            err = sp_priv_mkdir_impl(dst, SP_MODE_DIR);
+            err = sp_mkdir(dst, SP_MODE_DIR, plain);
 
         for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child)) {
             err = sp_priv_join_child(dst, child.buf + child.len - n, n);
@@ -2853,7 +2831,7 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
             err = child.error; /* why the listing ended */
         sp_priv_readdir_close(&handle);
     } else {
-        SpStatResult to_st = sp_priv_stat_impl(dst, true);
+        SpStatResult to_st = sp_stat(dst, true);
         if (st.error == SP_OK && to_st.error == SP_OK && st.sp_dev == to_st.sp_dev && st.sp_ino == to_st.sp_ino)
             return SP_ERR_SAME_FILE;
 
@@ -2909,8 +2887,8 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
 
 /* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
 static SpError sp_priv_delete(const SpPath *p) {
-    SpStatResult lst = sp_priv_stat_impl(p, false);
-    bool dir = (sp_priv_stat_impl(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+    SpStatResult lst = sp_stat(p, false);
+    bool dir = (sp_stat(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
     if (!dir || (lst.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK || lst.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT)
         return sp_priv_remove_impl(p, false, false);
 
@@ -2938,8 +2916,8 @@ static SpPath sp_priv_rename(const SpPath *p, const SpPath *target, bool allow_r
     if (err != SP_OK || dst_err != SP_OK)
         return sp_priv_error_path(target->flavor, err != SP_OK ? err : dst_err);
 
-    SpStatResult from = sp_priv_stat_impl(p, true);
-    SpStatResult to = sp_priv_stat_impl(target, true);
+    SpStatResult from = sp_stat(p, true);
+    SpStatResult to = sp_stat(target, true);
     bool same = from.error == SP_OK && to.error == SP_OK && from.sp_dev == to.sp_dev && from.sp_ino == to.sp_ino;
     if (move && same)
         return sp_priv_error_path(target->flavor, SP_ERR_SAME_FILE);
@@ -3042,7 +3020,7 @@ static bool sp_priv_glob_select(SpGlobIter *it, size_t seg, bool exists, bool tr
 
     if (it->error != SP_OK || exists)
         return it->error == SP_OK;
-    SpStatResult st = sp_priv_stat_impl(path, trailing);
+    SpStatResult st = sp_stat(path, trailing);
     return trailing ? (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR : st.error == SP_OK;
 }
 
@@ -3260,7 +3238,7 @@ SpTerm sp_owner(const SpPath *p, bool follow_symlinks) {
     (void)follow_symlinks;
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
-    SpStatResult st = sp_priv_stat_impl(p, follow_symlinks);
+    SpStatResult st = sp_stat(p, follow_symlinks);
     struct passwd *pw = st.error == SP_OK ? getpwuid(st.sp_uid) : SP_PRIV_NULL;
     const char *name = pw ? pw->pw_name : SP_PRIV_NULL;
     if (!name)
@@ -3277,7 +3255,7 @@ SpTerm sp_group(const SpPath *p, bool follow_symlinks) {
     (void)follow_symlinks;
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
-    SpStatResult st = sp_priv_stat_impl(p, follow_symlinks);
+    SpStatResult st = sp_stat(p, follow_symlinks);
     struct group *gr = st.error == SP_OK ? getgrgid(st.sp_gid) : SP_PRIV_NULL;
     const char *name = gr ? gr->gr_name : SP_PRIV_NULL;
     if (!name)
@@ -3296,7 +3274,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     it.error = sp_priv_native(p, &native);
 #ifdef SP_WINDOWS
     /* FindFirstFile opens the listing with its first entry, on the first next(): check the directory now */
-    SpStatResult st = sp_priv_stat_impl(p, true);
+    SpStatResult st = sp_stat(p, true);
     if (it.error == SP_OK)
         it.error = st.error != SP_OK ? st.error : (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR ? SP_ERR_NOT_DIR : SP_OK;
 #else
@@ -3353,7 +3331,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     void *handle = SP_PRIV_NULL;
     SpPath child;
     for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0; count++) {
-        SpStatResult st = sp_priv_stat_impl(&child, follow);
+        SpStatResult st = sp_stat(&child, follow);
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
