@@ -94,7 +94,7 @@ extern "C" {
     X(SP_ERR_SAME_FILE, "Source and target are the same file") /* or the target is inside the source */ \
     X(SP_ERR_NO_HOME, "Could not determine home directory")                                             \
     X(SP_ERR_TOO_LONG, "Result too long for its buffer")     /* SP_PATH_MAX, or the caller's */         \
-    X(SP_ERR_LIMIT, "Configured limit exceeded")             /* SP_MAX_SUFFIXES, SP_GLOB_MAX_DEPTH, SP_GLOB_PATTERN_MAX, resolve's links */ \
+    X(SP_ERR_LIMIT, "Configured limit exceeded")             /* SP_MAX_SUFFIXES, SP_GLOB_MAX_DEPTH, SP_GLOB_PATTERN_MAX */ \
     X(SP_ERR_NUL, "Embedded null byte")                      /* which the OS can't take */              \
     X(SP_ERR_ENCODING, "Invalid UTF-8 or UTF-16")                                                       \
     X(SP_ERR_INVALID_ARG, "Invalid argument")                /* a name, stem, suffix, pattern or URI */ \
@@ -539,11 +539,11 @@ typedef HANDLE SpPrivFile;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <stdlib.h>
-#include <fcntl.h> /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
-#include <utime.h> /* For utime() */
-#include <pwd.h>   /* For getpwuid, getpwnam */
-#include <grp.h>   /* For getgrgid */
+#include <stdlib.h> /* For getenv, qsort */
+#include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
+#include <utime.h>  /* For utime() */
+#include <pwd.h>    /* For getpwuid, getpwnam */
+#include <grp.h>    /* For getgrgid */
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
@@ -1897,13 +1897,11 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
 
     /* FILETIMEs count 100ns ticks since 1601 */
     FILETIME times[3] = {info.ftLastAccessTime, info.ftLastWriteTime, info.ftCreationTime};
-    long long sec[3];
-    long long nsec[3];
+    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
     for (int i = 0; i < 3; i++) {
         unsigned long long ticks =
             (SP_PRIV_CAST(unsigned long long, times[i].dwHighDateTime) << 32) | times[i].dwLowDateTime;
-        sec[i] = SP_PRIV_CAST(long long, ticks / 10000000) - 11644473600LL;
-        nsec[i] = SP_PRIV_CAST(long long, ticks % 10000000) * 100;
+        *ns[i] = (SP_PRIV_CAST(long long, ticks) - 116444736000000000LL) * 100;
     }
 
     CloseHandle(h);
@@ -1920,29 +1918,27 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
     result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
     result.sp_size = SP_PRIV_CAST(long long, st.st_size);
-
-    /* The times' seconds and nanoseconds, where each platform keeps them */
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    long long sec[3] = {st.st_atimespec.tv_sec, st.st_mtimespec.tv_sec, st.st_ctimespec.tv_sec};
-    long long nsec[3] = {st.st_atimespec.tv_nsec, st.st_mtimespec.tv_nsec, st.st_ctimespec.tv_nsec};
-#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8)
-    /* glibc's strict C modes hide POSIX 2008's st_atim */
-    long long sec[3] = {st.st_atime, st.st_mtime, st.st_ctime};
-    long long nsec[3] = {SP_PRIV_CAST(long long, st.st_atimensec), SP_PRIV_CAST(long long, st.st_mtimensec),
-                         SP_PRIV_CAST(long long, st.st_ctimensec)};
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
+#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8) /* glibc's strict C modes hide POSIX 2008's st_atim */
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_atimensec);
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_mtimensec);
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_ctimensec);
 #else
-    long long sec[3] = {st.st_atim.tv_sec, st.st_mtim.tv_sec, st.st_ctim.tv_sec};
-    long long nsec[3] = {st.st_atim.tv_nsec, st.st_mtim.tv_nsec, st.st_ctim.tv_nsec};
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atim.tv_sec) * 1000000000LL + st.st_atim.tv_nsec;
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctim.tv_sec) * 1000000000LL + st.st_ctim.tv_nsec;
 #endif
 #endif
 
-    /* As CPython computes them: the float times are seconds + nanoseconds * 1e-9, which rounds differently from
-     * nanoseconds / 1e9 */
+    /* As CPython: seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
     long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
     double *seconds[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
     for (int i = 0; i < 3; i++) {
-        *ns[i] = sec[i] * 1000000000LL + nsec[i];
-        *seconds[i] = SP_PRIV_CAST(double, sec[i]) + SP_PRIV_CAST(double, nsec[i]) * 1e-9;
+        long long whole = *ns[i] / 1000000000LL - (*ns[i] % 1000000000LL < 0 ? 1 : 0);
+        *seconds[i] = SP_PRIV_CAST(double, whole) + SP_PRIV_CAST(double, *ns[i] - whole * 1000000000LL) * 1e-9;
     }
     return result;
 }
@@ -2754,56 +2750,48 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
     return 0;
 }
 
-/* CPython's _copy_info for local paths: the source's access and modification times (from st, its stat result), then
- * its permissions; a symlink's (st from not following it) are left out */
-static bool sp_priv_copy_metadata(const SpStatResult *st, const SpPrivChar *dst) {
-    bool link = (st->sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK;
+/* CPython's _copy_info for local paths: access and modification times, then permissions */
+static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, bool follow_symlinks) {
 #ifdef SP_WINDOWS
-    /* FILETIMEs count 100ns ticks since 1601 */
-    long long ns[2] = {st->sp_atime_ns, st->sp_mtime_ns};
-    FILETIME times[2];
-    for (int i = 0; i < 2; i++) {
-        unsigned long long ticks = SP_PRIV_CAST(unsigned long long, ns[i] / 100 + 116444736000000000LL);
-        times[i].dwLowDateTime = SP_PRIV_CAST(DWORD, ticks);
-        times[i].dwHighDateTime = SP_PRIV_CAST(DWORD, ticks >> 32);
-    }
-    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | (link ? FILE_FLAG_OPEN_REPARSE_POINT : 0);
+    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | (follow_symlinks ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    HANDLE hs = CreateFileW(src, FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
     HANDLE hd = CreateFileW(dst, FILE_WRITE_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
-    bool ok = hd != INVALID_HANDLE_VALUE && SetFileTime(hd, NULL, &times[0], &times[1]);
+    FILETIME atime, mtime;
+    bool ok = hs != INVALID_HANDLE_VALUE && hd != INVALID_HANDLE_VALUE && GetFileTime(hs, NULL, &atime, &mtime) &&
+              SetFileTime(hd, NULL, &atime, &mtime);
+    if (hs != INVALID_HANDLE_VALUE)
+        CloseHandle(hs);
     if (hd != INVALID_HANDLE_VALUE)
         CloseHandle(hd);
 
-    /* chmod() on Windows only sets the read-only attribute, here the source's (sp_stat leaves out its write bits) */
+    /* chmod() on Windows only sets the read-only attribute, here the source's */
+    DWORD src_attrs = GetFileAttributesW(src);
     DWORD dst_attrs = GetFileAttributesW(dst);
-    DWORD read_only = (st->sp_mode & 0222) == 0 ? FILE_ATTRIBUTE_READONLY : 0;
-    DWORD attrs = (dst_attrs & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)) | read_only;
-    return ok &&
-           (link || (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
+    DWORD attrs = (dst_attrs & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)) | (src_attrs & FILE_ATTRIBUTE_READONLY);
+    return ok && (!follow_symlinks ||
+                  (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
 #else
-    if (link)
-        return true; /* setting times and chmod() would follow it */
+    struct stat st;
+    if ((follow_symlinks ? stat(src, &st) : lstat(src, &st)) != 0)
+        return false;
+    if (S_ISLNK(st.st_mode))
+        return true; /* utime() and chmod() would follow the link */
 
-    /* To the nanosecond with POSIX 2008's utimensat, where the headers show it (glibc's strict C modes don't), as
-     * os.utime(ns=...) does; else to the second */
-    long long ns[2] = {st->sp_atime_ns, st->sp_mtime_ns};
-    long long sec[2];
-    for (int i = 0; i < 2; i++)
-        sec[i] = ns[i] / 1000000000LL - (ns[i] % 1000000000LL < 0 ? 1 : 0);
-#ifdef AT_FDCWD
-    struct timespec times[2];
-    for (int i = 0; i < 2; i++) {
-        times[i].tv_sec = SP_PRIV_CAST(time_t, sec[i]);
-        times[i].tv_nsec = SP_PRIV_CAST(long, ns[i] - sec[i] * 1000000000LL);
-    }
+#ifdef AT_FDCWD /* to the nanosecond, as os.utime(ns=...), where the headers show utimensat (glibc's strict modes don't) */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+#else
+    struct timespec times[2] = {st.st_atim, st.st_mtim};
+#endif
     bool timed = utimensat(AT_FDCWD, dst, times, 0) == 0;
 #else
     struct utimbuf times;
-    times.actime = SP_PRIV_CAST(time_t, sec[0]);
-    times.modtime = SP_PRIV_CAST(time_t, sec[1]);
+    times.actime = st.st_atime;
+    times.modtime = st.st_mtime;
     bool timed = utime(dst, &times) == 0;
 #endif
-    return timed && chmod(dst, st->sp_mode & 07777) == 0;
+    return timed && chmod(dst, st.st_mode & 07777) == 0;
 #endif
 }
 
@@ -2887,9 +2875,7 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
 #endif
     }
 
-    if (err == SP_OK && preserve_metadata)
-        err = st.error; /* the source's times and permissions are its stat result's */
-    if (err == SP_OK && preserve_metadata && !sp_priv_copy_metadata(&st, to.path))
+    if (err == SP_OK && preserve_metadata && !sp_priv_copy_metadata(from.path, to.path, follow_symlinks))
         err = sp_priv_last_error();
     return err;
 }
