@@ -2408,7 +2408,8 @@ SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options) {
         options.parents = false;
         return err == SP_OK ? sp_mkdir(p, mode, options) : err;
     }
-    return options.exist_ok && sp_is(p, SP_DIR, true) ? SP_OK : err;
+    /* sp_stat directly: through sp_is, is_mount's chain would put copy_tree past the frame limit */
+    return options.exist_ok && (sp_stat(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR ? SP_OK : err;
 }
 
 /* CPython's Path.touch: with exist_ok, bump an existing file's times; otherwise create the file */
