@@ -539,7 +539,7 @@ typedef HANDLE SpPrivFile;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <stdlib.h> /* For realpath */
+#include <stdlib.h> /* For getenv, qsort */
 #include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
 #include <utime.h>  /* For utime() */
 #include <pwd.h>    /* For getpwuid, getpwnam */
@@ -552,7 +552,6 @@ typedef int SpPrivFile;
 #ifndef __cplusplus
 extern int lstat(const char *path, struct stat *buf);
 extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
-extern char *realpath(const char *path, char *resolved_path);
 extern int symlink(const char *target, const char *linkpath);
 extern int link(const char *oldpath, const char *newpath);
 extern int chmod(const char *path, mode_t mode);
@@ -974,6 +973,22 @@ static SpPath sp_priv_prefix(const SpPath *p, size_t len) {
     r.len = len;
     r.buf[len] = '\0';
     return r;
+}
+
+/* dir / name for a directory entry or literal glob part (a single part), like join: a separator unless dir is
+ * empty or ends in one or, on Windows, in a drive's ':' (which no directory name can end in). Too long, dir stays. */
+static SpError sp_priv_join_child(SpPath *dir, const char *name, size_t len) {
+    char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
+    char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
+    size_t at = dir->len + (last != '/' && last != sep && !(sep == '\\' && last == ':') ? 1 : 0);
+    if (at + len >= SP_PATH_MAX)
+        return SP_ERR_TOO_LONG;
+
+    dir->buf[dir->len] = sep;
+    memcpy(dir->buf + at, name, len);
+    dir->len = at + len;
+    dir->buf[dir->len] = '\0';
+    return SP_OK;
 }
 
 static inline bool sp_priv_is_unc(const char *s, size_t len, SpFlavor flavor) {
@@ -1907,15 +1922,24 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
     result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
     result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
+#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8) /* glibc's strict C modes hide POSIX 2008's st_atim */
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_atimensec);
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_mtimensec);
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_ctimensec);
 #else
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL;
+    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atim.tv_sec) * 1000000000LL + st.st_atim.tv_nsec;
+    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
+    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctim.tv_sec) * 1000000000LL + st.st_ctim.tv_nsec;
 #endif
 #endif
-    result.sp_atime = SP_PRIV_CAST(double, result.sp_atime_ns) / 1e9;
-    result.sp_mtime = SP_PRIV_CAST(double, result.sp_mtime_ns) / 1e9;
-    result.sp_ctime = SP_PRIV_CAST(double, result.sp_ctime_ns) / 1e9;
+
+    /* As CPython: seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
+    long long *nanoseconds[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    double *seconds[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
+    for (int i = 0; i < 3; i++) {
+        long long whole = *nanoseconds[i] / 1000000000LL - (*nanoseconds[i] % 1000000000LL < 0 ? 1 : 0);
+        *seconds[i] = SP_PRIV_CAST(double, whole) + SP_PRIV_CAST(double, *nanoseconds[i] - whole * 1000000000LL) * 1e-9;
+    }
     return result;
 }
 
@@ -2147,10 +2171,87 @@ static SpPath sp_priv_without_prefix(const SpPath *r, DWORD initial) {
 }
 #endif
 
-/* os.path.realpath of the absolute path. On POSIX, realpath() of the longest prefix it resolves (the whole path when
- * strict), followed by the rest. On Windows, ntpath.realpath: the final path of the whole path; without strict, of its
- * longest prefix Windows resolves (following a link by hand where Windows can't), then the rest. A "\\?\" prefix the
- * path didn't have comes off when the path without it resolves the same. */
+#ifndef SP_WINDOWS
+/* posixpath.realpath: path (resolved) extended by text one lstat per part, following links (to a missing file too),
+ * with ".." taking back what is resolved so far. A link met again while its own target is walked is a loop, which
+ * stays as it is, like a part that can't be read; strict makes those errors, and a non-directory with parts after it
+ * SP_ERR_NOT_DIR. Links are known by file ID, which stands for their path since the directories on it are resolved;
+ * past 40 links inside each other's targets (Linux's limit), SP_ERR_LIMIT. */
+static void sp_priv_realpath(SpPath *path, const char *text, size_t len, bool strict) {
+    char rest[SP_PATH_MAX]; /* what is left to walk, at the buffer's end, so a link's target goes in front of it */
+    struct {
+        unsigned long long dev;
+        unsigned long long ino;
+        size_t until; /* its target is walked once no more than this is left */
+    } links[40];
+    size_t depth = 0;
+    size_t at = SP_PATH_MAX - len;
+    memcpy(rest + at, text, len);
+
+    for (;;) {
+        while (at < SP_PATH_MAX && rest[at] == '/')
+            at++;
+        while (depth > 0 && SP_PATH_MAX - at <= links[depth - 1].until)
+            depth--;
+        if (at == SP_PATH_MAX)
+            return;
+
+        size_t end = sp_priv_part_end(rest, SP_PATH_MAX, at, '/');
+        const char *name = rest + at;
+        size_t n = end - at;
+        at = end;
+        if (n == 1 && name[0] == '.')
+            continue;
+        if (n == 2 && name[0] == '.' && name[1] == '.') {
+            path->len = sp_priv_parent_len(path->buf, path->len, path->flavor, path->anchor);
+            path->buf[path->len] = '\0';
+            continue;
+        }
+
+        size_t dir_len = path->len;
+        path->error = sp_priv_join_child(path, name, n);
+        if (path->error != SP_OK)
+            return;
+        SpStatResult st = sp_stat(path, false);
+        bool link = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK;
+        for (size_t i = 0; link && i < depth; i++)
+            if (links[i].dev == st.sp_dev && links[i].ino == st.sp_ino)
+                st.error = SP_ERR_LOOP;
+        SpPath target = link && st.error == SP_OK ? sp_readlink(path) : sp_priv_error_path(path->flavor, st.error);
+        size_t next = at;
+        while (next < SP_PATH_MAX && rest[next] == '/')
+            next++;
+        if (target.error == SP_OK && !link && next < SP_PATH_MAX && (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
+            target.error = SP_ERR_NOT_DIR;
+        if (strict && target.error != SP_OK) {
+            path->error = target.error;
+            return;
+        }
+        if (!link || target.error != SP_OK)
+            continue;
+
+        /* The link's target is walked next, from the root when it is absolute, else from the link's directory */
+        if (depth == SP_ARRAY_LEN(links) || at < target.len + 1) {
+            path->error = depth == SP_ARRAY_LEN(links) ? SP_ERR_LIMIT : SP_ERR_TOO_LONG;
+            return;
+        }
+        links[depth].dev = st.sp_dev;
+        links[depth].ino = st.sp_ino;
+        links[depth].until = SP_PATH_MAX - at;
+        depth++;
+        at -= target.len + 1;
+        memcpy(rest + at, target.buf, target.len);
+        rest[at + target.len] = '/';
+        path->len = target.buf[0] == '/' ? path->anchor : dir_len;
+        path->buf[path->len] = '\0';
+    }
+}
+#endif
+
+/* os.path.realpath of the absolute path. On POSIX, posixpath.realpath's walk from the root. On Windows,
+ * ntpath.realpath: the final path of the whole path; without strict, of its longest prefix Windows resolves (following
+ * a link by hand where Windows can't), then the rest. A "\\?\" prefix the path didn't have comes off when the path
+ * without it resolves the same. */
 SpPath sp_resolve(const SpPath *p, bool strict) {
     SpPrivNative native;
     SpError err = sp_priv_native(p, &native);
@@ -2249,25 +2350,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         r = sp_priv_without_prefix(&r, initial);
     return r.error != SP_OK ? r : sp_path_from_n(r.buf, r.len, p->flavor);
 #else
-    /* realpath() allocates its result: a buffer of ours could be shorter than the PATH_MAX it may fill */
-    for (size_t n = abs.len;;) {
-        SpPath prefix = sp_priv_prefix(&abs, n);
-        char *real = realpath(prefix.len == 0 ? "." : prefix.buf, SP_PRIV_NULL);
-        if (real) {
-            SpPath r = sp_path_from_n(real, strlen(real), p->flavor);
-            free(real);
-            while (n < abs.len && abs.buf[n] == '/')
-                n++;
-            return n < abs.len && r.error == SP_OK ? sp_priv_join_len(&r, abs.buf + n, abs.len - n) : r;
-        }
-        if (strict)
-            return sp_priv_error_path(p->flavor, sp_priv_last_error());
-
-        size_t parent = sp_priv_parent_len(abs.buf, n, abs.flavor, abs.anchor);
-        if (parent == n)
-            return abs;
-        n = parent;
-    }
+    SpPath r = sp_path_from_n("/", 1, p->flavor);
+    sp_priv_realpath(&r, abs.buf, abs.len, strict);
+    return r.error == SP_OK ? r : sp_priv_error_path(p->flavor, r.error);
 #endif
 }
 
@@ -2586,22 +2671,6 @@ static void sp_priv_readdir_close(void **handle) {
     *handle = SP_PRIV_NULL;
 }
 
-/* dir / name for a directory entry or literal glob part (a single part), like join: a separator unless dir is
- * empty or ends in one or, on Windows, in a drive's ':' (which no directory name can end in). Too long, dir stays. */
-static SpError sp_priv_join_child(SpPath *dir, const char *name, size_t len) {
-    char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-    char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
-    size_t at = dir->len + (last != '/' && last != sep && !(sep == '\\' && last == ':') ? 1 : 0);
-    if (at + len >= SP_PATH_MAX)
-        return SP_ERR_TOO_LONG;
-
-    dir->buf[dir->len] = sep;
-    memcpy(dir->buf + at, name, len);
-    dir->len = at + len;
-    dir->buf[dir->len] = '\0';
-    return SP_OK;
-}
-
 /* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
  * sp_priv_join_child builds it) and the name length is returned. At the end it returns 0, and out is an empty path
  * whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry too long to
@@ -2709,10 +2778,20 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
     if (S_ISLNK(st.st_mode))
         return true; /* utime() and chmod() would follow the link */
 
+#ifdef AT_FDCWD /* to the nanosecond, as os.utime(ns=...), where the headers show utimensat (glibc's strict modes don't) */
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+#else
+    struct timespec times[2] = {st.st_atim, st.st_mtim};
+#endif
+    bool timed = utimensat(AT_FDCWD, dst, times, 0) == 0;
+#else
     struct utimbuf times;
     times.actime = st.st_atime;
     times.modtime = st.st_mtime;
-    return utime(dst, &times) == 0 && chmod(dst, st.st_mode & 07777) == 0;
+    bool timed = utime(dst, &times) == 0;
+#endif
+    return timed && chmod(dst, st.st_mode & 07777) == 0;
 #endif
 }
 
@@ -3201,10 +3280,14 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     SpPrivNative native;
     it.error = sp_priv_native(p, &native);
 #ifdef SP_WINDOWS
-    /* FindFirstFile opens the listing with its first entry, on the first next(): check the directory now */
-    SpStatResult st = sp_stat(p, true);
-    if (it.error == SP_OK)
-        it.error = st.error != SP_OK ? st.error : (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR ? SP_ERR_NOT_DIR : SP_OK;
+    /* FindFirstFile opens the listing with its first entry, on the first next(): check now what it will see, the entry
+     * itself, so that like CPython's scandir only a directory or a link made as one lists (a link to a missing file, or
+     * in a loop, is not a directory) */
+    DWORD attributes = it.error == SP_OK ? GetFileAttributesW(native.path) : INVALID_FILE_ATTRIBUTES;
+    if (it.error == SP_OK && attributes == INVALID_FILE_ATTRIBUTES)
+        it.error = sp_priv_last_error();
+    else if (it.error == SP_OK && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        it.error = SP_ERR_NOT_DIR;
 #else
     if (it.error == SP_OK && !(it.priv_.handle = opendir(native.path)))
         it.error = sp_priv_last_error();
