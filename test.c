@@ -282,14 +282,14 @@ static size_t count_parents(const SpPath *p) {
 }
 
 /* Option structs built field by field */
-static SpMatchOptions match_opts(bool full, SpCaseSensitivity case_sensitive) {
+static inline SpMatchOptions match_opts(bool full, SpCaseSensitivity case_sensitive) {
     SpMatchOptions o = SP_PRIV_ZERO;
     o.full = full;
     o.case_sensitive = case_sensitive;
     return o;
 }
 
-static SpGlobOptions glob_opts(bool recursive, bool recurse_symlinks, SpCaseSensitivity case_sensitive) {
+static inline SpGlobOptions glob_opts(bool recursive, bool recurse_symlinks, SpCaseSensitivity case_sensitive) {
     SpGlobOptions o = SP_PRIV_ZERO;
     o.recursive = recursive;
     o.recurse_symlinks = recurse_symlinks;
@@ -497,7 +497,7 @@ int main(int argc, char **argv) {
 #else /* the tests */
 
 /* Option structs built field by field, as the C++ builds need */
-static SpCopyOptions copy_opts(bool follow_symlinks, bool preserve_metadata, bool into) {
+static inline SpCopyOptions copy_opts(bool follow_symlinks, bool preserve_metadata, bool into) {
     SpCopyOptions o = SP_PRIV_ZERO;
     o.follow_symlinks = follow_symlinks;
     o.preserve_metadata = preserve_metadata;
@@ -505,7 +505,7 @@ static SpCopyOptions copy_opts(bool follow_symlinks, bool preserve_metadata, boo
     return o;
 }
 
-static SpMkdirOptions mkdir_opts(bool parents, bool exist_ok, unsigned int parent_mode) {
+static inline SpMkdirOptions mkdir_opts(bool parents, bool exist_ok, unsigned int parent_mode) {
     SpMkdirOptions o = SP_PRIV_ZERO;
     o.parents = parents;
     o.exist_ok = exist_ok;
@@ -513,28 +513,28 @@ static SpMkdirOptions mkdir_opts(bool parents, bool exist_ok, unsigned int paren
     return o;
 }
 
-static SpRemoveOptions remove_opts(bool dir, bool missing_ok) {
+static inline SpRemoveOptions remove_opts(bool dir, bool missing_ok) {
     SpRemoveOptions o = SP_PRIV_ZERO;
     o.dir = dir;
     o.missing_ok = missing_ok;
     return o;
 }
 
-static SpLinkOptions link_opts(bool hard, bool target_is_directory) {
+static inline SpLinkOptions link_opts(bool hard, bool target_is_directory) {
     SpLinkOptions o = SP_PRIV_ZERO;
     o.hard = hard;
     o.target_is_directory = target_is_directory;
     return o;
 }
 
-static SpMatchOptions match_opts(bool full, SpCaseSensitivity case_sensitive) {
+static inline SpMatchOptions match_opts(bool full, SpCaseSensitivity case_sensitive) {
     SpMatchOptions o = SP_PRIV_ZERO;
     o.full = full;
     o.case_sensitive = case_sensitive;
     return o;
 }
 
-static SpGlobOptions glob_opts(bool recursive, bool recurse_symlinks, SpCaseSensitivity case_sensitive) {
+static inline SpGlobOptions glob_opts(bool recursive, bool recurse_symlinks, SpCaseSensitivity case_sensitive) {
     SpGlobOptions o = SP_PRIV_ZERO;
     o.recursive = recursive;
     o.recurse_symlinks = recurse_symlinks;
@@ -542,7 +542,7 @@ static SpGlobOptions glob_opts(bool recursive, bool recurse_symlinks, SpCaseSens
     return o;
 }
 
-static SpWalkOptions walk_opts(bool bottom_up, bool follow_symlinks) {
+static inline SpWalkOptions walk_opts(bool bottom_up, bool follow_symlinks) {
     SpWalkOptions o = SP_PRIV_ZERO;
     o.bottom_up = bottom_up;
     o.follow_symlinks = follow_symlinks;
