@@ -2893,15 +2893,13 @@ SpPath sp_rename(const SpPath *p, const SpPath *target, bool replace) {
     if (err != SP_OK || dst_err != SP_OK)
         return sp_priv_error_path(target->flavor, err != SP_OK ? err : dst_err);
 
-    SpStatResult from = sp_stat(p, true);
-    SpStatResult to = sp_stat(target, true);
-    bool same = from.error == SP_OK && to.error == SP_OK && from.sp_dev == to.sp_dev && from.sp_ino == to.sp_ino;
 #ifdef SP_WINDOWS
     if (MoveFileExW(src.path, dst.path, replace ? MOVEFILE_REPLACE_EXISTING : 0))
         return *target;
 #else
-    if (!replace && to.error == SP_OK)
-        return same ? *target : sp_priv_error_path(target->flavor, SP_ERR_EXISTS);
+    /* os.rename would replace an existing target here; pathlib's rename refuses one unless it is the same file */
+    if (!replace && sp_stat(target, true).error == SP_OK)
+        return sp_samefile(p, target) ? *target : sp_priv_error_path(target->flavor, SP_ERR_EXISTS);
     if (rename(src.path, dst.path) == 0)
         return *target;
 #endif
