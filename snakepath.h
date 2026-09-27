@@ -764,7 +764,6 @@ static const long sp_priv_case_ignorable[] = {0x27, 0x27, 0x2e, 0x2e, 0x3a, 0x3a
 static const long sp_priv_case_members[] = {0x69, 0x69, 0x73, 0x73, 0xb5, 0xb5, 0x131, 0x69, 0x17f, 0x73, 0x345, 0x345, 0x390, 0x390, 0x3b0, 0x3b0, 0x3b2, 0x3b2, 0x3b5, 0x3b5, 0x3b8, 0x3b8, 0x3b9, 0x345, 0x3ba, 0x3ba, 0x3bc, 0xb5, 0x3c0, 0x3c0, 0x3c1, 0x3c1, 0x3c2, 0x3c2, 0x3c3, 0x3c2, 0x3c6, 0x3c6, 0x3d0, 0x3b2, 0x3d1, 0x3b8, 0x3d5, 0x3c6, 0x3d6, 0x3c0, 0x3f0, 0x3ba, 0x3f1, 0x3c1, 0x3f5, 0x3b5, 0x432, 0x432, 0x434, 0x434, 0x43e, 0x43e, 0x441, 0x441, 0x442, 0x442, 0x44a, 0x44a, 0x463, 0x463, 0x1c80, 0x432, 0x1c81, 0x434, 0x1c82, 0x43e, 0x1c83, 0x441, 0x1c84, 0x442, 0x1c85, 0x442, 0x1c86, 0x44a, 0x1c87, 0x463, 0x1c88, 0x1c88, 0x1e61, 0x1e61, 0x1e9b, 0x1e61, 0x1fbe, 0x345, 0x1fd3, 0x390, 0x1fe3, 0x3b0, 0xa64b, 0x1c88, 0xfb05, 0xfb05, 0xfb06, 0xfb05};
 /* clang-format on */
 
-/* The simple case mapping of cp, from runs of (first code point, count, stride, delta) */
 /* In a sorted table of entries `width` longs wide, each starting with its first code point: the number of entries
  * starting at or before cp (so the entry cp may be in is table + (count - 1) * width) */
 static size_t sp_priv_entries_before(unsigned long cp, const long *table, size_t width, size_t n) {
@@ -780,6 +779,7 @@ static size_t sp_priv_entries_before(unsigned long cp, const long *table, size_t
     return lo;
 }
 
+/* The simple case mapping of cp, from runs of (first code point, count, stride, delta) */
 static unsigned long sp_priv_case_map(unsigned long cp, const long *runs, size_t n) {
     size_t at = sp_priv_entries_before(cp, runs, 4, n);
     if (at == 0)
@@ -835,74 +835,70 @@ static bool sp_priv_lowered_from(unsigned long cp, unsigned long lo, unsigned lo
     return false;
 }
 
-/* How CPython orders str(a).lower() and str(b).lower() by code point: simple lowercase, except that U+0130 lowers
- * to i and a combining dot, and U+03A3 to a final sigma after a cased letter with no cased letter following
- * (case-ignorable letters in between don't count) */
-static int sp_priv_fold_cmp(const char *a, size_t alen, const char *b, size_t blen) {
-    const char *s[2] = {a, b};
-    size_t len[2] = {alen, blen};
-    size_t pos[2] = {0, 0};
-    unsigned long owed[2] = {0, 0}; /* the combining dot after U+0130's i */
+/* The next code point of str.lower() of s[0..len) from *pos: simple lowercase, except that U+0130 lowers to i and a
+ * combining dot (left in *owed for the next call), and U+03A3 to a final sigma after a cased letter with no cased
+ * letter following (case-ignorable letters in between don't count) */
+static unsigned long sp_priv_lower_next(const char *s, size_t len, size_t *pos, unsigned long *owed) {
+    unsigned long c = *owed;
+    size_t start = *pos;
+    *owed = 0;
+    if (c != 0)
+        return c;
 
-    for (;;) {
-        unsigned long c[2] = {0, 0};
-        bool ended[2] = {false, false};
-        for (int k = 0; k < 2; k++) {
-            if (owed[k] != 0) {
-                c[k] = owed[k];
-                owed[k] = 0;
-                continue;
-            }
-            if (pos[k] == len[k]) {
-                ended[k] = true;
-                continue;
-            }
+    c = sp_priv_utf8_next(s, len, pos);
+    if (c == 0x130)
+        *owed = 0x307;
+    if (c != 0x3a3)
+        return c == 0x130 ? 'i' : sp_priv_case_map(c, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
 
-            size_t start = pos[k];
-            c[k] = sp_priv_utf8_next(s[k], len[k], &pos[k]);
-            if (c[k] == 0x130) {
-                c[k] = 'i';
-                owed[k] = 0x307;
-            } else if (c[k] == 0x3a3) {
-                /* The nearest letters around it that aren't case-ignorable: cased before, not cased after */
-                bool cased_before = false;
-                for (size_t j = start; j > 0;) {
-                    size_t q = j - 1;
-                    while (q > 0 && j - q < 4 && (SP_PRIV_CAST(unsigned char, s[k][q]) & 0xC0) == 0x80)
-                        q--;
-                    size_t t = q;
-                    unsigned long before = sp_priv_utf8_next(s[k], j, &t);
-                    if (t != j) {
-                        q = j - 1;
-                        t = q;
-                        before = sp_priv_utf8_next(s[k], j, &t);
-                    }
-                    j = q;
-                    if (!sp_priv_in_ranges(before, sp_priv_case_ignorable, SP_ARRAY_LEN(sp_priv_case_ignorable))) {
-                        cased_before = sp_priv_in_ranges(before, sp_priv_cased, SP_ARRAY_LEN(sp_priv_cased));
-                        break;
-                    }
-                }
-
-                bool cased_after = false;
-                for (size_t t = pos[k]; t < len[k];) {
-                    unsigned long after = sp_priv_utf8_next(s[k], len[k], &t);
-                    if (!sp_priv_in_ranges(after, sp_priv_case_ignorable, SP_ARRAY_LEN(sp_priv_case_ignorable))) {
-                        cased_after = sp_priv_in_ranges(after, sp_priv_cased, SP_ARRAY_LEN(sp_priv_cased));
-                        break;
-                    }
-                }
-                c[k] = cased_before && !cased_after ? 0x3c2 : 0x3c3;
-            } else {
-                c[k] = sp_priv_case_map(c[k], sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
-            }
+    /* The nearest letters around it that aren't case-ignorable: cased before, not cased after */
+    bool cased_before = false;
+    for (size_t j = start; j > 0;) {
+        size_t q = j - 1;
+        while (q > 0 && j - q < 4 && (SP_PRIV_CAST(unsigned char, s[q]) & 0xC0) == 0x80)
+            q--;
+        size_t t = q;
+        unsigned long before = sp_priv_utf8_next(s, j, &t);
+        if (t != j) {
+            q = j - 1;
+            t = q;
+            before = sp_priv_utf8_next(s, j, &t);
         }
-
-        if (ended[0] || ended[1])
-            return ended[0] && ended[1] ? 0 : ended[0] ? -1 : 1;
-        if (c[0] != c[1])
-            return c[0] < c[1] ? -1 : 1;
+        j = q;
+        if (!sp_priv_in_ranges(before, sp_priv_case_ignorable, SP_ARRAY_LEN(sp_priv_case_ignorable))) {
+            cased_before = sp_priv_in_ranges(before, sp_priv_cased, SP_ARRAY_LEN(sp_priv_cased));
+            break;
+        }
     }
+
+    bool cased_after = false;
+    for (size_t t = *pos; t < len;) {
+        unsigned long after = sp_priv_utf8_next(s, len, &t);
+        if (!sp_priv_in_ranges(after, sp_priv_case_ignorable, SP_ARRAY_LEN(sp_priv_case_ignorable))) {
+            cased_after = sp_priv_in_ranges(after, sp_priv_cased, SP_ARRAY_LEN(sp_priv_cased));
+            break;
+        }
+    }
+    return cased_before && !cased_after ? 0x3c2 : 0x3c3;
+}
+
+/* How CPython orders two strings: by the code points of their str.lower() when lower (Windows paths), else by byte */
+static int sp_priv_text_cmp(const char *a, size_t alen, const char *b, size_t blen, bool lower) {
+    size_t i = 0;
+    size_t j = 0;
+    unsigned long owed_a = 0;
+    unsigned long owed_b = 0;
+
+    while ((i < alen || owed_a != 0) && (j < blen || owed_b != 0)) {
+        unsigned long ca = lower ? sp_priv_lower_next(a, alen, &i, &owed_a) : SP_PRIV_CAST(unsigned char, a[i++]);
+        unsigned long cb = lower ? sp_priv_lower_next(b, blen, &j, &owed_b) : SP_PRIV_CAST(unsigned char, b[j++]);
+        if (ca != cb)
+            return ca < cb ? -1 : 1;
+    }
+
+    bool a_left = i < alen || owed_a != 0;
+    bool b_left = j < blen || owed_b != 0;
+    return a_left == b_left ? 0 : a_left ? 1 : -1;
 }
 
 /* The end of the part at s[i..len): its next separator ('/' or sep), or len */
@@ -932,22 +928,6 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
         return 0;
 #endif
     return n < len && s[n] == ':' ? n + 1 : 0;
-}
-
-/* Byte order, with ASCII letters lowercased when case-insensitive */
-static int sp_priv_str_cmp_case(const char *a, size_t alen, const char *b, size_t blen, bool case_insensitive) {
-    for (size_t i = 0; i < alen && i < blen; i++) {
-        int ca = SP_PRIV_CAST(unsigned char, a[i]);
-        int cb = SP_PRIV_CAST(unsigned char, b[i]);
-        if (case_insensitive && ca >= 'A' && ca <= 'Z')
-            ca += 32;
-        if (case_insensitive && cb >= 'A' && cb <= 'Z')
-            cb += 32;
-        if (ca != cb)
-            return ca < cb ? -1 : 1;
-    }
-
-    return alen < blen ? -1 : (alen > blen ? 1 : 0);
 }
 
 /* The empty path, carrying an error (SP_OK for a plain empty path) */
@@ -1336,10 +1316,17 @@ SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count)
     return sp_join_impl(&empty, parts, parts_count);
 }
 
-/* with_name(head + tail): the parent plus a name that must be non-empty, not "." and free of separators */
+/* with_name(head + tail): the parent plus a name that must be non-empty, not "." and free of separators, in the order
+ * CPython checks: p must have a name, and a tail (a suffix) starts with '.' and needs a head (a stem) before it */
 static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
+    if (p->error != SP_OK)
+        return *p;
+
+    SP_ASSERT_PATH_INVARIANT(p);
     if (sp_priv_name_sv(p).len == 0)
         return sp_priv_error_path(p->flavor, SP_ERR_NO_NAME);
+    if (tail.len > 0 && (tail.data[0] != '.' || head.len == 0))
+        return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
     if (head.len + tail.len >= SP_PATH_MAX)
         return sp_priv_error_path(p->flavor, SP_ERR_TOO_LONG);
 
@@ -1363,34 +1350,14 @@ static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
 }
 
 SpPath sp_with_name(const SpPath *p, const char *name) {
-    if (p->error != SP_OK)
-        return *p;
-
-    SP_ASSERT_PATH_INVARIANT(p);
     return sp_priv_with_name_parts(p, SP_PRIV_STR(name, strlen(name)), SP_PRIV_STR(SP_PRIV_NULL, 0));
 }
 
 SpPath sp_with_stem(const SpPath *p, const char *stem) {
-    if (p->error != SP_OK)
-        return *p;
-
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpStr suffix = sp_priv_suffix_sv(sp_priv_name_sv(p));
-
-    /* A non-empty suffix needs a non-empty stem */
-    if (suffix.len > 0 && stem[0] == '\0')
-        return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-    return sp_priv_with_name_parts(p, SP_PRIV_STR(stem, strlen(stem)), suffix);
+    return sp_priv_with_name_parts(p, SP_PRIV_STR(stem, strlen(stem)), sp_priv_suffix_sv(sp_priv_name_sv(p)));
 }
 
 SpPath sp_with_suffix(const SpPath *p, const char *suffix) {
-    if (p->error != SP_OK)
-        return *p;
-    if (suffix[0] != '\0' && suffix[0] != '.')
-        return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
-
-    SP_ASSERT_PATH_INVARIANT(p);
-
     SpStr name = sp_priv_name_sv(p);
     SpStr stem = SP_PRIV_STR(name.data, name.len - sp_priv_suffix_sv(name).len);
     return sp_priv_with_name_parts(p, stem, SP_PRIV_STR(suffix, strlen(suffix)));
@@ -1446,8 +1413,7 @@ SpPath sp_absolute(const SpPath *p) {
  * Windows), or (size_t)-1 when there is none */
 static size_t sp_priv_relative_len(const SpPath *p, const SpPath *other) {
     for (size_t len = p->len;;) {
-        if (p->flavor == SP_FLAVOR_WINDOWS ? sp_priv_fold_cmp(p->buf, len, other->buf, other->len) == 0
-                                           : len == other->len && memcmp(p->buf, other->buf, len) == 0)
+        if (sp_priv_text_cmp(p->buf, len, other->buf, other->len, p->flavor == SP_FLAVOR_WINDOWS) == 0)
             return len;
 
         size_t parent = sp_priv_parent_len(p->buf, len, p->flavor, p->anchor);
@@ -1537,7 +1503,7 @@ SpError sp_as_uri(const SpPath *p, char *buf, size_t buf_size) {
         if (drive >= 4 && memcmp(d, "//?/", 4) == 0) {
             d += 4;
             drive -= 4;
-            if (drive >= 4 && sp_priv_str_cmp_case(d, 4, "UNC/", 4, true) == 0) {
+            if (drive >= 4 && sp_priv_text_cmp(d, 4, "unc/", 4, true) == 0) {
                 d += 4;
                 drive -= 4;
                 prefix = "file://";
@@ -1604,7 +1570,7 @@ static void sp_priv_unquote_append(char *buf, size_t *n, const char *s, size_t l
 SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
     flavor = sp_priv_flavor(flavor);
     SpPath err = sp_priv_error_path(flavor, SP_ERR_INVALID_ARG);
-    if (strlen(uri) < 5 || sp_priv_str_cmp_case(uri, 5, "file:", 5, true) != 0)
+    if (strlen(uri) < 5 || sp_priv_text_cmp(uri, 5, "file:", 5, true) != 0)
         return err;
 
     const char *path = uri + 5;
@@ -1641,7 +1607,6 @@ SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
             path++;
             plen--;
         }
-        pipe = 0;
         if (plen > 0)
             sp_priv_utf8_next(path, plen, &pipe);
         pipe = plen > pipe && path[pipe] == '|' ? pipe : 0; /* older URLs use a pipe after the drive letter */
@@ -1671,8 +1636,7 @@ int sp_path_cmp(const SpPath *a, const SpPath *b) {
     for (size_t i = 0, j = 0;;) {
         size_t ea = sp_priv_part_end(sa, la, i, sep);
         size_t eb = sp_priv_part_end(sb, lb, j, sep);
-        int c = a->flavor == SP_FLAVOR_WINDOWS ? sp_priv_fold_cmp(sa + i, ea - i, sb + j, eb - j)
-                                               : sp_priv_str_cmp_case(sa + i, ea - i, sb + j, eb - j, false);
+        int c = sp_priv_text_cmp(sa + i, ea - i, sb + j, eb - j, a->flavor == SP_FLAVOR_WINDOWS);
         if (c != 0)
             return c;
         if (ea == la || eb == lb)
@@ -1682,24 +1646,16 @@ int sp_path_cmp(const SpPath *a, const SpPath *b) {
     }
 }
 
-/* Equal paths hash alike: on Windows by code point lowered like str.lower() (U+0130 to i and a combining dot), with
- * both sigmas hashing alike since str.lower() picks between them by context */
+/* Equal paths hash alike: on Windows by the code points of str.lower() */
 unsigned long sp_path_hash(const SpPath *p) {
     unsigned long hash = 5381;
     const char *str = sp_str(p);
     size_t len = p->len > 0 ? p->len : 1;
+    unsigned long owed = 0;
+    bool lower = p->flavor == SP_FLAVOR_WINDOWS;
 
-    for (size_t i = 0; i < len;) {
-        if (p->flavor != SP_FLAVOR_WINDOWS) {
-            hash = hash * 33 + SP_PRIV_CAST(unsigned char, str[i++]);
-            continue;
-        }
-
-        unsigned long c = sp_priv_utf8_next(str, len, &i);
-        if (c == 0x130)
-            hash = hash * 33 + 'i';
-        c = c == 0x130 ? 0x307 : sp_priv_case_map(c, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
-        hash = hash * 33 + (c == 0x3c2 ? 0x3c3 : c);
+    for (size_t i = 0; i < len || owed != 0;) {
+        hash = hash * 33 + (lower ? sp_priv_lower_next(str, len, &i, &owed) : SP_PRIV_CAST(unsigned char, str[i++]));
     }
     return hash;
 }
@@ -1987,7 +1943,7 @@ static bool sp_priv_is_mount(const SpPath *p) {
         vlen--;
     if (s[plen - 1] == '\\' || s[plen - 1] == '/')
         plen--;
-    return sp_priv_fold_cmp(s, plen, vol, vlen) == 0;
+    return sp_priv_text_cmp(s, plen, vol, vlen, true) == 0;
 #else
     SpStatResult st_path = sp_stat(p, false);
     if ((st_path.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
@@ -2202,7 +2158,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         return sp_priv_error_path(p->flavor, err);
 
 #ifdef SP_WINDOWS
-    if (sp_priv_fold_cmp(p->buf, p->len, "nul", 3) == 0)
+    if (sp_priv_text_cmp(p->buf, p->len, "nul", 3, true) == 0)
         return sp_path_from_n("\\\\.\\NUL", 7, p->flavor);
 #endif
     SpPath abs = sp_absolute(p);
@@ -2244,12 +2200,12 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
             if (step != 1)
                 break;
             sp_priv_readlink_step(&slow);
-            if (sp_priv_fold_cmp(slow.buf, slow.len, fast.buf, fast.len) == 0)
+            if (sp_priv_text_cmp(slow.buf, slow.len, fast.buf, fast.len, true) == 0)
                 break;
         }
         if (step == 1) {
             slow = rest;
-            while (sp_priv_fold_cmp(slow.buf, slow.len, fast.buf, fast.len) != 0) {
+            while (sp_priv_text_cmp(slow.buf, slow.len, fast.buf, fast.len, true) != 0) {
                 sp_priv_readlink_step(&slow);
                 sp_priv_readlink_step(&fast);
             }
@@ -2929,7 +2885,6 @@ SpPath sp_move(const SpPath *p, const SpPath *target, bool into) {
     return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
-/* The *_into operations: target_dir / p.name, then the operation itself */
 static SpStr sp_priv_glob_part(const SpGlobIter *it, size_t pos) {
     const char *buf = it->priv_.pattern_buf;
     char sep = it->priv_.path.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
@@ -3077,7 +3032,9 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             continue;
         }
 
-        bool is_dir = (walk || !last) && sp_is(&entry, SP_DIR, !walk || it->priv_.recurse_symlinks);
+        /* sp_stat directly: through sp_is, is_mount's chain puts glob past the frame limit on Windows */
+        bool is_dir = (walk || !last) &&
+                      (sp_stat(&entry, !walk || it->priv_.recurse_symlinks).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
         if (!last && !is_dir)
             continue;
         *path = entry;
