@@ -2075,6 +2075,7 @@ static SpError sp_priv_readlink_impl(const SpPath *p, SpPath *out) {
     /* REPARSE_DATA_BUFFER: the tag at 0, the substitute name's offset and length at 8, the names after the flags
      * (at 20) for a symlink, right after the lengths (at 16) for a junction */
     union {
+        wchar_t wide[8192]; /* the names are UTF-16 at even offsets, read in place */
         char bytes[16384];
         DWORD align;
     } data;
@@ -2095,13 +2096,12 @@ static SpError sp_priv_readlink_impl(const SpPath *p, SpPath *out) {
     size_t names = tag == IO_REPARSE_TAG_SYMLINK ? 20 : tag == IO_REPARSE_TAG_MOUNT_POINT ? 16 : 0;
     if (names == 0)
         return SP_ERR_NOT_LINK;
-    if (names + offset + bytes > got)
+    if (names + offset + bytes > got || offset % 2 != 0)
         return SP_ERR_IO;
     if (bytes / 2 >= SP_PATH_MAX)
         return SP_ERR_TOO_LONG;
 
-    wchar_t target[SP_PATH_MAX];
-    memcpy(target, data.bytes + names + offset, bytes);
+    wchar_t *target = data.wide + (names + offset) / 2;
     if (bytes / 2 > 4 && memcmp(target, L"\\??\\", 4 * sizeof(wchar_t)) == 0)
         target[1] = L'\\';
     return sp_priv_from_wide(target, bytes / 2, out->buf, SP_PATH_MAX, &out->len);
@@ -2228,6 +2228,18 @@ static int sp_priv_readlink_step(SpPath *path) {
     sp_priv_collapse_dots(path, path->anchor, path->drive);
     return path->error == SP_OK ? 1 : -1;
 }
+
+/* r without its "\\?\" prefix when the path without it resolves the same (or fails the same way, initial) */
+static SpPath sp_priv_without_prefix(const SpPath *r, DWORD initial) {
+    bool unc = r->len >= 8 && memcmp(r->buf + 4, "UNC\\", 4) == 0;
+    SpPath stripped = unc ? sp_priv_path_from_raw("\\\\", 2, r->flavor) : sp_priv_error_path(r->flavor, SP_OK);
+    sp_priv_append(&stripped, r->buf + (unc ? 8 : 4), r->len - (unc ? 8 : 4), false);
+
+    SpPath again;
+    DWORD e = sp_priv_final_path(&stripped, &again);
+    bool same = e == 0 ? again.len == r->len && memcmp(again.buf, r->buf, r->len) == 0 : e == initial;
+    return same ? stripped : *r;
+}
 #endif
 
 /* os.path.realpath of the absolute path. On POSIX, realpath() of the longest prefix it resolves (the whole path when
@@ -2328,16 +2340,8 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
             r = sp_priv_join_len(&r, tail.buf, tail.len);
     }
 
-    if (!had_prefix && r.error == SP_OK && r.len >= 4 && memcmp(r.buf, "\\\\?\\", 4) == 0) {
-        bool unc = r.len >= 8 && memcmp(r.buf + 4, "UNC\\", 4) == 0;
-        SpPath stripped = unc ? sp_priv_path_from_raw("\\\\", 2, p->flavor) : sp_priv_error_path(p->flavor, SP_OK);
-        sp_priv_append(&stripped, r.buf + (unc ? 8 : 4), r.len - (unc ? 8 : 4), false);
-
-        SpPath again;
-        DWORD e = sp_priv_final_path(&stripped, &again);
-        if (e == 0 ? again.len == r.len && memcmp(again.buf, r.buf, r.len) == 0 : e == initial)
-            r = stripped;
-    }
+    if (!had_prefix && r.error == SP_OK && r.len >= 4 && memcmp(r.buf, "\\\\?\\", 4) == 0)
+        r = sp_priv_without_prefix(&r, initial);
     return r.error != SP_OK ? r : sp_path_from_n(r.buf, r.len, p->flavor);
 #else
     /* realpath() allocates its result: a buffer of ours could be shorter than the PATH_MAX it may fill */
