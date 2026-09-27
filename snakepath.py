@@ -105,6 +105,7 @@ class _SpStatResult(Structure):
         ("st_atime_ns", ctypes.c_longlong),
         ("st_mtime_ns", ctypes.c_longlong),
         ("st_ctime_ns", ctypes.c_longlong),
+        ("st_reparse_tag", ctypes.c_uint),
         ("error", c_int),
     ]
 
@@ -112,7 +113,7 @@ class _SpStatResult(Structure):
         if isinstance(other, _SpStatResult):
             return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other)))
         if hasattr(other, 'st_mode'):
-            other_sp = _SpStatResult(**{n: getattr(other, n) for n, _ in _SpStatResult._fields_ if n != 'error'})
+            other_sp = _SpStatResult(**{n: getattr(other, n, 0) for n, _ in _SpStatResult._fields_ if n != 'error'})
             return bool(_lib.sp_stat_eq_wrap(byref(self), byref(other_sp)))
         return NotImplemented
 
