@@ -1137,6 +1137,99 @@ def check_fuzz(limit=20):
     return 1 if mismatches else 0
 
 
+def check_fs(limit=20):
+    """Compare the bindings' file system results with CPython's os and pathlib on real files: a file with sub-second
+    times, a directory tree, and links. CPython's pathlib tests compare snakepath with itself (a copy's times with its
+    source's, both read through snakepath), so a result that is wrong the same way twice passes them, as whole-second
+    stat times did."""
+    import shutil
+    import tempfile
+    mismatches = []
+    checks = 0
+
+    def compare(what, ours, real):
+        nonlocal checks
+        checks += 1
+        a, b = _outcome(ours), _outcome(real)
+        if a != b:
+            mismatches.append(f"  {what}: snakepath {a!r}, pathlib {b!r}")
+
+    root = tempfile.mkdtemp()
+    try:
+        base = pathlib.Path(root)
+        (base / "d" / "e").mkdir(parents=True)
+        for name in ["f.txt", "d/g.py", "d/e/h.txt", "twin-ours", "twin-real"]:
+            (base / name).write_bytes(b"snakepath\n")
+        os.utime(base / "f.txt", ns=(1_600_000_000_123_456_789, 1_700_000_000_987_654_321))
+        for link, target in [("link", "f.txt"), ("dlink", "d"), ("broken", "missing"), ("loop1", "loop2"),
+                             ("loop2", "loop1"), ("toloop", "loop1"), ("deep", "d/../broken/x")]:
+            try:
+                (base / link).symlink_to(target, target_is_directory=target == "d")
+            except OSError:
+                pass  # Windows without the privilege to make symlinks
+        entries = ["", *sorted(os.listdir(root)), "d/g.py", "missing", "missing/../f.txt", "broken/x/..", "dlink/..",
+                   "link/x"]
+
+        # stat and lstat, every field, before anything reads the files (reading moves their access times)
+        fields = ["st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size", "st_atime_ns",
+                  "st_mtime_ns", "st_ctime_ns", "st_atime", "st_mtime", "st_ctime"]
+        for name in entries:
+            ours, real = Path(root, name), pathlib.Path(root, name)
+            for follow in (True, False):
+                for field in fields:
+                    compare(f"{name!r}.stat(follow_symlinks={follow}).{field}",
+                            lambda: getattr(ours.stat(follow_symlinks=follow), field),
+                            lambda: getattr(real.stat(follow_symlinks=follow), field))
+
+        # What the file system says about each entry, and what it holds
+        predicates = ["exists", "is_dir", "is_file", "is_symlink", "is_mount", "is_junction", "is_fifo", "is_socket",
+                      "is_block_device", "is_char_device"]
+        for name in entries:
+            ours, real = Path(root, name), pathlib.Path(root, name)
+            for predicate in predicates:
+                compare(f"{name!r}.{predicate}()", getattr(ours, predicate), getattr(real, predicate))
+            for predicate in ["exists", "is_dir", "is_file"]:
+                compare(f"{name!r}.{predicate}(follow_symlinks=False)",
+                        lambda: getattr(ours, predicate)(follow_symlinks=False),
+                        lambda: getattr(real, predicate)(follow_symlinks=False))
+            for method in ["readlink", "resolve", "absolute", "read_bytes", "owner", "group"]:
+                compare(f"{name!r}.{method}()", getattr(ours, method), getattr(real, method))
+            compare(f"{name!r}.resolve(strict=True)", lambda: ours.resolve(strict=True),
+                    lambda: real.resolve(strict=True))
+            compare(f"{name!r}.samefile(f.txt)", lambda: ours.samefile(Path(root, "f.txt")),
+                    lambda: real.samefile(pathlib.Path(root, "f.txt")))
+            compare(f"{name!r}.iterdir()", lambda: sorted(ours.iterdir()), lambda: sorted(real.iterdir()))
+            for pattern in ["*", "**/*", "*/*.py"]:
+                compare(f"{name!r}.glob({pattern!r})", lambda: sorted(ours.glob(pattern)),
+                        lambda: sorted(real.glob(pattern)))
+            for top_down in (True, False):
+                for follow in (True, False):
+                    compare(f"{name!r}.walk(top_down={top_down}, follow_symlinks={follow})",
+                            lambda: sorted((str(d), sorted(ds), sorted(fs))
+                                           for d, ds, fs in ours.walk(top_down, follow_symlinks=follow)),
+                            lambda: sorted((str(d), sorted(ds), sorted(fs))
+                                           for d, ds, fs in real.walk(top_down, follow_symlinks=follow)))
+
+        # Actions, judged by what CPython's os.stat sees afterwards, against pathlib doing the same
+        for name in ["f.txt", "d"]:
+            ours_copy = Path(root, name).copy(Path(root, f"copy-ours-{name}"), preserve_metadata=True)
+            real_copy = pathlib.Path(root, name).copy(pathlib.Path(root, f"copy-real-{name}"), preserve_metadata=True)
+            for field in ["st_mode", "st_size", "st_mtime_ns"]:
+                compare(f"{name!r}.copy(preserve_metadata=True) then os.stat().{field}",
+                        lambda: getattr(os.stat(ours_copy), field), lambda: getattr(os.stat(real_copy), field))
+        Path(root, "twin-ours").chmod(0o640)
+        pathlib.Path(root, "twin-real").chmod(0o640)
+        compare("chmod(0o640) then os.stat().st_mode", lambda: os.stat(Path(root, "twin-ours")).st_mode,
+                lambda: os.stat(pathlib.Path(root, "twin-real")).st_mode)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    print(f"fs check: {checks} comparisons with os and pathlib, {len(mismatches)} mismatches")
+    for line in mismatches[:limit]:
+        print(line)
+    return 1 if mismatches else 0
+
+
 THIS_DIR = pathlib.Path(__file__).resolve().parent
 TEST_DIR = THIS_DIR / "cpython_tests"
 # CPython's own pathlib tests: the 3.15 branch's Lib/test/test_pathlib/test_pathlib.py. The other
@@ -1562,7 +1655,7 @@ def main():
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    checks_failed = check_frames(THIS_DIR / "snakepath.h") | check_docs(THIS_DIR) | check_fuzz()
+    checks_failed = check_frames(THIS_DIR / "snakepath.h") | check_docs(THIS_DIR) | check_fuzz() | check_fs()
     return run_tests() or checks_failed
 
 
