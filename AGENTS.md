@@ -26,7 +26,7 @@ Shift every error as far left as it goes: what can be a compile error is one, wh
 ## Call Depth and Stack
 `snakepath.py` measures two things on the preprocessed library (`cc -E -P`, or `cl /EP` on Windows, with `SNAKEPATH_IMPLEMENTATION` and `SNAKEPATH_FLUENT`) and bounds both with hardcoded limits (`FRAME_LIMIT`, `STACK_BUDGETS`):
 - **Frames**: every function the library defines is a frame (public, `sp_priv_*` and `static inline` alike, plus qsort comparators); a function calling itself is exempt. At most 6 snakepath frames from a public function down; a fluent method is one more on top, so 7. Indirection has a price of its own, which is why this bound stays even though it is not the stack risk.
-- **Stack bytes**: each function's own frame from `-fstack-usage` at `-O0` (gcc or clang; skipped with a message where neither exists), summed along the heaviest call chain below every public function, at `SP_PATH_MAX` 4096 and 1024. Budgets: 48 KB and 16 KB (Windows' default stack is 1 MB). This is the real constraint the frame count used to stand in for.
+- **Stack bytes**: each function's own frame from `-fstack-usage` at `-O0` (gcc or clang; skipped with a message where neither exists), summed along the heaviest call chain below every public function, at `SP_PATH_MAX` 4096 and 1024. Budgets: 128 KB and 64 KB, 1/16 of Windows' 1 MB default stack at its `SP_PATH_MAX`. Frames depend on the compiler (clang for the MSVC ABI at `-O0` measures about 4× gcc's), so the budgets hold for the worst measuring environment and the printed chains are the numbers to compare. This is the real constraint the frame count used to stand in for.
 - The check prints leads, not just a verdict: the functions at the frame limit, the heaviest chain per configuration and the heaviest frames. Read them before a compression pass; a frame-forced duplicate or a large stack buffer shows up there first.
 - Never pass either check by hiding a call behind a private wrapper or a macro. Prefer entry → helper → leaf, leaves taking what they need precomputed. With 6 frames a public function may call another public function and still have room (`sp_resolve` → `sp_absolute` → `sp_priv_join_len` → `sp_priv_normalize` → `sp_priv_split_anchor` → `sp_priv_drive_len` is the limit).
 - History: the limit was 3, then 4 (PR #88), then 6 with the stack budget (2026-09-27), when the maintainer judged that the frame count alone had been forcing duplicates (`copy_into`, `move_into`, the cwd sites, the Windows readlink step) that a byte bound doesn't.
@@ -125,6 +125,7 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 ## Known Issues
 
 - Windows CI: race condition with parallel MSVC builds
+- The test binaries' `main` holds hundreds of paths in one frame, past Windows' 1 MB default stack at `/Od`: nob links them with `/STACK:8388608`
 - Clang `-Wnrvo` (not eliding copies on multi-return paths such as `sp_path_convert`); disabled via SNAKEPATH_NO_NRVO
 - Windows console: Turkish İ (U+0130) needs UTF-8 wrapper
 

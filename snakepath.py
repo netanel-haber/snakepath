@@ -955,7 +955,10 @@ def call_graph(code: str) -> tuple[dict[str, set[str]], set[str]]:
     return graph, escaped & graph.keys()
 
 
-STACK_BUDGETS = {4096: 48 * 1024, 1024: 16 * 1024}  # worst-case bytes of snakepath frames per public call, by SP_PATH_MAX
+# Worst-case bytes of snakepath frames per public call, by SP_PATH_MAX: 1/16 of Windows' 1 MB default stack at its
+# SP_PATH_MAX. Frames depend on the compiler (clang for the MSVC ABI at -O0 measures about 4x gcc's), so the budgets
+# hold for the worst measuring environment, and the printed chains are the numbers to compare.
+STACK_BUDGETS = {4096: 128 * 1024, 1024: 64 * 1024}
 FRAME_LIMIT = 6  # snakepath frames on the stack from a public function down; a fluent method is one more on top
 
 
