@@ -65,7 +65,7 @@ Required workflow:
 2. Identify the largest repeated or wrapper-heavy regions.
 3. If macros are involved, inspect the preprocessed view of the touched region.
 4. Make only the changes that are simpler in both source and expanded form.
-5. When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with an old-vs-new differential driver. The driver includes `snakepath.h` from `main` and from the working tree and prints every public result per input. Run it over exhaustive short strings (for example over `/\ac:.?U`), token sequences (including `\\?\UNC\` and `\\.\` prefixes, which random generation never hits) and random strings, in both flavors and with `SP_PATH_MAX` 64 and 16. Then compare the outputs.
+5. When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with an old-vs-new differential driver. The driver includes `snakepath.h` from `main` and from the working tree and prints every public result per input. Run it over exhaustive short strings (for example over `/\ac:.?U`), token sequences (including `\\?\UNC\` and `\\.\` prefixes, which random generation never hits) and random strings, in both flavors and with `SP_PATH_MAX` 64 and 16. Then compare the outputs. Run every comparison at once (one background process per input set and `SP_PATH_MAX`, exhaustive sets sharded by first character), never one after another: the serial suite takes over half an hour on a phone, the parallel one minutes.
 6. Run `./nob format`, then verify with `nob`.
 7. If a failure may be local-environment noise, baseline against clean `main` with `./nob clean` before calling it a regression.
 
