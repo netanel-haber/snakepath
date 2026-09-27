@@ -1215,35 +1215,52 @@ static bool run_clang_format(bool rewrite) {
 }
 
 
+static bool delete_if_exists(const char *path) {
+    return nob_file_exists(path) != 1 || nob_delete_file(path);
+}
+
 /* ./nob diff [ref]: the pure path API of the working tree's snakepath.h against the header at a git ref (default
-   origin/main), through test.c's SP_DIFF driver, which -I points at one header or the other. Every result for
-   exhaustive short strings, token sequences and random strings, at SP_PATH_MAX 64 and 16, one hash per line, compared
-   line by line; a difference is shown in full. The input sets are sized for CI's Windows runner to finish in a few
-   minutes. An intentional behavior change differs by design, so CI runs this as an informational job. */
+   origin/main), through test.c's SP_DIFF driver, which -I points at one header or the other: every result for
+   exhaustive short strings, token sequences and random strings, at SP_PATH_MAX 64 and 16, one hash per line. Each set
+   is split across the cores (a driver process takes every nth line), and the outputs are compared while the drivers
+   run, so a set's first difference is shown in full as soon as both sides have it. The base side's drivers and outputs
+   stay in DIFF_BASE_DIR and are reused while the base header, test.c and the build commands are the same. An
+   intentional behavior change differs by design, so CI runs this as an informational job. */
 #define DIFF_BASE_DIR "diff_base"
+#define DIFF_HEAD_DIR "diff_head"
+#define DIFF_RECORD 17     /* one line of a driver's output: a hash in 16 hex digits and '\n' */
+#define DIFF_SHARDS 16     /* parts per input set and side: fixed, so the cached base side fits any machine */
 static const char *diff_specs[][2] = {{"exhaustive", "5"}, {"tokens", "3"}, {"random", "100000"}};
 static const char *diff_sizes[] = {"64", "16"};
-static const char *diff_sides[] = {"base", "head"};
+static const char *diff_dirs[] = {DIFF_BASE_DIR, DIFF_HEAD_DIR};
 
-static const char *diff_exe(const char *side, const char *size) {
+static const char *diff_exe(size_t side, size_t s) {
 #ifdef _WIN32
-    return nob_temp_sprintf("diff_%s_%s.exe", side, size);
+    return nob_temp_sprintf("%s\\driver_%s.exe", diff_dirs[side], diff_sizes[s]);
 #else
-    return nob_temp_sprintf("./diff_%s_%s", side, size);
+    return nob_temp_sprintf("./%s/driver_%s", diff_dirs[side], diff_sizes[s]);
 #endif
 }
 
-static const char *diff_out(const char *side, const char *size, const char *spec) {
-    return nob_temp_sprintf("diff_%s_%s_%s.txt", side, size, spec);
+static const char *diff_out(size_t side, size_t s, size_t spec, int shard) {
+    return nob_temp_sprintf("%s/%s_%s_%d.txt", diff_dirs[side], diff_sizes[s], diff_specs[spec][0], shard);
+}
+
+static void diff_mkdir(const char *dir) {
+#ifdef _WIN32
+    _mkdir(dir);
+#else
+    mkdir(dir, 0777);
+#endif
 }
 
 /* The header at ref, as DIFF_BASE_DIR/snakepath.h */
 static bool write_base_header(const char *ref) {
+    diff_mkdir(DIFF_BASE_DIR);
+    diff_mkdir(DIFF_HEAD_DIR);
 #ifdef _WIN32
-    _mkdir(DIFF_BASE_DIR);
     FILE *git = _popen(nob_temp_sprintf("git show %s:snakepath.h", ref), "rb");
 #else
-    mkdir(DIFF_BASE_DIR, 0777);
     FILE *git = popen(nob_temp_sprintf("git show %s:snakepath.h", ref), "r");
 #endif
     FILE *out = fopen(DIFF_BASE_DIR "/snakepath.h", "wb");
@@ -1268,95 +1285,329 @@ static bool write_base_header(const char *ref) {
     return true;
 }
 
-/* test.c as the SP_DIFF driver, against the snakepath.h in include_dir, at SP_PATH_MAX size */
-static bool build_diff_driver(const char *include_dir, const char *size, const char *output, Nob_Procs *procs) {
-    Nob_Cmd cmd = {0};
+/* test.c as the SP_DIFF driver at SP_PATH_MAX size, against the base header (side 0) or the working tree's */
+static void diff_driver_cmd(size_t side, size_t s, Nob_Cmd *cmd) {
+    const char *include_dir = side == 0 ? DIFF_BASE_DIR : ".";
+    const char *output = diff_exe(side, s);
 #ifdef _WIN32
-    nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/W4", "/O2", "/DSP_DIFF");
-    nob_cmd_append(&cmd, nob_temp_sprintf("/DSP_PATH_MAX=%s", size), nob_temp_sprintf("/I%s", include_dir));
-    nob_cmd_append(&cmd, nob_temp_sprintf("/Fo%.*s.obj", (int)(strlen(output) - 4), output), "/Fe:", output);
+    nob_cmd_append(cmd, "cl.exe", "/std:c11", "/W4", "/O2", "/DSP_DIFF");
+    nob_cmd_append(cmd, nob_temp_sprintf("/DSP_PATH_MAX=%s", diff_sizes[s]), nob_temp_sprintf("/I%s", include_dir));
+    nob_cmd_append(cmd, nob_temp_sprintf("/Fo%.*s.obj", (int)(strlen(output) - 4), output), "/Fe:", output);
 #else
-    nob_cmd_append(&cmd, skip_gcc ? "clang" : "gcc", "-std=c99", "-O2", "-Wall", "-Wextra", "-DSP_DIFF");
-    nob_cmd_append(&cmd, nob_temp_sprintf("-DSP_PATH_MAX=%s", size), "-I", include_dir, "-o", output);
+    nob_cmd_append(cmd, skip_gcc ? "clang" : "gcc", "-std=c99", "-O2", "-Wall", "-Wextra", "-DSP_DIFF");
+    nob_cmd_append(cmd, nob_temp_sprintf("-DSP_PATH_MAX=%s", diff_sizes[s]), "-I", include_dir, "-o", output);
 #endif
-    nob_cmd_append(&cmd, "test.c");
-    return nob_cmd_run(&cmd, .async = procs);
+    nob_cmd_append(cmd, "test.c");
 }
 
-/* The first line where two files differ (1-based), 0 when they are the same, -1 when one can't be read */
-static long first_differing_line(const char *a_path, const char *b_path) {
-    FILE *a = fopen(a_path, "rb");
-    FILE *b = fopen(b_path, "rb");
-    long line = a && b ? 1 : -1;
-    for (int ca = 0, cb = 0; line > 0 && ca != EOF; ) {
-        ca = getc(a);
-        cb = getc(b);
-        if (ca != cb)
-            break;
-        if (ca == '\n')
-            line++;
-        if (ca == EOF)
-            line = 0;
+/* FNV-1a over bytes, continuing from h */
+static unsigned long long diff_hash(unsigned long long h, const char *data, size_t len) {
+    for (size_t i = 0; i < len; i++)
+        h = (h ^ (unsigned char)data[i]) * 1099511628211ULL;
+    return h;
+}
+
+/* What the base side's outputs depend on: the base header, test.c, the build commands and the split */
+static unsigned long long diff_base_key(int shards) {
+    unsigned long long h = 14695981039346656037ULL;
+    const char *files[] = {DIFF_BASE_DIR "/snakepath.h", "test.c"};
+    for (size_t i = 0; i < 2; i++) {
+        FILE *f = fopen(files[i], "rb");
+        for (int c; f && (c = getc(f)) != EOF;) {
+            char byte = (char)c;
+            h = diff_hash(h, &byte, 1);
+        }
+        if (f)
+            fclose(f);
     }
-    if (a) fclose(a);
-    if (b) fclose(b);
-    return line;
+    for (size_t s = 0; s < 2; s++) {
+        Nob_Cmd cmd = {0};
+        Nob_String_Builder sb = {0};
+        diff_driver_cmd(0, s, &cmd);
+        nob_cmd_render(cmd, &sb);
+        h = diff_hash(h, sb.items, sb.count);
+        nob_da_free(cmd);
+        nob_sb_free(sb);
+    }
+    return diff_hash(h, (const char *)&shards, sizeof shards);
+}
+
+/* The key the base side's drivers and outputs were made with, as text (empty when there is none) */
+static void diff_key_text(unsigned long long key, char text[32]) {
+    snprintf(text, 32, "%016llx\n", key);
+}
+
+/* Whether the base side's drivers and outputs were made with this key */
+static bool diff_base_cached(unsigned long long key, int shards) {
+    char want[32];
+    char have[32] = {0};
+    diff_key_text(key, want);
+    FILE *f = fopen(DIFF_BASE_DIR "/key", "rb");
+    bool cached = f && fread(have, 1, sizeof have - 1, f) == strlen(want) && strcmp(have, want) == 0;
+    if (f)
+        fclose(f);
+    for (size_t s = 0; cached && s < 2; s++) {
+        cached = nob_file_exists(diff_exe(0, s)) == 1;
+        for (size_t spec = 0; cached && spec < 3; spec++)
+            for (int k = 0; cached && k < shards; k++)
+                cached = nob_file_exists(diff_out(0, s, spec, k)) == 1;
+    }
+    return cached;
+}
+
+static void diff_sleep_ms(int ms) {
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    struct timespec t = {0, ms * 1000000L};
+    nanosleep(&t, NULL);
+#endif
+}
+
+/* One input set at one SP_PATH_MAX: its shards' processes and outputs as they grow, and what they showed so far */
+typedef struct {
+    Nob_Proc proc[DIFF_SHARDS][2];
+    FILE *out[DIFF_SHARDS][2];
+    long compared[DIFF_SHARDS]; /* records of both sides compared so far */
+    long first;                     /* the first differing line found (not always the lowest), 0 for none */
+    long differing;
+    long lines;
+    bool failed;
+} Diff_Set;
+
+/* Line of set spec at size s in full from one side's driver: its input on the first line, its labeled results on the
+ * second (the caller frees the text) */
+static char *diff_line_text(size_t side, size_t s, size_t spec, long line) {
+    const char *cmd = nob_temp_sprintf("%s %s %s - %ld 0", diff_exe(side, s), diff_specs[spec][0], diff_specs[spec][1], line);
+#ifdef _WIN32
+    FILE *p = _popen(cmd, "rb");
+#else
+    FILE *p = popen(cmd, "r");
+#endif
+    Nob_String_Builder sb = {0};
+    char buf[4096];
+    for (size_t n; p && (n = fread(buf, 1, sizeof buf, p)) > 0;)
+        nob_da_append_many(&sb, buf, n);
+    if (p) {
+#ifdef _WIN32
+        _pclose(p);
+#else
+        pclose(p);
+#endif
+    }
+    nob_sb_append_null(&sb);
+    return sb.items;
+}
+
+/* The input of a differing line and the results that differ, "label: base -> head" */
+static void diff_show_line(size_t s, size_t spec, long line) {
+    char *text[2];
+    for (size_t side = 0; side < 2; side++)
+        text[side] = diff_line_text(side, s, spec, line);
+
+    char *input_end = strchr(text[1], '\n');
+    printf("    input: %.*s\n", input_end ? (int)(input_end - text[1]) : 0, text[1]);
+    char *field[2];
+    for (size_t side = 0; side < 2; side++) {
+        char *nl = strchr(text[side], '\n');
+        field[side] = nl ? nl + 1 : text[side] + strlen(text[side]);
+    }
+
+    /* Both sides give the same labels in the same order until a difference changes what follows */
+    int shown = 0;
+    while (*field[0] || *field[1]) {
+        size_t len[2];
+        for (size_t side = 0; side < 2; side++)
+            len[side] = strcspn(field[side], "|\n");
+        if (len[0] != len[1] || memcmp(field[0], field[1], len[0]) != 0) {
+            const char *eq = memchr(field[0], '=', len[0]);
+            size_t label = eq ? (size_t)(eq - field[0]) : 0;
+            if (shown++ < 12)
+                printf("    %.*s: %.*s -> %.*s\n", (int)label, field[0], (int)(len[0] - label - (eq ? 1 : 0)),
+                       field[0] + label + (eq ? 1 : 0), (int)(len[1] - label - (eq ? 1 : 0)), field[1] + label + (eq ? 1 : 0));
+        }
+        for (size_t side = 0; side < 2; side++)
+            field[side] += len[side] + (field[side][len[side]] == '|' ? 1 : 0);
+        if (*field[0] == '\n' || *field[1] == '\n')
+            break;
+    }
+    if (shown > 12)
+        printf("    ... and %d more results\n", shown - 12);
+    fflush(stdout);
+    free(text[0]);
+    free(text[1]);
+}
+
+/* Compares whatever both sides of a shard have written since the last call; a set's first difference is shown at once */
+static void diff_compare(Diff_Set *set, time_t started, size_t s, size_t spec, int k, int shards) {
+    long avail[2];
+    for (size_t side = 0; side < 2; side++) {
+        if (!set->out[k][side])
+            set->out[k][side] = fopen(diff_out(side, s, spec, k), "rb");
+        if (!set->out[k][side] || fseek(set->out[k][side], 0, SEEK_END) != 0)
+            return;
+        avail[side] = ftell(set->out[k][side]) / DIFF_RECORD;
+    }
+
+    static char a[DIFF_RECORD * 4096], b[DIFF_RECORD * 4096];
+    for (long n = (avail[0] < avail[1] ? avail[0] : avail[1]) - set->compared[k]; n > 0;) {
+        long count = n < 4096 ? n : 4096;
+        fseek(set->out[k][0], set->compared[k] * DIFF_RECORD, SEEK_SET);
+        fseek(set->out[k][1], set->compared[k] * DIFF_RECORD, SEEK_SET);
+        if (fread(a, DIFF_RECORD, (size_t)count, set->out[k][0]) != (size_t)count ||
+            fread(b, DIFF_RECORD, (size_t)count, set->out[k][1]) != (size_t)count)
+            return;
+
+        for (long i = 0; i < count; i++) {
+            if (memcmp(a + i * DIFF_RECORD, b + i * DIFF_RECORD, DIFF_RECORD) == 0)
+                continue;
+            long line = k + 1 + (set->compared[k] + i) * shards;
+            set->differing++;
+            if (set->first != 0)
+                continue;
+            set->first = line;
+            nob_log(NOB_ERROR, "  DIFF  SP_PATH_MAX=%s %s %s, line %ld, after %ld s (the first found; more may follow):",
+                    diff_sizes[s], diff_specs[spec][0], diff_specs[spec][1], line, (long)(time(NULL) - started));
+            diff_show_line(s, spec, line);
+        }
+        set->compared[k] += count;
+        set->lines += count;
+        n -= count;
+    }
 }
 
 static bool run_diff(const char *ref) {
     if (!write_base_header(ref)) return false;
-    Nob_Procs procs = {0};
+    int shards = DIFF_SHARDS;
+    int slots = nob_nprocs() < 1 ? 1 : nob_nprocs(); /* drivers running at once */
+    unsigned long long key = diff_base_key(shards);
+    bool cached = diff_base_cached(key, shards);
+    if (!cached)
+        delete_if_exists(DIFF_BASE_DIR "/key");
+    time_t started = time(NULL);
 
-    LOG_INFO( "=== Building the differential drivers (base: %s) ===", ref);
-    for (size_t s = 0; s < 2; s++) {
-        build_diff_driver(DIFF_BASE_DIR, diff_sizes[s], diff_exe("base", diff_sizes[s]), &procs);
-        build_diff_driver(".", diff_sizes[s], diff_exe("head", diff_sizes[s]), &procs);
-    }
+    LOG_INFO( "=== Building the differential drivers (base: %s%s) ===", ref, cached ? ", its results cached" : "");
+    Nob_Procs procs = {0};
+    for (size_t s = 0; s < 2; s++)
+        for (size_t side = cached ? 1 : 0; side < 2; side++) {
+            Nob_Cmd cmd = {0};
+            diff_driver_cmd(side, s, &cmd);
+            nob_cmd_run(&cmd, .async = &procs);
+        }
     if (!nob_procs_flush(&procs)) {
         nob_log(NOB_ERROR, "Building the differential drivers failed: %s may have a different API than the working tree", ref);
         return false;
     }
 
-    LOG_INFO( "=== Running the input sets against both headers, in parallel ===");
-    for (size_t s = 0; s < 2; s++)
-        for (size_t i = 0; i < 3; i++)
-            for (size_t side = 0; side < 2; side++) {
-                Nob_Cmd cmd = {0};
-                nob_cmd_append(&cmd, diff_exe(diff_sides[side], diff_sizes[s]), diff_specs[i][0], diff_specs[i][1]);
-                nob_cmd_append(&cmd, diff_out(diff_sides[side], diff_sizes[s], diff_specs[i][0]));
-                nob_cmd_run(&cmd, .async = &procs);
-            }
-    if (!nob_procs_flush(&procs)) {
-        nob_log(NOB_ERROR, "A differential driver failed");
-        return false;
+    /* Jobs part by part, so the first ones cover every set, each base job next to its head job; at most one driver
+       per core runs at a time (Android kills an app past 32 child processes) */
+    LOG_INFO( "=== Comparing each input set in %d parts per side, as the drivers write ===", shards);
+    static Diff_Set sets[2][3];
+    static size_t queue[DIFF_SHARDS * 2 * 3 * 2][4]; /* part, size, set, side */
+    memset(sets, 0, sizeof sets);
+    size_t jobs = 0;
+    Nob_Log_Level quiet = nob_minimal_log_level;
+    nob_minimal_log_level = NOB_WARNING; /* not a line per deleted output */
+    for (int k = 0; k < shards; k++)
+        for (size_t s = 0; s < 2; s++)
+            for (size_t spec = 0; spec < 3; spec++)
+                for (size_t side = 0; side < 2; side++) {
+                    sets[s][spec].proc[k][side] = NOB_INVALID_PROC;
+                    if (side == 1 || !cached) {
+                        /* An old output would be read before its driver starts over: gone until the driver makes it */
+                        size_t job[4] = {(size_t)k, s, spec, side};
+                        memcpy(queue[jobs++], job, sizeof job);
+                        if (!delete_if_exists(diff_out(side, s, spec, k)))
+                            return false;
+                    }
+                }
+    nob_minimal_log_level = quiet;
+
+    int running = 0;
+    for (size_t next = 0; next < jobs || running > 0;) {
+        for (size_t s = 0; s < 2; s++)
+            for (size_t spec = 0; spec < 3; spec++)
+                for (int k = 0; k < shards; k++)
+                    for (size_t side = 0; side < 2; side++) {
+                        Nob_Proc *proc = &sets[s][spec].proc[k][side];
+                        if (*proc == NOB_INVALID_PROC)
+                            continue;
+                        int status = nob__proc_wait_async(*proc, 0);
+                        if (status == 0)
+                            continue;
+                        sets[s][spec].failed |= status < 0;
+                        *proc = NOB_INVALID_PROC;
+                        running--;
+                    }
+
+        size_t mark = nob_temp_save();
+        Nob_Log_Level level = nob_minimal_log_level;
+        nob_minimal_log_level = NOB_WARNING; /* not a command line per process */
+        for (; next < jobs && running < slots; next++) {
+            size_t k = queue[next][0];
+            size_t s = queue[next][1];
+            size_t spec = queue[next][2];
+            size_t side = queue[next][3];
+            Nob_Cmd cmd = {0};
+            nob_cmd_append(&cmd, diff_exe(side, s), diff_specs[spec][0], diff_specs[spec][1], diff_out(side, s, spec, (int)k));
+            nob_cmd_append(&cmd, nob_temp_sprintf("%zu", k + 1), nob_temp_sprintf("%d", shards));
+            Nob_Proc proc = nob__cmd_start_process(cmd);
+            nob_da_free(cmd);
+            sets[s][spec].failed |= proc == NOB_INVALID_PROC;
+            if (proc == NOB_INVALID_PROC)
+                continue;
+            sets[s][spec].proc[k][side] = proc;
+            running++;
+        }
+        nob_minimal_log_level = level;
+
+        for (size_t s = 0; s < 2; s++)
+            for (size_t spec = 0; spec < 3; spec++)
+                for (int k = 0; k < shards; k++)
+                    diff_compare(&sets[s][spec], started, s, spec, k, shards);
+        nob_temp_rewind(mark);
+        if (next < jobs || running > 0)
+            diff_sleep_ms(50);
     }
 
     bool same = true;
+    bool complete = true; /* every driver finished, and the sides wrote the same line counts */
     for (size_t s = 0; s < 2; s++)
-        for (size_t i = 0; i < 3; i++) {
-            const char *spec = diff_specs[i][0];
-            long line = first_differing_line(diff_out("base", diff_sizes[s], spec), diff_out("head", diff_sizes[s], spec));
-            if (line == 0) {
-                LOG_INFO( "  SAME  SP_PATH_MAX=%s %s %s", diff_sizes[s], spec, diff_specs[i][1]);
-                continue;
+        for (size_t spec = 0; spec < 3; spec++) {
+            Diff_Set *set = &sets[s][spec];
+            for (int k = 0; k < shards; k++) {
+                long size[2] = {0, 0};
+                for (size_t side = 0; side < 2; side++) {
+                    FILE *f = set->out[k][side];
+                    if (f && fseek(f, 0, SEEK_END) == 0)
+                        size[side] = ftell(f);
+                    if (f)
+                        fclose(f);
+                }
+                set->failed |= size[0] != size[1] || size[0] % DIFF_RECORD != 0;
             }
-            same = false;
-            nob_log(NOB_ERROR, "  DIFF  SP_PATH_MAX=%s %s %s, first at line %ld:", diff_sizes[s], spec, diff_specs[i][1], line);
-            for (size_t side = 0; line > 0 && side < 2; side++) {
-                Nob_Cmd cmd = {0};
-                printf("--- %s (%s) ---\n", diff_sides[side], side == 0 ? ref : "working tree");
-                fflush(stdout);
-                nob_cmd_append(&cmd, diff_exe(diff_sides[side], diff_sizes[s]), spec, diff_specs[i][1], "-");
-                nob_cmd_append(&cmd, nob_temp_sprintf("%ld", line));
-                nob_cmd_run(&cmd);
-            }
-        }
-    nob_da_free(procs);
-    return same;
-}
 
-static bool delete_if_exists(const char *path) {
-    return nob_file_exists(path) != 1 || nob_delete_file(path);
+            const char *label = nob_temp_sprintf("SP_PATH_MAX=%s %s %s", diff_sizes[s], diff_specs[spec][0], diff_specs[spec][1]);
+            if (set->failed)
+                nob_log(NOB_ERROR, "  FAILED  %s: a driver failed, or the two sides wrote different line counts", label);
+            else if (set->differing > 0)
+                nob_log(NOB_ERROR, "  DIFF  %s: %ld of %ld lines differ (line %ld shown above)", label, set->differing, set->lines, set->first);
+            else
+                LOG_INFO( "  SAME  %s (%ld lines)", label, set->lines);
+            same = same && !set->failed && set->differing == 0;
+            complete = complete && !set->failed;
+        }
+
+    /* A complete base side is kept for the next run against the same base */
+    FILE *key_file = !cached && complete ? fopen(DIFF_BASE_DIR "/key", "wb") : NULL;
+    if (key_file) {
+        char text[32];
+        diff_key_text(key, text);
+        fputs(text, key_file);
+        fclose(key_file);
+    }
+    LOG_INFO( "=== Compared in %ld s ===", (long)(time(NULL) - started));
+    return same;
 }
 
 static bool clean_artifacts(void) {
@@ -1365,23 +1616,29 @@ static bool clean_artifacts(void) {
     for (size_t i = 0; all_artifacts[i] != NULL; i++)
         all_ok = delete_if_exists(all_artifacts[i]) && all_ok;
 
-    /* ./nob diff's drivers, outputs and base header */
-    for (size_t s = 0; s < 2; s++)
-        for (size_t side = 0; side < 2; side++) {
-            const char *exe = diff_exe(diff_sides[side], diff_sizes[s]);
+    /* ./nob diff's drivers, outputs, key and base header */
+    for (size_t side = 0; side < 2; side++) {
+        size_t mark = nob_temp_save();
+        for (size_t s = 0; s < 2; s++) {
+            const char *exe = diff_exe(side, s);
             all_ok = delete_if_exists(exe) && all_ok;
 #ifdef _WIN32
             all_ok = delete_if_exists(nob_temp_sprintf("%.*s.obj", (int)(strlen(exe) - 4), exe)) && all_ok;
 #endif
-            for (size_t i = 0; i < 3; i++)
-                all_ok = delete_if_exists(diff_out(diff_sides[side], diff_sizes[s], diff_specs[i][0])) && all_ok;
+            for (size_t spec = 0; spec < 3; spec++)
+                for (int k = 0; k < DIFF_SHARDS; k++)
+                    all_ok = delete_if_exists(diff_out(side, s, spec, k)) && all_ok;
         }
-    all_ok = delete_if_exists(DIFF_BASE_DIR "/snakepath.h") && all_ok;
+        nob_temp_rewind(mark);
+    }
+    all_ok = delete_if_exists(DIFF_BASE_DIR "/key") && delete_if_exists(DIFF_BASE_DIR "/snakepath.h") && all_ok;
+    for (size_t side = 0; side < 2; side++) {
 #ifdef _WIN32
-    _rmdir(DIFF_BASE_DIR);
+        _rmdir(diff_dirs[side]);
 #else
-    rmdir(DIFF_BASE_DIR);
+        rmdir(diff_dirs[side]);
 #endif
+    }
     return all_ok;
 }
 
