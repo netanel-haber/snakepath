@@ -11,13 +11,9 @@
 /test_fluent_clang
 /libsnakepath.so
 /api_demo
-# ./nob diff: the base ref's header, the drivers and their outputs
+# ./nob diff: the base ref's header, both sides' drivers and their outputs
 /diff_base/
-/diff_base_64
-/diff_base_16
-/diff_head_64
-/diff_head_16
-/diff_*.txt
+/diff_head/
 *.o
 *.dSYM/
 

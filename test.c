@@ -215,49 +215,82 @@ SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
  *   test_diff exhaustive <length> <out>   every string over "/\ac:.?U" up to that length
  *   test_diff tokens <depth> <out>        every sequence of up to that many tokens (prefixes, drives, case pairs)
  *   test_diff random <count> <out>        that many random strings over a path, pattern and case-folding alphabet
- * A fifth argument, a line number, prints that line's input and labeled results in full on stdout instead. */
+ * Two more arguments, first and step, keep lines first, first + step, ... (1-based; step 0 keeps line first alone), so
+ * nob can split a set across processes. With out "-", the lines' inputs and labeled results go to stdout in full. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static char results[1 << 17];
 static size_t results_len;
-static long line_no, dump_line; /* the line being produced, and the one to print in full (0: hash them all) */
-static FILE *out_file;
+static long line_no, first_line = 1, line_step = 1; /* the line being produced, and the lines kept */
+static FILE *out_file;                                /* NULL: print the kept lines in full */
 
-static void put(const char *label, const char *s, size_t n) {
-    size_t label_len = strlen(label);
-    if (results_len + label_len + n + 2 >= sizeof(results))
+static void put_bytes(const char *s, size_t n) {
+    if (results_len + n >= sizeof(results))
         return;
-    memcpy(results + results_len, label, label_len);
-    results_len += label_len;
-    results[results_len++] = '=';
     memcpy(results + results_len, s, n);
     results_len += n;
-    results[results_len++] = '|';
+}
+
+/* "label=" before a result, only when printing in full: a hash covers the values alone, which both sides give in the
+ * same order (labeling every value took a fifth of the driver's time) */
+static void put_label(const char *label) {
+    if (out_file)
+        return;
+    put_bytes(label, strlen(label));
+    put_bytes("=", 1);
+}
+
+static void put(const char *label, const char *s, size_t n) {
+    put_label(label);
+    put_bytes(s, n);
+    put_bytes("|", 1);
+}
+
+/* v in decimal at b, returning its length: snprintf here took half the driver's time */
+static size_t num_text(char *b, long long v) {
+    char digits[24];
+    size_t n = 0;
+    unsigned long long u = v < 0 ? 0ULL - (unsigned long long)v : (unsigned long long)v;
+    do {
+        digits[n++] = (char)('0' + u % 10);
+        u /= 10;
+    } while (u != 0);
+
+    size_t len = 0;
+    if (v < 0)
+        b[len++] = '-';
+    while (n > 0)
+        b[len++] = digits[--n];
+    return len;
 }
 
 static void put_num(const char *label, long long v) {
-    char b[32];
-    snprintf(b, sizeof b, "%lld", v);
-    put(label, b, strlen(b));
+    char b[24];
+    put(label, b, num_text(b, v));
 }
 
-static void put_path(const char *label, const SpPath *p) {
-    char b[SP_PATH_MAX + 16];
-    int n = snprintf(b, sizeof b, "%d:%.*s", (int)p->error, (int)p->len, p->buf);
-    put(label, b, (size_t)n);
+/* An error code, ':' and text */
+static void put_result(const char *label, SpError error, const char *s, size_t n) {
+    char b[24];
+    put_label(label);
+    put_bytes(b, num_text(b, (long long)error));
+    put_bytes(":", 1);
+    put_bytes(s, n);
+    put_bytes("|", 1);
 }
 
-static void put_term(const char *label, SpTerm t) {
-    char b[SP_PATH_MAX + 16];
-    int n = snprintf(b, sizeof b, "%d:%.*s", (int)t.error, (int)t.len, t.buf);
-    put(label, b, (size_t)n);
-}
+static void put_path(const char *label, const SpPath *p) { put_result(label, p->error, p->buf, p->len); }
 
-/* A label built from a format and one string, in a buffer that lives until the next call */
+static void put_term(const char *label, SpTerm t) { put_result(label, t.error, t.buf, t.len); }
+
+/* A label from a format with one %s and a string, in a buffer that lives until the next call; only printed lines have
+ * labels */
 static const char *lbl(const char *fmt, const char *s) {
     static char b[256];
+    if (out_file)
+        return fmt;
     snprintf(b, sizeof b, fmt, s);
     return b;
 }
@@ -306,7 +339,7 @@ static const char *patterns[] = {"*",   "**",  "**/", "*.?", "[a-c]", "[!a]", "[
 /* Every pure result for s (NUL-terminated at len) in flavor fl, as one output line */
 static void one(const char *s, size_t len, SpFlavor fl) {
     line_no++;
-    if (dump_line != 0 && line_no != dump_line)
+    if (line_no < first_line || (line_step == 0 ? line_no != first_line : (line_no - first_line) % line_step != 0))
         return;
     results_len = 0;
 
@@ -397,7 +430,7 @@ static void one(const char *s, size_t len, SpFlavor fl) {
         }
     }
 
-    if (dump_line != 0) {
+    if (!out_file) {
         for (size_t i = 0; i < len; i++) {
             unsigned char ch = (unsigned char)s[i];
             if (ch >= 0x20 && ch < 0x7f && ch != '\\')
@@ -410,9 +443,14 @@ static void one(const char *s, size_t len, SpFlavor fl) {
         printf("\n");
         return;
     }
-    unsigned long long h = 1469598103934665603ULL;
-    for (size_t i = 0; i < results_len; i++)
-        h = (h ^ (unsigned char)results[i]) * 1099511628211ULL;
+    /* 8 bytes at a time: byte by byte, hashing took a tenth of the driver's time */
+    unsigned long long h = 1469598103934665603ULL ^ results_len;
+    for (size_t i = 0; i < results_len; i += 8) {
+        unsigned long long word = 0;
+        memcpy(&word, results + i, results_len - i < 8 ? results_len - i : 8);
+        h = (h ^ word) * 0x9E3779B97F4A7C15ULL;
+        h ^= h >> 29;
+    }
     fprintf(out_file, "%016llx\n", h);
 }
 
@@ -464,12 +502,13 @@ static unsigned int next_random(void) {
 
 int main(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: test_diff exhaustive|tokens|random <n> <out> [line]\n");
+        fprintf(stderr, "usage: test_diff exhaustive|tokens|random <n> <out>|- [first [step]]\n");
         return 2;
     }
     long n = atol(argv[2]);
-    dump_line = argc > 4 ? atol(argv[4]) : 0;
-    if (dump_line == 0 && !(out_file = fopen(argv[3], "wb"))) {
+    first_line = argc > 4 ? atol(argv[4]) : 1;
+    line_step = argc > 5 ? atol(argv[5]) : 1;
+    if (strcmp(argv[3], "-") != 0 && !(out_file = fopen(argv[3], "wb"))) {
         perror(argv[3]);
         return 2;
     }
