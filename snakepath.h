@@ -3307,10 +3307,14 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     SpPrivNative native;
     it.error = sp_priv_native(p, &native);
 #ifdef SP_WINDOWS
-    /* FindFirstFile opens the listing with its first entry, on the first next(): check the directory now */
-    SpStatResult st = sp_stat(p, true);
-    if (it.error == SP_OK)
-        it.error = st.error != SP_OK ? st.error : (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR ? SP_ERR_NOT_DIR : SP_OK;
+    /* FindFirstFile opens the listing with its first entry, on the first next(): check now what it will see, the entry
+     * itself, so that like CPython's scandir only a directory or a link made as one lists (a link to a missing file, or
+     * in a loop, is not a directory) */
+    DWORD attributes = it.error == SP_OK ? GetFileAttributesW(native.path) : INVALID_FILE_ATTRIBUTES;
+    if (it.error == SP_OK && attributes == INVALID_FILE_ATTRIBUTES)
+        it.error = sp_priv_last_error();
+    else if (it.error == SP_OK && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        it.error = SP_ERR_NOT_DIR;
 #else
     if (it.error == SP_OK && !(it.priv_.handle = opendir(native.path)))
         it.error = sp_priv_last_error();
