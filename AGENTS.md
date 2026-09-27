@@ -12,6 +12,7 @@ Record every wish, rule or learning the maintainer states in this file (in the s
 - Fluent API has near-parity with boring API — only iterators missing; a fluent method returns what the function it forwards to returns
 - Port only what is meaningful in C: Python-only pathlib machinery becomes an expected failure, never binding code.
 - Macros are for constants, names for hacks (C/C++ compat casts, platform functions, compiler attributes like `SP_NODISCARD`) and the simplest iterator sugar (`SP_*_FOREACH`). Never use a macro to share code.
+- Two X-macro lists are the exceptions the maintainer accepted, because one list keeps parallel tables from drifting: the fluent method tables, and `SP_ERRORS(X)`, which defines `SpError`, `sp_error_str`'s messages and the harness's error constants from one row per code. Nothing else in the public API is generated.
 
 ## Errors
 Shift every error as far left as it goes: what can be a compile error is one, what can be an explicit runtime error is one.
@@ -139,7 +140,8 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 - Use `_decode(..., errors="surrogatepass")` and copy `SpPath` structs in `_from_sp` to preserve embedded nulls.
 - `owner`/`group` return `SP_ERR_UNSUPPORTED` on Windows (the bindings raise `pathlib.UnsupportedOperation`), so their wrappers are built everywhere.
 - Windows goes through the wide (W) API only: `sp_priv_native` turns a path into what the OS takes (UTF-16 from WTF-8 in a `SP_PRIV_NATIVE_MAX` buffer on Windows, the path's own bytes on POSIX), and `sp_priv_from_wide` brings text back. Files are read and written through native handles (`sp_priv_open`/`read`/`write`/`close`), never the C runtime, so error codes come straight from the OS.
-- An OS helper (`sp_priv_stat_impl`, `open`, `mkdir_impl`, `remove_impl`, `link_to_impl`, `readlink_impl`, `cwd`) takes `const SpPath *` and calls `sp_priv_native` itself, so the public functions above it carry no conversion prologue; only functions with inline OS logic (`touch`, `chmod`, `rename`, `copy_tree`) convert on their own.
+- An OS helper (`sp_priv_stat_impl`, `open`, `mkdir_impl`, `remove_impl`, `link_to_impl`, `readlink_impl`, `cwd`) takes `const SpPath *` and converts it itself into an `SpPrivNative` (`.path` is what the OS takes, `.buf` its UTF-16 storage on Windows), so the public functions above it carry no conversion prologue; only functions with inline OS logic (`touch`, `chmod`, `rename`, `copy_tree`) convert on their own.
+- Caching the anchor and drive in `SpPath` was tried (2026-09-27) and is a wash at 4 frames: the 34 recomputations go away, but every constructor gains a split line, truncations need a prefix helper and the invariant grows, for a net of 4 lines. Don't retry it for line count; it pays only if a frame limit of 6 lets `normalize` compute the anchor itself.
 - `SpStatResult.sp_reparse_tag` is CPython's `st_reparse_tag` (lstat's tag on Windows, 0 elsewhere): `sp_is_junction` and the recursive delete test it instead of opening the file again.
 - Scanning a path for the next separator goes through `sp_priv_part_end` (a leaf, so it fits under any caller); a new inline `while (... != '/' && ... != sep)` loop is a duplicate.
 - Windows link behavior follows CPython: `lstat` reports `S_IFLNK` only for symlinks, `symlink_to` makes a directory link to an existing directory, `unlink` removes directory links, `readlink` returns the substitute name, `resolve` is `ntpath.realpath`, and files are copied with `CopyFile2`.
