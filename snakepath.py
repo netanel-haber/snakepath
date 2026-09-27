@@ -53,7 +53,8 @@ _WALK_BUF_SIZE = 1 << 22  # names kept for the directories being walked
 
 
 class _SpPath(Structure):
-    _fields_ = [("buf", ctypes.c_char * SP_PATH_MAX), ("len", c_size_t), ("flavor", c_int), ("error", c_int)]
+    _fields_ = [("buf", ctypes.c_char * SP_PATH_MAX), ("len", c_size_t), ("anchor", c_size_t), ("drive", c_size_t),
+                ("flavor", c_int), ("error", c_int)]
 
 
 class _SpTerm(Structure):
@@ -177,8 +178,7 @@ _sig('sp_parents_iter_next_wrap', [POINTER(_SpParentsIter), _PP], c_int)
 _sig('sp_path_hash_wrap', [_PP], ctypes.c_ulong)
 _sig('sp_match_wrap', [_PP, c_char_p, c_int], c_int)
 _sig('sp_full_match_wrap', [_PP, c_char_p, c_int], c_int)
-_sig('sp_stat_wrap', [_PP, _PStat])
-_sig('sp_lstat_wrap', [_PP, _PStat])
+_sig('sp_stat_wrap', [_PP, c_int, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
 _sig('sp_mkdir_wrap', [_PP, c_uint, c_uint, c_uint], c_int)
 _sig('sp_touch_wrap', [_PP, c_uint, c_int], c_int)
@@ -672,7 +672,7 @@ class Path(PurePath):
 
     def stat(self, *, follow_symlinks=True):
         result = _SpStatResult()
-        (_lib.sp_stat_wrap if follow_symlinks else _lib.sp_lstat_wrap)(byref(self._sp), byref(result))
+        _lib.sp_stat_wrap(byref(self._sp), 1 if follow_symlinks else 0, byref(result))
         _check(result.error, self)
         return result
 
@@ -955,9 +955,40 @@ def call_graph(code: str) -> tuple[dict[str, set[str]], set[str]]:
     return graph, escaped & graph.keys()
 
 
-def check_call_depth(header_path: pathlib.Path, max_depth: int) -> int:
-    """At most max_depth snakepath frames on the stack below any public function, counting every function the
-    preprocessed library defines; a fluent method is one more frame on top. A function calling itself is exempt."""
+# Worst-case bytes of snakepath frames per public call, by SP_PATH_MAX: 1/16 of Windows' 1 MB default stack at its
+# SP_PATH_MAX. Frames depend on the compiler (clang for the MSVC ABI at -O0 measures about 4x gcc's), so the budgets
+# hold for the worst measuring environment, and the printed chains are the numbers to compare.
+STACK_BUDGETS = {4096: 128 * 1024, 1024: 64 * 1024}
+FRAME_LIMIT = 6  # snakepath frames on the stack from a public function down; a fluent method is one more on top
+
+
+def stack_usage(header: pathlib.Path, path_max: int) -> dict[str, int] | None:
+    """Each function's own frame in bytes at -O0 (gcc's or clang's -fstack-usage), or None without such a compiler"""
+    import shutil
+    import tempfile
+    cc = next((c for c in (os.environ.get("CC"), "gcc", "clang", "cc") if c and shutil.which(c)), None)
+    if cc is None or (os.name == "nt" and shutil.which("clang") is None):
+        return None
+    cc = "clang" if os.name == "nt" else cc
+    with tempfile.TemporaryDirectory() as tmp:
+        src = pathlib.Path(tmp) / "stack.c"
+        src.write_text(f'#include "{header.resolve().as_posix()}"\n', encoding="utf-8")
+        defines = ["SNAKEPATH_IMPLEMENTATION", "SNAKEPATH_FLUENT", f"SP_PATH_MAX={path_max}"]
+        cmd = [cc, "-std=c99", "-O0", "-fstack-usage", "-c", "-o", str(src.with_suffix(".o")), src.name,
+               *[f"-D{d}" for d in defines]]
+        subprocess.run(cmd, cwd=tmp, capture_output=True, text=True, check=True)
+        usage = {}
+        for line in src.with_suffix(".su").read_text(encoding="utf-8").splitlines():
+            where, size, _qualifier = line.split("\t")
+            usage[where.rsplit(":", 1)[1]] = int(size)
+    return usage
+
+
+def check_frames(header_path: pathlib.Path) -> int:
+    """Two bounds on every public function's call chain, and the leads behind them: at most FRAME_LIMIT snakepath
+    frames deep (indirection has a price of its own), and at most STACK_BUDGETS bytes of their frames (the real stack
+    risk, on Windows' 1 MB default in particular). Every function the preprocessed library defines is a frame; a
+    fluent method is one more on top; a function calling itself is exempt (its depth depends on the input)."""
     graph, fluent = call_graph(preprocessed_library(header_path))
     chains: dict[str, list[str]] = {}
 
@@ -970,25 +1001,47 @@ def check_call_depth(header_path: pathlib.Path, max_depth: int) -> int:
             chains[name] = [name] + below
         return chains[name]
 
-    limits = {name: max_depth + 1 for name in fluent}
-    limits.update({name: max_depth for name in graph if not name.startswith("sp_priv_")})
+    public = sorted(name for name in graph if not name.startswith("sp_priv_"))
+    limits = {name: FRAME_LIMIT + 1 for name in fluent}
+    limits.update({name: FRAME_LIMIT for name in public})
     try:
         offenders = [chain(name) for name, limit in sorted(limits.items()) if len(chain(name)) > limit]
     except ValueError as err:
         print(f"call-depth check: FAILED ({err})")
         return 1
-
-    deepest = max(len(path) for path in chains.values())
-    print(f"call-depth check: functions={len(graph)} max_depth={deepest} limit={max_depth} "
-          f"(fluent methods {max_depth + 1})")
-    if not offenders:
-        print("call-depth check: OK")
-        return 0
-
-    print("call-depth check: FAILED")
+    deepest = max(len(chains[name]) for name in public)
+    print(f"call-depth check: functions={len(graph)} deepest={deepest} limit={FRAME_LIMIT} (fluent methods "
+          f"{FRAME_LIMIT + 1}): {'OK' if not offenders else 'FAILED'}")
     for path in offenders:
         print(f"  {' -> '.join(path)}")
-    return 1
+    at_limit = [name for name in public if len(chains[name]) == FRAME_LIMIT]
+    if at_limit:
+        print(f"  at the limit: {', '.join(at_limit)}")
+
+    failed = bool(offenders)
+    for path_max, budget in STACK_BUDGETS.items():
+        usage = stack_usage(header_path, path_max)
+        if usage is None:
+            print(f"stack check (SP_PATH_MAX {path_max}): skipped, no gcc or clang for -fstack-usage")
+            continue
+        costs: dict[str, tuple[int, list[str]]] = {}
+
+        def cost(name: str) -> tuple[int, list[str]]:
+            """The heaviest chain of frames from name down, in bytes, and the chain"""
+            if name not in costs:
+                below = max((cost(callee) for callee in graph[name]), default=(0, []))
+                costs[name] = (usage.get(name, 0) + below[0], [name] + below[1])
+            return costs[name]
+
+        worst = max((cost(name) for name in public), key=lambda c: c[0])
+        heavy = sorted(((usage.get(name, 0), name) for name in graph), reverse=True)[:4]
+        ok = worst[0] <= budget
+        failed |= not ok
+        print(f"stack check (SP_PATH_MAX {path_max}): worst chain {worst[0] // 1024} KB of {budget // 1024} KB: "
+              f"{'OK' if ok else 'FAILED'}")
+        print(f"  {' -> '.join(worst[1])}")
+        print("  heaviest frames: " + ", ".join(f"{name} {size // 1024} KB" for size, name in heavy))
+    return 1 if failed else 0
 
 
 def check_docs(root: pathlib.Path) -> int:
@@ -1512,7 +1565,7 @@ def main():
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    checks_failed = check_call_depth(THIS_DIR / "snakepath.h", 4) | check_docs(THIS_DIR) | check_fuzz()
+    checks_failed = check_frames(THIS_DIR / "snakepath.h") | check_docs(THIS_DIR) | check_fuzz()
     return run_tests() or checks_failed
 
 

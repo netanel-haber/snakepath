@@ -74,14 +74,14 @@ int main(void) {
      * Terminates at "/" for absolute, "." for relative. */
     SpParentsIter pit = sp_parents_begin(&p);
     SpPath par;
-    printf("  parents (%zu):\n", sp_parents_count(&p));
+    printf("  parents:\n");
     while (sp_parents_next(&pit, &par))
         printf("    %s\n", sp_str(&par));
 
     /* .parts https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.parts */
     SpPartsIter parts_it = sp_parts_begin(&p);
     SpStr part;
-    printf("  parts (%zu):", sp_parts_count(&p));
+    printf("  parts:");
     while (sp_parts_next(&parts_it, &part))
         printf(" [%.*s]", (int)part.len, part.data);
     printf("\n");
@@ -253,8 +253,8 @@ int main(void) {
              sp_is_socket, sp_is_mount, sp_is_junction */
 
     /* .stat https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat */
-    /* sp_stat follows symlinks; sp_lstat does not */
-    SpStatResult st = sp_stat(&cwd);
+    /* follow_symlinks false is lstat */
+    SpStatResult st = sp_stat(&cwd, true);
     printf("  stat size:  %lld\n", st.sp_size);
 
     /* ── File I/O ──────────────────────────────────────────────── */

@@ -1087,6 +1087,9 @@ static bool build_source_async(BuildConfig cfg, const char *source, Nob_Procs *p
         nob_cmd_append(&cmd, nob_temp_sprintf("/Fd:%.*s.pdb", (int)(strlen(cfg.output) - 4), cfg.output));
         nob_cmd_append(&cmd, nob_temp_sprintf("/Fo%.*s.obj", (int)(strlen(cfg.output) - 4), cfg.output));
         nob_cmd_append(&cmd, "/Fe:", cfg.output);
+        /* The tests' main holds hundreds of paths in one frame, past Windows' 1 MB default stack at /Od */
+        nob_cmd_append(&cmd, source, "/link", "/STACK:8388608");
+        return nob_cmd_run(&cmd, .async = procs);
     } else
 #endif
     {

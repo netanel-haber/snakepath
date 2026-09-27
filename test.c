@@ -165,8 +165,9 @@ WRAP_BOOL_UNARY(is_socket)
 WRAP_BOOL_UNARY(is_mount)
 WRAP_BOOL_UNARY(is_junction)
 WRAP_BOOL_BINARY(samefile)
-SP_EXPORT void sp_stat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_stat(p); }
-SP_EXPORT void sp_lstat_wrap(const SpPath *p, SpStatResult *out) { *out = sp_lstat(p); }
+SP_EXPORT void sp_stat_wrap(const SpPath *p, int follow_symlinks, SpStatResult *out) {
+    *out = sp_stat(p, follow_symlinks != 0);
+}
 SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
 SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, unsigned int flags, unsigned int parent_mode) {
     return sp_mkdir(p, mode, flags, parent_mode);
@@ -262,6 +263,25 @@ static const char *lbl(const char *fmt, const char *s) {
     return b;
 }
 
+/* len(p.parts) and len(p.parents), counted through the iterators */
+static size_t count_parts(const SpPath *p) {
+    SpPartsIter it = sp_parts_begin(p);
+    SpStr part;
+    size_t n = 0;
+    while (sp_parts_next(&it, &part))
+        n++;
+    return n;
+}
+
+static size_t count_parents(const SpPath *p) {
+    SpParentsIter it = sp_parents_begin(p);
+    SpPath parent;
+    size_t n = 0;
+    while (sp_parents_next(&it, &parent))
+        n++;
+    return n;
+}
+
 static const char *companions[] = {"",   "a",   "/",       "/a",     "c:", "c:/",  "c:a", "//s/h",
                                    "..", "a/b", "C:\\A", "\\\\?\\UNC\\s\\h\\x", "~",  "~u/x", "."};
 static const char *patterns[] = {"*",   "**",  "**/", "*.?", "[a-c]", "[!a]", "[A-Z]*", "a*", "?", "**/*", "[K]",
@@ -309,8 +329,8 @@ static void one(const char *s, size_t len, SpFlavor fl) {
     if (p.error == SP_OK) {
         put_num("is_absolute", sp_is_absolute(&p));
         put_num("hash", (long long)sp_path_hash(&p));
-        put_num("parts_count", (long long)sp_parts_count(&p));
-        put_num("parents_count", (long long)sp_parents_count(&p));
+        put_num("parts_count", (long long)count_parts(&p));
+        put_num("parents_count", (long long)count_parents(&p));
         SpPartsIter parts = sp_parts_begin(&p);
         SpStr part;
         while (sp_parts_next(&parts, &part))
@@ -331,7 +351,7 @@ static void one(const char *s, size_t len, SpFlavor fl) {
     }
 
     /* With each companion path, and as a pattern (which must have a part) against it */
-    bool is_pattern = p.error == SP_OK && sp_parts_count(&p) > 0;
+    bool is_pattern = p.error == SP_OK && count_parts(&p) > 0;
     for (size_t i = 0; i < SP_ARRAY_LEN(companions); i++) {
         const char *c = companions[i];
         SpPath o = sp_path_f(c, fl);
@@ -460,6 +480,25 @@ int main(int argc, char **argv) {
 }
 
 #else /* the tests */
+
+/* len(p.parts) and len(p.parents), counted through the iterators */
+static size_t count_parts(const SpPath *p) {
+    SpPartsIter it = sp_parts_begin(p);
+    SpStr part;
+    size_t n = 0;
+    while (sp_parts_next(&it, &part))
+        n++;
+    return n;
+}
+
+static size_t count_parents(const SpPath *p) {
+    SpParentsIter it = sp_parents_begin(p);
+    SpPath parent;
+    size_t n = 0;
+    while (sp_parents_next(&it, &parent))
+        n++;
+    return n;
+}
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -903,16 +942,16 @@ static void test_fluent_filesystem(void) {
 
     /* ============ stat / lstat (fluent) ============ */
 
-    { SpStatResult st = SPF(__FILE__)->stat();
+    { SpStatResult st = SPF(__FILE__)->stat(true);
       ASSERT(st.error == SP_OK);
       ASSERT(st.sp_size > 0); }
 
-    { SpStatResult st = SPF(__FILE__)->lstat();
+    { SpStatResult st = SPF(__FILE__)->stat(false);
       ASSERT(st.error == SP_OK);
       ASSERT(st.sp_size > 0); }
 
     /* Non-existent file stat */
-    { SpStatResult st = SPF("/nonexistent_stat_test")->stat();
+    { SpStatResult st = SPF("/nonexistent_stat_test")->stat(true);
       ASSERT(st.error != SP_OK); }
 
     /* ============ as_posix (fluent) ============ */
@@ -1170,7 +1209,7 @@ static void test_errors(long pid) {
         /* Mode 0 is a mode */
         SpPath closed = sp_join_one(&root_dir, "closed");
         ASSERT(sp_mkdir(&closed, 0, 0, SP_MODE_DIR) == SP_OK);
-        ASSERT((sp_stat(&closed).sp_mode & 0777) == 0);
+        ASSERT((sp_stat(&closed, true).sp_mode & 0777) == 0);
         ASSERT(sp_chmod(&closed, 0755, true) == SP_OK);
         ASSERT(sp_rmdir(&closed) == SP_OK);
 
@@ -1179,7 +1218,7 @@ static void test_errors(long pid) {
         SpPath to_file = sp_path("f"), to_dir = sp_path(".");
         ASSERT(sp_symlink_to(&link, &to_file, false) == SP_OK);
         ASSERT(sp_symlink_to(&link2, &to_dir, true) == SP_OK);
-        ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file).sp_mode & 0777) == 0600);
+        ASSERT(sp_chmod(&link, 0600, true) == SP_OK && (sp_stat(&file, true).sp_mode & 0777) == 0600);
         /* Linux symlinks have no mode of their own; BSD and macOS change the link's */
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
         ASSERT(sp_chmod(&link, 0644, false) == SP_OK);
@@ -1207,7 +1246,7 @@ static void test_errors(long pid) {
 
         /* An embedded NUL can't reach the OS */
         SpPath nul = sp_path_from_n("a\0b", 3, P);
-        ASSERT(sp_mkdir(&nul, 0755, 0, SP_MODE_DIR) == SP_ERR_NUL && sp_stat(&nul).error == SP_ERR_NUL);
+        ASSERT(sp_mkdir(&nul, 0755, 0, SP_MODE_DIR) == SP_ERR_NUL && sp_stat(&nul, true).error == SP_ERR_NUL);
         ASSERT(sp_resolve(&nul, false).error == SP_ERR_NUL);
 
         ASSERT(sp_unlink(&file, false) == SP_OK && sp_rmdir(&root_dir) == SP_OK);
@@ -1291,7 +1330,7 @@ int main(void) {
     ASSERT(sp_parts_next(&it2, &part)); ASSERT_SV(part, "b");
     ASSERT(!sp_parts_next(&it2, &part));
     
-    SpPath ppc = sp_path_f("/a/b/c", P); ASSERT(sp_parts_count(&ppc) == 4);
+    SpPath ppc = sp_path_f("/a/b/c", P); ASSERT(count_parts(&ppc) == 4);
     
     SpPath pp3 = sp_path_f("a/b/c", P); SpParentsIter pit = sp_parents_begin(&pp3); SpPath parent;
     ASSERT(sp_parents_next(&pit, &parent)); ASSERT_PATH(parent, "a/b");
@@ -1443,7 +1482,7 @@ int main(void) {
     ASSERT_TERM(sp_suffix(&e7), ".txt"); ASSERT_PATH(sp_parent(&e7), ".");
     
     SpPath e8 = sp_path_f("/a/b/c/d/e/f/g", P);
-    ASSERT(sp_parts_count(&e8) == 8); ASSERT_PATH(sp_parent(&e8), "/a/b/c/d/e/f");
+    ASSERT(count_parts(&e8) == 8); ASSERT_PATH(sp_parent(&e8), "/a/b/c/d/e/f");
     
     SpPath ej1 = sp_path_f("a/b", P); ASSERT_PATH(sp_join_one(&ej1, ""), "a/b");
     SpPath ej2 = sp_path_f("", P); ASSERT_PATH(sp_join_one(&ej2, "a"), "a");
@@ -1509,20 +1548,20 @@ int main(void) {
 
     /* Test stat - existing file */
     SpPath stat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    SpStatResult stat_result = sp_stat(&stat_file);
+    SpStatResult stat_result = sp_stat(&stat_file, true);
     ASSERT(stat_result.error == SP_OK);
     ASSERT(stat_result.sp_size > 0);
     ASSERT((stat_result.sp_mode & 0170000) == 0100000);  /* S_IFREG - regular file */
 
     /* Test stat - existing directory */
     SpPath stat_dir = sp_path_f(".", SP_FLAVOR_NATIVE);
-    SpStatResult dir_result = sp_stat(&stat_dir);
+    SpStatResult dir_result = sp_stat(&stat_dir, true);
     ASSERT(dir_result.error == SP_OK);
     ASSERT((dir_result.sp_mode & 0170000) == 0040000);  /* S_IFDIR - directory */
 
     /* Test stat - nonexistent path */
     SpPath stat_nonexistent = sp_path_f("/nonexistent/path/file.txt", P);
-    SpStatResult nonexistent_result = sp_stat(&stat_nonexistent);
+    SpStatResult nonexistent_result = sp_stat(&stat_nonexistent, true);
     ASSERT(nonexistent_result.error != SP_OK);
 
     /* Test sp_stat_eq */
@@ -1535,16 +1574,16 @@ int main(void) {
     printf("\nparents_count Tests:\n");
 
     SpPath pc1 = sp_path_f("/a/b/c/d", P);
-    ASSERT(sp_parents_count(&pc1) == 4);  /* /a/b/c, /a/b, /a, / */
+    ASSERT(count_parents(&pc1) == 4);  /* /a/b/c, /a/b, /a, / */
 
     SpPath pc2 = sp_path_f("a/b/c", P);
-    ASSERT(sp_parents_count(&pc2) == 3);  /* a/b, a, . */
+    ASSERT(count_parents(&pc2) == 3);  /* a/b, a, . */
 
     SpPath pc3 = sp_path_f("/", P);
-    ASSERT(sp_parents_count(&pc3) == 0);  /* root has no parents */
+    ASSERT(count_parents(&pc3) == 0);  /* root has no parents */
 
     SpPath pc4 = sp_path_f(".", P);
-    ASSERT(sp_parents_count(&pc4) == 0);  /* current dir has no parents */
+    ASSERT(count_parents(&pc4) == 0);  /* current dir has no parents */
 
     printf("  parents_count tests OK\n");
 
@@ -1598,13 +1637,13 @@ int main(void) {
 
     /* Test lstat on regular file */
     SpPath lstat_file = sp_path_f(__FILE__, SP_FLAVOR_NATIVE);
-    SpStatResult lstat_res = sp_lstat(&lstat_file);
+    SpStatResult lstat_res = sp_stat(&lstat_file, false);
     ASSERT(lstat_res.error == SP_OK);
     ASSERT(lstat_res.sp_size > 0);
 
     /* Test lstat on nonexistent file */
     SpPath lstat_nonexist = sp_path_f("/nonexistent/path/file.txt", P);
-    SpStatResult lstat_nonexist_res = sp_lstat(&lstat_nonexist);
+    SpStatResult lstat_nonexist_res = sp_stat(&lstat_nonexist, false);
     ASSERT(lstat_nonexist_res.error != SP_OK);
 
     printf("  lstat tests OK\n");
@@ -1849,7 +1888,7 @@ int main(void) {
         SpPath protected_drive = sp_path_f("./c:", SP_FLAVOR_WINDOWS);
         ASSERT_PATH(sp_parent(&protected_drive), ".");
         SpPath drive_child = sp_join_one(&protected_drive, "x"), win_empty = sp_path_f("", SP_FLAVOR_WINDOWS);
-        ASSERT(sp_parts_count(&drive_child) == 2);
+        ASSERT(count_parts(&drive_child) == 2);
         ASSERT(sp_match(&drive_child, "./c:/*", SP_CASE_DEFAULT));
         ASSERT(!sp_match(&drive_child, "c:/*", SP_CASE_DEFAULT));
         ASSERT_PATH(sp_relative_to(&drive_child, &protected_drive, false), "x");
@@ -1860,7 +1899,7 @@ int main(void) {
         SpPath raw = sp_path_f("", SP_FLAVOR_POSIX), base = sp_path_f("a", SP_FLAVOR_POSIX);
         memcpy(raw.buf, "a///b//", 8);
         raw.len = 7;
-        ASSERT(sp_parts_count(&raw) == 2);
+        ASSERT(count_parts(&raw) == 2);
         ASSERT(sp_match(&raw, "a/b", SP_CASE_DEFAULT));
         ASSERT(sp_match(&raw, "b", SP_CASE_DEFAULT));
         ASSERT(sp_full_match(&raw, "a/**/b/**", SP_CASE_DEFAULT));
@@ -1884,7 +1923,7 @@ int main(void) {
         ASSERT(sp_with_name(&parent_of, "c").error == SP_ERR_TOO_LONG);
         ASSERT(sp_name(&still).error == SP_ERR_TOO_LONG);
         ASSERT(sp_mkdir(&still, 0777, 0, 0777) == SP_ERR_TOO_LONG);
-        ASSERT(sp_stat(&still).error == SP_ERR_TOO_LONG);
+        ASSERT(sp_stat(&still, true).error == SP_ERR_TOO_LONG);
         full[0] = '/';
         base = sp_path_f("C:/base", SP_FLAVOR_WINDOWS);
         ASSERT(sp_join_one(&base, full).error == SP_ERR_TOO_LONG);
@@ -2300,7 +2339,7 @@ int main(void) {
      * Must be updated explicitly when struct layouts change. */
 #if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__) || (defined(_WIN32) && defined(_WIN64))
     /* 64-bit (POSIX and Windows) */
-    ASSERT_SIZE(sizeof(SpPath), SP_PATH_MAX + 16);
+    ASSERT_SIZE(sizeof(SpPath), SP_PATH_MAX + 32);
     ASSERT_SIZE(sizeof(SpTerm), SP_PATH_MAX + 16);
     ASSERT_SIZE(sizeof(SpStr), 16);
     ASSERT_SIZE(sizeof(SpPartsIter), 32);
