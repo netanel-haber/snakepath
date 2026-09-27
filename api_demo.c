@@ -99,7 +99,7 @@ int main(void) {
     printf("  join:     %s\n", sp_str(&tmp));
 
     SpPath other = sp_path("extra");
-    tmp = sp_joinpath(&base, &other);
+    tmp = sp_join_n(&base, other.buf, other.len);
     printf("  joinpath: %s\n", sp_str(&tmp));
 
     /* .with_segments https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.with_segments */
@@ -152,14 +152,17 @@ int main(void) {
     tmp = sp_relative_to(&sibling, &base, true);
     printf("  walk_up:        %s\n", sp_str(&tmp));
 
-    /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match */
-    printf("  match *.gz:     %d\n", sp_match(&p, "*.gz", SP_CASE_DEFAULT));
-    printf("  (fluent)        %d\n", SPF_PATH(p)->match("*.gz"));
+    /* .match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.match
+     * A function with several options takes a struct of them: zero-initialized options are pathlib's defaults */
+    SpMatchOptions no_options = {0};
+    printf("  match *.gz:     %d\n", sp_match(&p, "*.gz", no_options));
+    printf("  (fluent)        %d\n", SPF_PATH(p)->match("*.gz", no_options));
 
     /* .full_match https://docs.python.org/3/library/pathlib.html#pathlib.PurePath.full_match
      * SP_CASE_DEFAULT is the flavor's: insensitive for Windows paths */
-    printf("  full_match:     %d\n", sp_full_match(&p, "/**/*.GZ", SP_CASE_INSENSITIVE));
-    printf("  (fluent)        %d\n", SPF_PATH(p)->full_match("/**/*.gz"));
+    printf("  full_match:     %d\n",
+           sp_match(&p, "/**/*.GZ", (SpMatchOptions){.full = true, .case_sensitive = SP_CASE_INSENSITIVE}));
+    printf("  (fluent)        %d\n", SPF_PATH(p)->match("/**/*.gz", (SpMatchOptions){.full = true}));
 
     /* ── Comparison ────────────────────────────────────────────── */
     section("Comparison");
@@ -236,21 +239,21 @@ int main(void) {
     /* ── Type Checks ───────────────────────────────────────────── */
     section("Type Checks");
 
-    /* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists */
-    printf("  exists:     %d\n", sp_exists(&cwd, true));
-    printf("  (fluent)    %d\n", SPF_PATH(cwd)->exists(true));
+    /* .exists https://docs.python.org/3/library/pathlib.html#pathlib.Path.exists
+     * One function for exists and the is_* predicates, with pathlib's follow_symlinks */
+    printf("  exists:     %d\n", sp_is(&cwd, SP_ANY, true));
+    printf("  (fluent)    %d\n", SPF_PATH(cwd)->is(SP_ANY, true));
 
     /* .is_dir https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_dir
      * exists, is_dir and is_file take follow_symlinks */
-    printf("  is_dir:     %d\n", sp_is_dir(&cwd, true));
+    printf("  is_dir:     %d\n", sp_is(&cwd, SP_DIR, true));
 
     /* .is_file https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_file */
-    printf("  is_file:    %d\n", sp_is_file(&cwd, true));
+    printf("  is_file:    %d\n", sp_is(&cwd, SP_FILE, true));
 
     /* .is_symlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.is_symlink */
-    printf("  is_symlink: %d\n", sp_is_symlink(&cwd));
-    /* Also: sp_is_block_device, sp_is_char_device, sp_is_fifo,
-             sp_is_socket, sp_is_mount, sp_is_junction */
+    printf("  is_symlink: %d\n", sp_is(&cwd, SP_SYMLINK, false));
+    /* Also: SP_BLOCK_DEVICE, SP_CHAR_DEVICE, SP_FIFO, SP_SOCKET, SP_MOUNT, SP_JUNCTION */
 
     /* .stat https://docs.python.org/3/library/pathlib.html#pathlib.Path.stat */
     /* follow_symlinks false is lstat */
@@ -265,7 +268,7 @@ int main(void) {
     SpPath tmpfile = sp_join_one(&tmpdir, "hello.txt");
 
     /* .mkdir https://docs.python.org/3/library/pathlib.html#pathlib.Path.mkdir */
-    check("mkdir:", sp_mkdir(&subdir, 0755, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, SP_MODE_DIR));
+    check("mkdir:", sp_mkdir(&subdir, 0755, (SpMkdirOptions){.parents = true, .exist_ok = true, .parent_mode = SP_MODE_DIR}));
 
     /* .touch https://docs.python.org/3/library/pathlib.html#pathlib.Path.touch */
     check("touch:", sp_touch(&tmpfile, SP_MODE_FILE, true));
@@ -283,18 +286,17 @@ int main(void) {
 
     /* .rename https://docs.python.org/3/library/pathlib.html#pathlib.Path.rename */
     SpPath renamed = sp_join_one(&tmpdir, "renamed.txt");
-    check("rename:", sp_rename(&tmpfile, &renamed).error);
+    check("rename:", sp_rename(&tmpfile, &renamed, false).error); /* replace: true */
 
-    /* .copy https://docs.python.org/3/library/pathlib.html#pathlib.Path.copy (recursive for directories)
-     * Functions with several options take flags named after pathlib's keywords */
+    /* .copy https://docs.python.org/3/library/pathlib.html#pathlib.Path.copy (recursive for directories) */
     SpPath copied = sp_join_one(&tmpdir, "copy.txt");
-    check("copy:", sp_copy(&renamed, &copied, SP_COPY_FOLLOW_SYMLINKS).error);
+    check("copy:", sp_copy(&renamed, &copied, (SpCopyOptions){.follow_symlinks = true}).error);
 
-    /* .move_into https://docs.python.org/3/library/pathlib.html#pathlib.Path.move_into
-     * Also: sp_copy_into, sp_move (renames, or copies and deletes across filesystems) */
-    SpPath moved = sp_move_into(&copied, &subdir);
+    /* .move_into https://docs.python.org/3/library/pathlib.html#pathlib.Path.move_into: move with into (copy_into is
+     * copy's .into). move renames, or copies and deletes across filesystems */
+    SpPath moved = sp_move(&copied, &subdir, true);
     printf("  move_into: %s\n", sp_str(&moved));
-    tmp = SPF_PATH(moved)->move(&copied)->path();
+    tmp = SPF_PATH(moved)->move(&copied, false)->path();
     printf("  (fluent move) %s\n", sp_str(&tmp));
 
     /* .chmod https://docs.python.org/3/library/pathlib.html#pathlib.Path.chmod */
@@ -313,8 +315,8 @@ int main(void) {
 
     SpPath link = sp_join_one(&tmpdir, "link.txt");
 
-    /* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to */
-    check("symlink:", sp_symlink_to(&link, &renamed, false));
+    /* .symlink_to https://docs.python.org/3/library/pathlib.html#pathlib.Path.symlink_to (hardlink_to: .hard) */
+    check("symlink:", sp_link_to(&link, &renamed, (SpLinkOptions){0}));
 
     /* .readlink https://docs.python.org/3/library/pathlib.html#pathlib.Path.readlink */
     tmp = sp_readlink(&link);
@@ -332,17 +334,17 @@ int main(void) {
         printf("  iterdir: %s\n", sp_str(&entry));
 
     /* .glob https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob */
-    SP_GLOB_FOREACH(&tmpdir, "*.txt", match)
+    SP_GLOB_FOREACH(&tmpdir, "*.txt", (SpGlobOptions){0}, match)
         printf("  glob:    %s\n", sp_str(&match));
 
-    /* sp_glob_begin/next/end: case sensitivity, recurse_symlinks, and it.error for a bad pattern or a limit */
-    SpGlobIter git = sp_glob_begin(&tmpdir, "**/", SP_CASE_SENSITIVE, false);
+    /* sp_glob_begin/next/end: the options, and it.error for a bad pattern or a limit */
+    SpGlobIter git = sp_glob_begin(&tmpdir, "**/", (SpGlobOptions){.case_sensitive = SP_CASE_SENSITIVE});
     for (SpPath dir; sp_glob_next(&git, &dir);)
         printf("  glob **/: %s\n", sp_str(&dir));
     sp_glob_end(&git);
 
-    /* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob */
-    SP_RGLOB_FOREACH(&tmpdir, "*.txt", match)
+    /* .rglob https://docs.python.org/3/library/pathlib.html#pathlib.Path.rglob: glob with .recursive */
+    SP_GLOB_FOREACH(&tmpdir, "*.txt", (SpGlobOptions){.recursive = true}, match)
         printf("  rglob:   %s\n", sp_str(&match));
 
     /* ── Walk ──────────────────────────────────────────────────── */
@@ -352,7 +354,7 @@ int main(void) {
      * An iterator over (dirpath, dirnames, filenames), keeping the names in your buffer. Top-down, drop names from
      * dirnames (or lower dirname_count) to prune. */
     static char names[1 << 16];
-    SpWalkIter walk = sp_walk_begin(&tmpdir, SP_WALK_TOP_DOWN, names, sizeof(names));
+    SpWalkIter walk = sp_walk_begin(&tmpdir, (SpWalkOptions){0}, names, sizeof(names));
     for (SpWalkEntry *e; (e = sp_walk_next(&walk)) != NULL;)
         printf("  %s/ (%zu dirs, %zu files)\n", sp_str(&e->dirpath), e->dirname_count, e->filename_count);
     check("walk:", walk.error);
@@ -368,12 +370,15 @@ int main(void) {
     tmp = SPF("/")->with_name("x")->join("more")->path();
     printf("  (fluent) %s\n", sp_error_str(tmp.error));
 
-    check("unlink:", sp_unlink(&link, false));
-    check("unlink:", sp_unlink(&copied, false));
-    check("unlink:", sp_unlink(&renamed, false));
-    check("rmdir:", sp_rmdir(&tmpdir)); /* not empty yet */
-    check("rmdir:", sp_rmdir(&subdir));
-    check("rmdir:", sp_rmdir(&tmpdir));
+    /* .unlink and .rmdir are sp_remove, with .missing_ok and .dir */
+    SpRemoveOptions file = {0};
+    SpRemoveOptions dir = {.dir = true};
+    check("unlink:", sp_remove(&link, file));
+    check("unlink:", sp_remove(&copied, file));
+    check("unlink:", sp_remove(&renamed, file));
+    check("rmdir:", sp_remove(&tmpdir, dir)); /* not empty yet */
+    check("rmdir:", sp_remove(&subdir, dir));
+    check("rmdir:", sp_remove(&tmpdir, dir));
 
     return 0;
 }

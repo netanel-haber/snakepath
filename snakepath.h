@@ -100,7 +100,7 @@ extern "C" {
     X(SP_ERR_LIMIT, "Configured limit exceeded")             /* SP_MAX_SUFFIXES, SP_GLOB_MAX_DEPTH, SP_GLOB_PATTERN_MAX */ \
     X(SP_ERR_NUL, "Embedded null byte")                      /* which the OS can't take */              \
     X(SP_ERR_ENCODING, "Invalid UTF-8 or UTF-16")                                                       \
-    X(SP_ERR_INVALID_ARG, "Invalid argument")                /* a name, stem, suffix, pattern, URI or flag */ \
+    X(SP_ERR_INVALID_ARG, "Invalid argument")                /* a name, stem, suffix, pattern or URI */ \
     X(SP_ERR_NO_NAME, "Path has an empty name")                                                         \
     X(SP_ERR_NOT_RELATIVE, "Path is not relative to the other path")                                    \
     X(SP_ERR_NOT_ABSOLUTE, "Path is not absolute")           /* a relative path has no file URI, and a file URI gives no absolute path */ \
@@ -122,16 +122,62 @@ typedef enum { SP_FLAVOR_NATIVE = 0, SP_FLAVOR_POSIX, SP_FLAVOR_WINDOWS } SpFlav
 /* SP_CASE_DEFAULT is the flavor's: insensitive for Windows paths, sensitive for POSIX ones */
 typedef enum { SP_CASE_DEFAULT = 0, SP_CASE_SENSITIVE, SP_CASE_INSENSITIVE } SpCaseSensitivity;
 
-/* Flags for the functions with more than one option, named after pathlib's keywords. Each function rejects the
- * others' flags with SP_ERR_INVALID_ARG. */
-enum {
-    SP_MKDIR_PARENTS = 1 << 0,
-    SP_MKDIR_EXIST_OK = 1 << 1,
-    SP_COPY_FOLLOW_SYMLINKS = 1 << 2,
-    SP_COPY_PRESERVE_METADATA = 1 << 3,
-    SP_WALK_TOP_DOWN = 1 << 4,
-    SP_WALK_FOLLOW_SYMLINKS = 1 << 5
-};
+/* One C function stands for a family of pathlib methods, and a function with more than one option takes a struct of
+ * them, named after pathlib's keywords, so a wrong option is a compile error. Zero-initialized options are pathlib's
+ * defaults unless a field says otherwise. In C: sp_copy(&p, &t, (SpCopyOptions){.into = true}); in C++ before C++20,
+ * set the fields of a zero-initialized variable. */
+typedef struct {
+    bool follow_symlinks; /* pathlib's default is true */
+    bool preserve_metadata;
+    bool into; /* copy_into: target is the directory to copy into, under p's name */
+} SpCopyOptions;
+
+typedef struct {
+    bool parents; /* make missing parents, with parent_mode (0 is a mode; pathlib's is SP_MODE_DIR) */
+    bool exist_ok;
+    unsigned int parent_mode;
+} SpMkdirOptions;
+
+typedef struct {
+    bool bottom_up; /* os.walk's top_down=False */
+    bool follow_symlinks;
+} SpWalkOptions;
+
+typedef struct {
+    bool hard;                /* hardlink_to; else symlink_to */
+    bool target_is_directory; /* symlink_to's */
+} SpLinkOptions;
+
+typedef struct {
+    bool dir;        /* rmdir; else unlink */
+    bool missing_ok; /* unlink's */
+} SpRemoveOptions;
+
+typedef struct {
+    bool full; /* full_match: the whole path; else match, the last parts */
+    SpCaseSensitivity case_sensitive;
+} SpMatchOptions;
+
+typedef struct {
+    bool recursive;        /* rglob: "**\/" before the pattern */
+    bool recurse_symlinks; /* "**" descends into symlinked directories */
+    SpCaseSensitivity case_sensitive;
+} SpGlobOptions;
+
+/* What sp_is asks: exists (SP_ANY), is_file, is_dir, is_symlink, is_block_device, is_char_device, is_fifo, is_socket,
+ * is_mount, is_junction */
+typedef enum {
+    SP_ANY = 0,
+    SP_FILE,
+    SP_DIR,
+    SP_SYMLINK,
+    SP_BLOCK_DEVICE,
+    SP_CHAR_DEVICE,
+    SP_FIFO,
+    SP_SOCKET,
+    SP_MOUNT,
+    SP_JUNCTION
+} SpFileType;
 
 /* pathlib's default modes for mkdir and touch */
 #define SP_MODE_DIR 0777
@@ -259,7 +305,7 @@ typedef struct {
     struct {
         char *buf;
         size_t size, used, level;
-        unsigned int flags;
+        SpWalkOptions options;
         bool pending;  /* entry.dirpath is the next directory to list */
         bool prunable; /* the entry is the innermost level's listing, given out top-down */
     } priv_;
@@ -300,7 +346,6 @@ SP_NODISCARD bool sp_parents_next(SpParentsIter *it, SpPath *out);
 SP_NODISCARD SpPath sp_join_one(const SpPath *base, const char *other);
 SP_NODISCARD SpPath sp_join_n(const SpPath *base, const char *s, size_t len);
 SP_NODISCARD SpPath sp_join_impl(const SpPath *base, const char **parts);
-SP_NODISCARD SpPath sp_joinpath(const SpPath *base, const SpPath *other);
 
 SP_NODISCARD SpPath sp_with_segments(const SpPath *p, const char **parts, size_t parts_count);
 SP_NODISCARD SpPath sp_with_name(const SpPath *p, const char *name);
@@ -321,19 +366,11 @@ SP_NODISCARD static inline bool sp_path_ne(const SpPath *a, const SpPath *b) {
     return a->flavor != b->flavor || sp_path_cmp(a, b) != 0;
 }
 SP_NODISCARD unsigned long sp_path_hash(const SpPath *p);
-/* The pattern must have a part (pathlib raises for an empty one) */
-SP_NODISCARD bool sp_match(const SpPath *p, const char *pattern, SpCaseSensitivity cs);
-SP_NODISCARD bool sp_full_match(const SpPath *p, const char *pattern, SpCaseSensitivity cs);
-SP_NODISCARD bool sp_is_symlink(const SpPath *p);
-SP_NODISCARD bool sp_is_block_device(const SpPath *p);
-SP_NODISCARD bool sp_is_char_device(const SpPath *p);
-SP_NODISCARD bool sp_is_fifo(const SpPath *p);
-SP_NODISCARD bool sp_is_socket(const SpPath *p);
-SP_NODISCARD bool sp_exists(const SpPath *p, bool follow_symlinks);
-SP_NODISCARD bool sp_is_dir(const SpPath *p, bool follow_symlinks);
-SP_NODISCARD bool sp_is_file(const SpPath *p, bool follow_symlinks);
-SP_NODISCARD bool sp_is_mount(const SpPath *p);
-SP_NODISCARD bool sp_is_junction(const SpPath *p);
+/* match and full_match; the pattern must have a part (pathlib raises for an empty one) */
+SP_NODISCARD bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions options);
+/* exists and the is_* predicates: follow_symlinks matters for SP_ANY, SP_FILE and SP_DIR (pathlib follows for the
+ * devices, fifos and sockets, never for SP_SYMLINK and SP_JUNCTION; SP_MOUNT looks at the path itself) */
+SP_NODISCARD bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks);
 
 typedef struct {
     unsigned int sp_mode;
@@ -358,23 +395,19 @@ SP_NODISCARD bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b);
 
 SP_NODISCARD SpPath sp_readlink(const SpPath *p);
 SP_NODISCARD SpPath sp_resolve(const SpPath *p, bool strict);
-SP_NODISCARD SpError sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory);
-SP_NODISCARD SpError sp_hardlink_to(const SpPath *p, const SpPath *target);
+SP_NODISCARD SpError sp_link_to(const SpPath *p, const SpPath *target,
+                                SpLinkOptions options);          /* symlink_to, hardlink_to */
 SP_NODISCARD bool sp_samefile(const SpPath *a, const SpPath *b); /* false unless both exist */
 
-/* flags: SP_MKDIR_PARENTS (missing parents get parent_mode), SP_MKDIR_EXIST_OK */
-SP_NODISCARD SpError sp_mkdir(const SpPath *p, unsigned int mode, unsigned int flags, unsigned int parent_mode);
+SP_NODISCARD SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options);
 SP_NODISCARD SpError sp_touch(const SpPath *p, unsigned int mode, bool exist_ok);
-SP_NODISCARD SpError sp_unlink(const SpPath *p, bool missing_ok);
-SP_NODISCARD SpError sp_rmdir(const SpPath *p);
+SP_NODISCARD SpError sp_remove(const SpPath *p, SpRemoveOptions options); /* unlink, rmdir */
 SP_NODISCARD SpError sp_chmod(const SpPath *p, unsigned int mode, bool follow_symlinks);
-/* These return the target path. copy is recursive; flags: SP_COPY_FOLLOW_SYMLINKS, SP_COPY_PRESERVE_METADATA */
-SP_NODISCARD SpPath sp_rename(const SpPath *p, const SpPath *target);
-SP_NODISCARD SpPath sp_replace(const SpPath *p, const SpPath *target);
-SP_NODISCARD SpPath sp_copy(const SpPath *p, const SpPath *target, unsigned int flags);
-SP_NODISCARD SpPath sp_copy_into(const SpPath *p, const SpPath *target_dir, unsigned int flags);
-SP_NODISCARD SpPath sp_move(const SpPath *p, const SpPath *target); /* rename, or copy + delete across filesystems */
-SP_NODISCARD SpPath sp_move_into(const SpPath *p, const SpPath *target_dir);
+/* These return the target path (target / p's name with into). copy is recursive; move renames, or copies and deletes
+ * across filesystems */
+SP_NODISCARD SpPath sp_rename(const SpPath *p, const SpPath *target, bool replace);
+SP_NODISCARD SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options); /* copy, copy_into */
+SP_NODISCARD SpPath sp_move(const SpPath *p, const SpPath *target, bool into);             /* move, move_into */
 
 typedef struct {
     size_t bytes; /* read or written; with SP_ERR_TOO_LONG from sp_read_file, the file's size */
@@ -391,35 +424,25 @@ SP_NODISCARD SpTerm sp_owner(const SpPath *p, bool follow_symlinks);
 SP_NODISCARD SpTerm sp_group(const SpPath *p, bool follow_symlinks);
 
 /* Path.walk as an iterator: sp_walk_next gives each directory in turn (NULL at the end, or with it.error set when the
- * walk had to stop). Flags: SP_WALK_TOP_DOWN (pathlib's default), SP_WALK_FOLLOW_SYMLINKS. The names are kept in the
- * caller's buf while their directory is being walked; an entry is valid until the next call. */
-SP_NODISCARD SpWalkIter sp_walk_begin(const SpPath *top, unsigned int flags, void *buf, size_t buf_size);
+ * walk had to stop). The names are kept in the caller's buf while their directory is being walked; an entry is valid
+ * until the next call. */
+SP_NODISCARD SpWalkIter sp_walk_begin(const SpPath *top, SpWalkOptions options, void *buf, size_t buf_size);
 SP_NODISCARD SpWalkEntry *sp_walk_next(SpWalkIter *it);
 
-/* Glob iterator - iterate over paths matching a relative pattern
- * sp_glob_begin:  Initialize iterator; it.error is set for a bad pattern or base
- * sp_glob_next:   Get next match, returns true if found (match written to out); false at the end, or with it.error
- * sp_glob_end:    Close iterator (must be called to release directory handles)
- * sp_rglob_begin: Like sp_glob_begin but prepends "**\/" to pattern
- * recurse_symlinks: whether "**" descends into symlinked directories
- */
-SP_NODISCARD SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs,
-                                      bool recurse_symlinks);
+/* glob and rglob (options.recursive) over the paths matching a relative pattern
+ * sp_glob_begin: the iterator; it.error is set for a bad pattern or base
+ * sp_glob_next:  the next match into out, true while there is one; false at the end, or with it.error
+ * sp_glob_end:   closes the iterator (releasing directory handles) */
+SP_NODISCARD SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpGlobOptions options);
 SP_NODISCARD bool sp_glob_next(SpGlobIter *it, SpPath *out);
 void sp_glob_end(SpGlobIter *it);
-SP_NODISCARD SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs,
-                                       bool recurse_symlinks);
 
-/* Glob foreach macro - iterates all matches, auto-closes on completion */
+/* Every match, closing the iterator at the end; options is an SpGlobOptions value */
 /* clang-format off */
-#define SP_PRIV_GLOB_FOREACH(begin, match_var) \
-    for (struct { SpGlobIter it; int done; } sp_gctx_ = { begin, 0 }; \
+#define SP_GLOB_FOREACH(base, pattern, options, match_var) \
+    for (struct { SpGlobIter it; int done; } sp_gctx_ = { sp_glob_begin(base, pattern, options), 0 }; \
          !sp_gctx_.done; sp_glob_end(&sp_gctx_.it), sp_gctx_.done = 1) \
     for (SpPath match_var; sp_glob_next(&sp_gctx_.it, &match_var); )
-#define SP_GLOB_FOREACH(base, pattern, match_var) \
-    SP_PRIV_GLOB_FOREACH(sp_glob_begin(base, pattern, SP_CASE_DEFAULT, false), match_var)
-#define SP_RGLOB_FOREACH(base, pattern, match_var) \
-    SP_PRIV_GLOB_FOREACH(sp_rglob_begin(base, pattern, SP_CASE_DEFAULT, false), match_var)
 /* clang-format on */
 
 /* ============ Fluent API ============ */
@@ -441,16 +464,7 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(SpTerm, group, (bool follow_symlinks), sp_group(&sp_priv_f_ctx, follow_symlinks))                           \
     X_TERM(bool, is_absolute, (void), sp_is_absolute(&sp_priv_f_ctx))                                                  \
     X_TERM(bool, is_relative_to, (const SpPath *o), sp_is_relative_to(&sp_priv_f_ctx, o))                              \
-    X_TERM(bool, is_file, (bool follow_symlinks), sp_is_file(&sp_priv_f_ctx, follow_symlinks))                         \
-    X_TERM(bool, is_dir, (bool follow_symlinks), sp_is_dir(&sp_priv_f_ctx, follow_symlinks))                           \
-    X_TERM(bool, exists, (bool follow_symlinks), sp_exists(&sp_priv_f_ctx, follow_symlinks))                           \
-    X_TERM(bool, is_symlink, (void), sp_is_symlink(&sp_priv_f_ctx))                                                    \
-    X_TERM(bool, is_block_device, (void), sp_is_block_device(&sp_priv_f_ctx))                                          \
-    X_TERM(bool, is_char_device, (void), sp_is_char_device(&sp_priv_f_ctx))                                            \
-    X_TERM(bool, is_fifo, (void), sp_is_fifo(&sp_priv_f_ctx))                                                          \
-    X_TERM(bool, is_socket, (void), sp_is_socket(&sp_priv_f_ctx))                                                      \
-    X_TERM(bool, is_mount, (void), sp_is_mount(&sp_priv_f_ctx))                                                        \
-    X_TERM(bool, is_junction, (void), sp_is_junction(&sp_priv_f_ctx))                                                  \
+    X_TERM(bool, is, (SpFileType type, bool follow_symlinks), sp_is(&sp_priv_f_ctx, type, follow_symlinks))            \
     X_TERM(SpStatResult, stat, (bool follow_symlinks), sp_stat(&sp_priv_f_ctx, follow_symlinks))                       \
     X_TERM(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))                                                 \
     X_TERM(bool, ne, (const SpPath *o), sp_path_ne(&sp_priv_f_ctx, o))                                                 \
@@ -458,17 +472,12 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(SpIOResult, read_file, (char *buf, size_t buf_size), sp_read_file(&sp_priv_f_ctx, buf, buf_size))           \
     X_TERM(SpIOResult, write_file, (const char *data, size_t data_len), sp_write_file(&sp_priv_f_ctx, data, data_len)) \
     X_TERM(SpError, as_uri, (char *buf, size_t buf_size), sp_as_uri(&sp_priv_f_ctx, buf, buf_size))                    \
-    X_TERM(bool, match, (const char *pattern), sp_match(&sp_priv_f_ctx, pattern, SP_CASE_DEFAULT))                     \
-    X_TERM(bool, full_match, (const char *pattern), sp_full_match(&sp_priv_f_ctx, pattern, SP_CASE_DEFAULT))           \
-    X_TERM(SpError, mkdir, (unsigned int mode, unsigned int flags, unsigned int parent_mode),                          \
-           sp_mkdir(&sp_priv_f_ctx, mode, flags, parent_mode))                                                         \
+    X_TERM(bool, match, (const char *pattern, SpMatchOptions options), sp_match(&sp_priv_f_ctx, pattern, options))     \
+    X_TERM(SpError, mkdir, (unsigned int mode, SpMkdirOptions options), sp_mkdir(&sp_priv_f_ctx, mode, options))       \
     X_TERM(SpError, touch, (unsigned int mode, bool exist_ok), sp_touch(&sp_priv_f_ctx, mode, exist_ok))               \
-    X_TERM(SpError, unlink, (bool missing_ok), sp_unlink(&sp_priv_f_ctx, missing_ok))                                  \
-    X_TERM(SpError, rmdir, (void), sp_rmdir(&sp_priv_f_ctx))                                                           \
+    X_TERM(SpError, remove, (SpRemoveOptions options), sp_remove(&sp_priv_f_ctx, options))                             \
     X_TERM(SpError, chmod, (unsigned int mode, bool follow_symlinks), sp_chmod(&sp_priv_f_ctx, mode, follow_symlinks)) \
-    X_TERM(SpError, symlink_to, (const SpPath *target, bool target_is_directory),                                      \
-           sp_symlink_to(&sp_priv_f_ctx, target, target_is_directory))                                                 \
-    X_TERM(SpError, hardlink_to, (const SpPath *target), sp_hardlink_to(&sp_priv_f_ctx, target))
+    X_TERM(SpError, link_to, (const SpPath *target, SpLinkOptions options), sp_link_to(&sp_priv_f_ctx, target, options))
 
 #define SP_F_CHAIN_METHODS(X)                                                                                          \
     X(parent, (void), sp_parent(&sp_priv_f_ctx))                                                                       \
@@ -482,12 +491,9 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X(relative_to, (const SpPath *o, bool walk_up), sp_relative_to(&sp_priv_f_ctx, o, walk_up))                        \
     X(readlink, (void), sp_readlink(&sp_priv_f_ctx))                                                                   \
     X(resolve, (bool strict), sp_resolve(&sp_priv_f_ctx, strict))                                                      \
-    X(rename, (const SpPath *target), sp_rename(&sp_priv_f_ctx, target))                                               \
-    X(replace, (const SpPath *target), sp_replace(&sp_priv_f_ctx, target))                                             \
-    X(copy, (const SpPath *target, unsigned int flags), sp_copy(&sp_priv_f_ctx, target, flags))                        \
-    X(copy_into, (const SpPath *target_dir, unsigned int flags), sp_copy_into(&sp_priv_f_ctx, target_dir, flags))      \
-    X(move, (const SpPath *target), sp_move(&sp_priv_f_ctx, target))                                                   \
-    X(move_into, (const SpPath *target_dir), sp_move_into(&sp_priv_f_ctx, target_dir))
+    X(rename, (const SpPath *target, bool replace), sp_rename(&sp_priv_f_ctx, target, replace))                        \
+    X(copy, (const SpPath *target, SpCopyOptions options), sp_copy(&sp_priv_f_ctx, target, options))                   \
+    X(move, (const SpPath *target, bool into), sp_move(&sp_priv_f_ctx, target, into))
 
 /* clang-format off */
 struct sp_fluent_ {
@@ -1337,19 +1343,6 @@ SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
     return sp_priv_join_len(base, s, len);
 }
 
-SpPath sp_joinpath(const SpPath *base, const SpPath *other) {
-    if (base->error != SP_OK || other->error != SP_OK)
-        return base->error != SP_OK ? *base : *other;
-    if (other->len == 0)
-        return *base;
-    if (base->len == 0)
-        return *other;
-
-    SP_ASSERT_PATH_INVARIANT(base);
-    SP_ASSERT_PATH_INVARIANT(other);
-    return sp_priv_join_len(base, other->buf, other->len);
-}
-
 SpPath sp_join_impl(const SpPath *base, const char **parts) {
     SpPath r = *base;
     for (; r.error == SP_OK && *parts; parts++)
@@ -1859,17 +1852,18 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
     return si == slen;
 }
 
-bool sp_full_match(const SpPath *p, const char *pattern, SpCaseSensitivity cs) {
+/* full_match: the whole path against the pattern. match: the path's last parts against the pattern's parts, which must
+ * be all of its parts for an anchored pattern (CPython's) */
+bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions options) {
     SP_ASSERT_PATH_INVARIANT(p);
     SpPath pat = sp_path_from_n(pattern, strlen(pattern), p->flavor);
+    SpCaseSensitivity cs = options.case_sensitive;
     bool ci = cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_DEFAULT && p->flavor == SP_FLAVOR_WINDOWS);
-    assert(pat.error == SP_OK && "pattern longer than SP_PATH_MAX");
-    return sp_priv_match_path(pat.buf, pat.len, p->buf, p->len, ci, true, p->flavor);
-}
+    if (options.full) {
+        assert(pat.error == SP_OK && "pattern longer than SP_PATH_MAX");
+        return sp_priv_match_path(pat.buf, pat.len, p->buf, p->len, ci, true, p->flavor);
+    }
 
-/* CPython: the path's last parts match the pattern's parts, which must be all of its parts for an anchored pattern */
-bool sp_match(const SpPath *p, const char *pattern, SpCaseSensitivity cs) {
-    SpPath pat = sp_path_from_n(pattern, strlen(pattern), p->flavor);
     SpPartsIter path = sp_parts_begin(p);
     SpPartsIter pattern_parts = sp_parts_begin(&pat);
     SpStr pp, sp;
@@ -1883,7 +1877,6 @@ bool sp_match(const SpPath *p, const char *pattern, SpCaseSensitivity cs) {
     if (total < count || (total > count && pattern_parts.anchor > 0))
         return false;
 
-    bool ci = cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_DEFAULT && p->flavor == SP_FLAVOR_WINDOWS);
     for (size_t skip = total - count; sp_parts_next(&path, &sp);)
         if (skip > 0)
             skip--;
@@ -2000,27 +1993,8 @@ bool sp_stat_eq(const SpStatResult *a, const SpStatResult *b) {
            a->sp_size == b->sp_size;
 }
 
-static bool sp_priv_has_type(const SpPath *p, unsigned int type_mask, bool follow_symlinks) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    SpStatResult st = sp_priv_stat_impl(p, follow_symlinks);
-    return st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == type_mask;
-}
-
-bool sp_exists(const SpPath *p, bool follow_symlinks) {
-    SP_ASSERT_PATH_INVARIANT(p);
-    return sp_priv_stat_impl(p, follow_symlinks).error == SP_OK;
-}
-
-bool sp_is_dir(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, SP_PRIV_IFDIR, follow_symlinks); }
-bool sp_is_file(const SpPath *p, bool follow_symlinks) { return sp_priv_has_type(p, SP_PRIV_IFREG, follow_symlinks); }
-bool sp_is_symlink(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFLNK, false); }
-bool sp_is_block_device(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFBLK, true); }
-bool sp_is_char_device(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFCHR, true); }
-bool sp_is_fifo(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFIFO, true); }
-bool sp_is_socket(const SpPath *p) { return sp_priv_has_type(p, SP_PRIV_IFSOCK, true); }
-
-bool sp_is_mount(const SpPath *p) {
-    SP_ASSERT_PATH_INVARIANT(p);
+/* os.path.ismount */
+static bool sp_priv_is_mount(const SpPath *p) {
 #ifdef SP_WINDOWS
     /* ntpath.ismount: the path is its volume's root */
     SpPrivNative native;
@@ -2049,11 +2023,19 @@ bool sp_is_mount(const SpPath *p) {
 #endif
 }
 
-/* os.path.isjunction: lstat's reparse tag is a mount point's */
-bool sp_is_junction(const SpPath *p) {
+/* A junction is lstat's mount point reparse tag (os.path.isjunction); the others are stat's file type */
+bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks) {
+    static const unsigned int modes[] = {
+        0, SP_PRIV_IFREG, SP_PRIV_IFDIR, SP_PRIV_IFLNK, SP_PRIV_IFBLK, SP_PRIV_IFCHR, SP_PRIV_IFIFO, SP_PRIV_IFSOCK};
     SP_ASSERT_PATH_INVARIANT(p);
-    SpStatResult st = sp_priv_stat_impl(p, false);
-    return st.error == SP_OK && st.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT;
+    if (type == SP_MOUNT)
+        return sp_priv_is_mount(p);
+
+    bool link = type == SP_SYMLINK || type == SP_JUNCTION;
+    SpStatResult st = sp_priv_stat_impl(p, follow_symlinks && !link);
+    if (type == SP_JUNCTION)
+        return st.error == SP_OK && st.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT;
+    return st.error == SP_OK && (type == SP_ANY || (st.sp_mode & SP_PRIV_IFMT) == modes[type]);
 }
 
 /* os.readlink(): the unparsed target of the symlink (or junction) at p into out, as the OS gives it (not normalized),
@@ -2392,9 +2374,10 @@ static SpError sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool 
 
 /* CPython's os.symlink: on Windows a link to an existing directory (the target taken from the link's directory) is a
  * directory link even without target_is_directory */
-SpError sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_directory) {
+SpError sp_link_to(const SpPath *p, const SpPath *target, SpLinkOptions options) {
+    bool target_is_directory = options.target_is_directory;
 #ifdef SP_WINDOWS
-    if (!target_is_directory) {
+    if (!options.hard && !target_is_directory) {
         SpPath dir = sp_parent(p);
         SpPath resolved = sp_priv_join_len(&dir, target->buf, target->len);
         SpPrivNative native;
@@ -2404,10 +2387,8 @@ SpError sp_symlink_to(const SpPath *p, const SpPath *target, bool target_is_dire
         target_is_directory = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
     }
 #endif
-    return sp_priv_link_to_impl(p, target, true, target_is_directory);
+    return sp_priv_link_to_impl(p, target, !options.hard, target_is_directory);
 }
-
-SpError sp_hardlink_to(const SpPath *p, const SpPath *target) { return sp_priv_link_to_impl(p, target, false, false); }
 
 bool sp_samefile(const SpPath *a, const SpPath *b) {
     SP_ASSERT_PATH_INVARIANT(a);
@@ -2435,22 +2416,23 @@ static SpError sp_priv_mkdir_impl(const SpPath *p, unsigned int mode) {
 
 /* CPython's Path.mkdir: missing parents are created (with parent_mode) only after a "not found" failure, and any
  * failure is fine with exist_ok when the path is a directory (Windows reports some of those as access denied) */
-SpError sp_mkdir(const SpPath *p, unsigned int mode, unsigned int flags, unsigned int parent_mode) {
+SpError sp_mkdir(const SpPath *p, unsigned int mode, SpMkdirOptions options) {
     if (p->error != SP_OK)
         return p->error;
-    if ((flags & ~SP_PRIV_CAST(unsigned int, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK)) != 0)
-        return SP_ERR_INVALID_ARG;
 
     SpError err = sp_priv_mkdir_impl(p, mode);
     if (err == SP_OK)
         return SP_OK;
 
     SpPath parent = sp_parent(p);
-    if (err == SP_ERR_NOT_FOUND && (flags & SP_MKDIR_PARENTS) && parent.len != p->len) {
-        err = sp_mkdir(&parent, parent_mode, SP_MKDIR_PARENTS | SP_MKDIR_EXIST_OK, parent_mode);
-        return err == SP_OK ? sp_mkdir(p, mode, flags & SP_MKDIR_EXIST_OK, parent_mode) : err;
+    if (err == SP_ERR_NOT_FOUND && options.parents && parent.len != p->len) {
+        SpMkdirOptions above = options;
+        above.exist_ok = true;
+        err = sp_mkdir(&parent, options.parent_mode, above);
+        options.parents = false;
+        return err == SP_OK ? sp_mkdir(p, mode, options) : err;
     }
-    return (flags & SP_MKDIR_EXIST_OK) && sp_priv_has_type(p, SP_PRIV_IFDIR, true) ? SP_OK : err;
+    return options.exist_ok && sp_is(p, SP_DIR, true) ? SP_OK : err;
 }
 
 /* CPython's Path.touch: with exist_ok, bump an existing file's times; otherwise create the file */
@@ -2514,9 +2496,9 @@ static SpError sp_priv_remove_impl(const SpPath *p, bool is_dir, bool missing_ok
     return err == SP_ERR_NOT_FOUND && missing_ok ? SP_OK : err;
 }
 
-SpError sp_unlink(const SpPath *p, bool missing_ok) { return sp_priv_remove_impl(p, false, missing_ok); }
-
-SpError sp_rmdir(const SpPath *p) { return sp_priv_remove_impl(p, true, false); }
+SpError sp_remove(const SpPath *p, SpRemoveOptions options) {
+    return sp_priv_remove_impl(p, options.dir, options.missing_ok);
+}
 
 /* os.chmod(). On Windows the owner's write bit clears or sets the read-only attribute: of the file a link leads to
  * (its final path) when following, of the link itself otherwise. Not following a symlink elsewhere needs fchmodat's
@@ -2903,18 +2885,26 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
     return err;
 }
 
-SpPath sp_copy(const SpPath *p, const SpPath *target, unsigned int flags) {
-    SpError err = p->error != SP_OK ? p->error : target->error;
-    if (err == SP_OK && (flags & ~SP_PRIV_CAST(unsigned int, SP_COPY_FOLLOW_SYMLINKS | SP_COPY_PRESERVE_METADATA)) != 0)
-        err = SP_ERR_INVALID_ARG;
-    if (err == SP_OK && sp_priv_relative_len(target, p) != SP_PRIV_CAST(size_t, -1))
+/* The target of a copy or move: target itself, or with into, target / p's name (which p must have) */
+static SpPath sp_priv_destination(const SpPath *p, const SpPath *target, bool into) {
+    SpStr name = sp_priv_name_sv(p);
+    if (p->error != SP_OK || target->error != SP_OK || !into)
+        return p->error != SP_OK ? sp_priv_error_path(target->flavor, p->error) : *target;
+    if (name.len == 0)
+        return sp_priv_error_path(target->flavor, SP_ERR_NO_NAME);
+    return sp_priv_join_len(target, name.data, name.len);
+}
+
+SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
+    SpPath dst = sp_priv_destination(p, target, options.into);
+    SpError err = dst.error;
+    if (err == SP_OK && sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1))
         err = SP_ERR_SAME_FILE;
 
-    SpPath dst = *target;
+    SpPath tree = dst; /* extended in place for children as they are copied */
     if (err == SP_OK)
-        err = sp_priv_copy_tree(p, &dst, (flags & SP_COPY_FOLLOW_SYMLINKS) != 0,
-                                (flags & SP_COPY_PRESERVE_METADATA) != 0);
-    return err == SP_OK ? *target : sp_priv_error_path(target->flavor, err);
+        err = sp_priv_copy_tree(p, &tree, options.follow_symlinks, options.preserve_metadata);
+    return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
 /* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
@@ -2966,48 +2956,26 @@ static SpPath sp_priv_rename(const SpPath *p, const SpPath *target, bool allow_r
     return sp_priv_error_path(target->flavor, sp_priv_last_error());
 }
 
-SpPath sp_rename(const SpPath *p, const SpPath *target) { return sp_priv_rename(p, target, false, false); }
-SpPath sp_replace(const SpPath *p, const SpPath *target) { return sp_priv_rename(p, target, true, false); }
+SpPath sp_rename(const SpPath *p, const SpPath *target, bool replace) {
+    return sp_priv_rename(p, target, replace, false);
+}
 
 /* Path.move: rename, or across filesystems copy (keeping symlinks and metadata) and delete */
-SpPath sp_move(const SpPath *p, const SpPath *target) {
-    SpPath r = sp_priv_rename(p, target, true, true);
+SpPath sp_move(const SpPath *p, const SpPath *target, bool into) {
+    SpPath dst = sp_priv_destination(p, target, into);
+    SpPath r = dst.error != SP_OK ? dst : sp_priv_rename(p, &dst, true, true);
     if (r.error != SP_ERR_CROSS_DEVICE)
         return r;
 
-    SpPath dst = *target;
-    SpError err = sp_priv_relative_len(target, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
-                                                                              : sp_priv_copy_tree(p, &dst, false, true);
+    SpPath tree = dst;
+    SpError err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
+                                                                            : sp_priv_copy_tree(p, &tree, false, true);
     if (err == SP_OK)
         err = sp_priv_delete(p);
-    return err == SP_OK ? *target : sp_priv_error_path(target->flavor, err);
+    return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
 /* The *_into operations: target_dir / p.name, then the operation itself */
-SpPath sp_copy_into(const SpPath *p, const SpPath *target_dir, unsigned int flags) {
-    SpStr name = sp_priv_name_sv(p);
-    SpError err = p->error != SP_OK ? p->error : target_dir->error;
-    if (err == SP_OK && name.len == 0)
-        err = SP_ERR_NO_NAME;
-    if (err != SP_OK)
-        return sp_priv_error_path(target_dir->flavor, err);
-
-    SpPath target = sp_priv_join_len(target_dir, name.data, name.len);
-    return sp_copy(p, &target, flags);
-}
-
-SpPath sp_move_into(const SpPath *p, const SpPath *target_dir) {
-    SpStr name = sp_priv_name_sv(p);
-    SpError err = p->error != SP_OK ? p->error : target_dir->error;
-    if (err == SP_OK && name.len == 0)
-        err = SP_ERR_NO_NAME;
-    if (err != SP_OK)
-        return sp_priv_error_path(target_dir->flavor, err);
-
-    SpPath target = sp_priv_join_len(target_dir, name.data, name.len);
-    return sp_move(p, &target);
-}
-
 static SpStr sp_priv_glob_part(const SpGlobIter *it, size_t pos) {
     const char *buf = it->priv_.pattern_buf;
     char sep = it->priv_.path.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
@@ -3081,12 +3049,14 @@ static bool sp_priv_glob_select(SpGlobIter *it, size_t seg, bool exists, bool tr
 /* An iterator for prefix + pattern with its first match selected. The pattern is compacted once (without empty and
  * '.' parts) but keeps separators, so recursive groups are contiguous pattern slices; a trailing separator adds a final
  * empty part. */
-static SpGlobIter sp_priv_glob_init(const SpPath *base, const char *prefix, const char *pattern, SpCaseSensitivity cs,
-                                    bool recurse_symlinks) {
+SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpGlobOptions options) {
     SpGlobIter it = SP_PRIV_ZERO;
     it.depth = -1;
     SpFlavor flavor = base->flavor;
+    const char *prefix =
+        options.recursive ? "**/" : ""; /* glob(join('**', pattern)); an anchored pattern is rejected */
     size_t plen = strlen(prefix);
+    SpCaseSensitivity cs = options.case_sensitive;
     size_t len = strlen(pattern);
     it.error = base->error;
     if (it.error == SP_OK && sp_priv_split_anchor(pattern, len, flavor, NULL) > 0)
@@ -3127,18 +3097,9 @@ static SpGlobIter sp_priv_glob_init(const SpPath *base, const char *prefix, cons
     it.priv_.pattern_len = n;
     it.priv_.case_insensitive = cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_DEFAULT && flavor == SP_FLAVOR_WINDOWS);
     it.priv_.case_pedantic = cs != SP_CASE_DEFAULT;
-    it.priv_.recurse_symlinks = recurse_symlinks;
+    it.priv_.recurse_symlinks = options.recurse_symlinks;
     it.priv_.path = *base;
     return it;
-}
-
-SpGlobIter sp_glob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs, bool recurse_symlinks) {
-    return sp_priv_glob_init(base, "", pattern, cs, recurse_symlinks);
-}
-
-/* glob(join('**', pattern)); an anchored pattern replaces the '**' in the join, which glob rejects */
-SpGlobIter sp_rglob_begin(const SpPath *base, const char *pattern, SpCaseSensitivity cs, bool recurse_symlinks) {
-    return sp_priv_glob_init(base, "**/", pattern, cs, recurse_symlinks);
 }
 
 bool sp_glob_next(SpGlobIter *it, SpPath *out) {
@@ -3167,7 +3128,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             continue;
         }
 
-        bool is_dir = (walk || !last) && sp_priv_has_type(&entry, SP_PRIV_IFDIR, !walk || it->priv_.recurse_symlinks);
+        bool is_dir = (walk || !last) && sp_is(&entry, SP_DIR, !walk || it->priv_.recurse_symlinks);
         if (!last && !is_dir)
             continue;
         *path = entry;
@@ -3387,7 +3348,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     size_t names = it->priv_.used + sizeof(SpPrivWalkLevel);
     size_t used = names;
     size_t count = 0;
-    bool follow = (it->priv_.flags & SP_WALK_FOLLOW_SYMLINKS) != 0;
+    bool follow = it->priv_.options.follow_symlinks;
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
@@ -3439,7 +3400,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     return SP_OK;
 }
 
-SpWalkIter sp_walk_begin(const SpPath *top, unsigned int flags, void *buf, size_t buf_size) {
+SpWalkIter sp_walk_begin(const SpPath *top, SpWalkOptions options, void *buf, size_t buf_size) {
     SpWalkIter it = SP_PRIV_ZERO;
     size_t pad = (sizeof(char *) - SP_PRIV_PTR_BITS(buf) % sizeof(char *)) % sizeof(char *);
     pad = pad < buf_size ? pad : buf_size;
@@ -3448,11 +3409,9 @@ SpWalkIter sp_walk_begin(const SpPath *top, unsigned int flags, void *buf, size_
     it.priv_.buf = SP_PRIV_CAST(char *, buf) + pad;
     it.priv_.size = buf_size - pad;
     it.priv_.level = SP_PRIV_CAST(size_t, -1);
-    it.priv_.flags = flags;
+    it.priv_.options = options;
     it.priv_.pending = true;
     it.error = top->error;
-    if ((flags & ~SP_PRIV_CAST(unsigned int, SP_WALK_TOP_DOWN | SP_WALK_FOLLOW_SYMLINKS)) != 0)
-        it.error = SP_ERR_INVALID_ARG;
     return it;
 }
 
@@ -3460,7 +3419,7 @@ SpWalkIter sp_walk_begin(const SpPath *top, unsigned int flags, void *buf, size_
  * can prune its dirnames), bottom-up after its subdirectories */
 SpWalkEntry *sp_walk_next(SpWalkIter *it) {
     SpWalkEntry *e = &it->entry;
-    bool top_down = (it->priv_.flags & SP_WALK_TOP_DOWN) != 0;
+    bool top_down = !it->priv_.options.bottom_up;
 
     /* The listing given out last, top-down: its subdirectories are what the caller left in dirnames */
     if (it->priv_.prunable) {
