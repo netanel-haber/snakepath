@@ -1,6 +1,5 @@
 /* test.c - Rigorous pathlib tests for snakepath.h (plus the fluent API with -DSNAKEPATH_FLUENT).
- * With -DSP_FFI -shared it builds the library the Python bindings (snakepath.py) load instead, and with -DSP_DIFF
- * the driver ./nob diff compares two versions of the header with. */
+ * With -DSP_DIFF it builds the driver ./nob diff compares two versions of the header with instead. */
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
 #endif
@@ -11,9 +10,7 @@
 #define SP_PATH_MAX SP_PATH_MAX_LINUX
 #endif
 #endif
-#ifndef SP_FFI
 #define SP_GLOB_MAX_DEPTH 16 /* a glob past it needs a tree this deep, which Windows paths must be short enough for */
-#endif
 #define SNAKEPATH_IMPLEMENTATION
 #ifdef SP_DIFF
 #include <snakepath.h> /* the one -I points at: the base ref's copy, or the working tree's */
@@ -21,194 +18,7 @@
 #include "snakepath.h"
 #endif
 
-#ifdef SP_FFI
-
-#ifdef _WIN32
-#define SP_EXPORT __declspec(dllexport)
-#else
-#define SP_EXPORT __attribute__((visibility("default")))
-#endif
-
-/* One wrapper per library function the Python bindings (snakepath.py) call, results through pointers */
-
-#define WRAP_CONST(name) \
-    SP_EXPORT int sp_const_##name(void) { return name; }
-
-#define WRAP_TERM(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpTerm *out) { *out = sp_##fn(p); }
-
-#define WRAP_PATH_UNARY(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpPath *out) { *out = sp_##fn(p); }
-
-#define WRAP_PATH_CSTR(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const char *s, SpPath *out) { *out = sp_##fn(p, s); }
-
-#define WRAP_PATH_BINARY(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const SpPath *other, SpPath *out) { *out = sp_##fn(p, other); }
-
-#define WRAP_BOOL_UNARY(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *p) { return sp_##fn(p) ? 1 : 0; }
-
-#define WRAP_BOOL_FOLLOW(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *p, int follow_symlinks) { return sp_##fn(p, follow_symlinks != 0) ? 1 : 0; }
-
-#define WRAP_BOOL_BINARY(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
-
-/* Constants */
-#define WRAP_ERROR(name, message) WRAP_CONST(name)
-SP_ERRORS(WRAP_ERROR)
-WRAP_CONST(SP_ANY)
-WRAP_CONST(SP_FILE)
-WRAP_CONST(SP_DIR)
-WRAP_CONST(SP_SYMLINK)
-WRAP_CONST(SP_BLOCK_DEVICE)
-WRAP_CONST(SP_CHAR_DEVICE)
-WRAP_CONST(SP_FIFO)
-WRAP_CONST(SP_SOCKET)
-WRAP_CONST(SP_MOUNT)
-WRAP_CONST(SP_JUNCTION)
-WRAP_CONST(SP_CASE_DEFAULT)
-WRAP_CONST(SP_CASE_SENSITIVE)
-WRAP_CONST(SP_CASE_INSENSITIVE)
-WRAP_CONST(SP_PATH_MAX)
-WRAP_CONST(SP_MAX_SUFFIXES)
-SP_EXPORT const char *sp_error_str_wrap(int error) { return sp_error_str((SpError)error); }
-
-/* Struct sizes, for the opaque ones */
-SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
-SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
-SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
-SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
-SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
-
-/* Making and converting paths */
-SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
-    *out = sp_path_from_n(s, len, (SpFlavor)flavor);
-}
-SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
-    *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
-}
-SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = *p; }
-SP_EXPORT const char *sp_str_wrap(const SpPath *p) { return sp_str(p); }
-SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
-SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) { *out = sp_home((SpFlavor)flavor); }
-SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
-
-/* Path -> text */
-WRAP_TERM(drive)
-WRAP_TERM(root)
-WRAP_TERM(anchor)
-WRAP_TERM(name)
-WRAP_TERM(stem)
-WRAP_TERM(suffix)
-WRAP_TERM(as_posix)
-SP_EXPORT void sp_suffixes_wrap(const SpPath *p, SpSuffixes *out) { *out = sp_suffixes(p); }
-SP_EXPORT int sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) { return sp_as_uri(p, buf, buf_size); }
-SP_EXPORT void sp_owner_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_owner(p, follow_symlinks != 0); }
-SP_EXPORT void sp_group_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_group(p, follow_symlinks != 0); }
-
-/* Path -> path */
-WRAP_PATH_UNARY(parent)
-WRAP_PATH_UNARY(absolute)
-WRAP_PATH_UNARY(expanduser)
-WRAP_PATH_UNARY(readlink)
-WRAP_PATH_CSTR(with_name)
-WRAP_PATH_CSTR(with_stem)
-WRAP_PATH_CSTR(with_suffix)
-SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, int replace, SpPath *out) {
-    *out = sp_rename(p, target, replace != 0);
-}
-SP_EXPORT void sp_move_wrap(const SpPath *p, const SpPath *target, int into, SpPath *out) {
-    *out = sp_move(p, target, into != 0);
-}
-SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, SpPath *out) {
-    *out = sp_join_n(p, s, len);
-}
-SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t parts_count, SpPath *out) {
-    *out = sp_with_segments(p, parts, parts_count);
-}
-SP_EXPORT void sp_relative_to_wrap(const SpPath *p, const SpPath *other, int walk_up, SpPath *out) {
-    *out = sp_relative_to(p, other, walk_up != 0);
-}
-SP_EXPORT void sp_resolve_wrap(const SpPath *p, int strict, SpPath *out) { *out = sp_resolve(p, strict != 0); }
-SP_EXPORT void sp_copy_wrap(const SpPath *p, const SpPath *target, int follow_symlinks, int preserve_metadata,
-                            int into, SpPath *out) {
-    SpCopyOptions options = {follow_symlinks != 0, preserve_metadata != 0, into != 0};
-    *out = sp_copy(p, target, options);
-}
-
-/* Parts and parents */
-SP_EXPORT void sp_parts_iter_begin_wrap(const SpPath *p, SpPartsIter *out) { *out = sp_parts_begin(p); }
-SP_EXPORT int sp_parts_iter_next_wrap(SpPartsIter *it, SpStr *out) { return sp_parts_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_parents_iter_begin_wrap(const SpPath *p, SpParentsIter *out) { *out = sp_parents_begin(p); }
-SP_EXPORT int sp_parents_iter_next_wrap(SpParentsIter *it, SpPath *out) { return sp_parents_next(it, out) ? 1 : 0; }
-
-/* Comparisons and matching */
-WRAP_BOOL_UNARY(is_absolute)
-WRAP_BOOL_BINARY(path_eq)
-WRAP_BOOL_BINARY(is_relative_to)
-SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
-SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
-SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern, int full, int cs) {
-    SpMatchOptions options = {full != 0, (SpCaseSensitivity)cs};
-    return sp_match(p, pattern, options) ? 1 : 0;
-}
-
-/* The file system */
-SP_EXPORT int sp_is_wrap(const SpPath *p, int type, int follow_symlinks) {
-    return sp_is(p, (SpFileType)type, follow_symlinks != 0) ? 1 : 0;
-}
-WRAP_BOOL_BINARY(samefile)
-SP_EXPORT void sp_stat_wrap(const SpPath *p, int follow_symlinks, SpStatResult *out) {
-    *out = sp_stat(p, follow_symlinks != 0);
-}
-SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
-SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok, unsigned int parent_mode) {
-    SpMkdirOptions options = {parents != 0, exist_ok != 0, parent_mode};
-    return sp_mkdir(p, mode, options);
-}
-SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) { return sp_touch(p, mode, exist_ok != 0); }
-SP_EXPORT int sp_remove_wrap(const SpPath *p, int dir, int missing_ok) {
-    SpRemoveOptions options = {dir != 0, missing_ok != 0};
-    return sp_remove(p, options);
-}
-SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode, int follow_symlinks) {
-    return sp_chmod(p, mode, follow_symlinks != 0);
-}
-SP_EXPORT int sp_link_to_wrap(const SpPath *p, const SpPath *target, int hard, int target_is_directory) {
-    SpLinkOptions options = {hard != 0, target_is_directory != 0};
-    return sp_link_to(p, target, options);
-}
-SP_EXPORT void sp_read_file_wrap(const SpPath *p, char *buf, size_t buf_size, SpIOResult *out) {
-    *out = sp_read_file(p, buf, buf_size);
-}
-SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data_len, SpIOResult *out) {
-    *out = sp_write_file(p, data, data_len);
-}
-
-/* Iterators */
-SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) { *out = sp_iterdir_begin(p); }
-SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) { return sp_iterdir_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) { sp_iterdir_end(it); }
-SP_EXPORT int sp_iterdir_error_wrap(const SpIterdirIter *it) { return it->error; }
-SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int recursive, int recurse_symlinks, int cs,
-                                  SpGlobIter *out) {
-    SpGlobOptions options = {recursive != 0, recurse_symlinks != 0, (SpCaseSensitivity)cs};
-    *out = sp_glob_begin(p, pattern, options);
-}
-SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) { return sp_glob_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) { sp_glob_end(it); }
-SP_EXPORT int sp_glob_error_wrap(const SpGlobIter *it) { return it->error; }
-SP_EXPORT void sp_walk_begin_wrap(const SpPath *top, int bottom_up, int follow_symlinks, void *buf, size_t buf_size,
-                                  SpWalkIter *out) {
-    SpWalkOptions options = {bottom_up != 0, follow_symlinks != 0};
-    *out = sp_walk_begin(top, options, buf, buf_size);
-}
-SP_EXPORT SpWalkEntry *sp_walk_next_wrap(SpWalkIter *it) { return sp_walk_next(it); }
-SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
-
-#elif defined(SP_DIFF)
+#ifdef SP_DIFF
 
 /* ./nob diff's driver: every pure result for generated inputs, in both flavors, one hash per line into a file, so two
  * builds of this file against two versions of snakepath.h compare line by line.
@@ -2464,4 +2274,4 @@ int main(void) {
     return 0;
 }
 
-#endif /* SP_FFI */
+#endif /* SP_DIFF */

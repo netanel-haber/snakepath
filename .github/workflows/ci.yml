@@ -1,8 +1,8 @@
 name: CI
 
+# Every commit on every branch is built and tested once (push); a PR adds the jobs that compare with its base
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -10,6 +10,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout repository
@@ -38,6 +39,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     timeout-minutes: 20
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout repository
@@ -103,3 +105,28 @@ jobs:
 
       - name: Differential check against the base branch
         run: .\nob.exe diff origin/${{ github.base_ref }}
+
+  # Informational: a real program with pathlib, and with snakepath swapped in for pathlib's classes the way a user would
+  # monkeypatch them (check.py bench): pytest collecting SymPy's tests, from the package pip builds
+  bench-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install snakepath, pytest and SymPy's tests
+        run: |
+          pip install . pytest mpmath
+          git clone --depth 1 --branch sympy-1.14.0 https://github.com/sympy/sympy.git ../sympy
+
+      - name: pytest collecting SymPy's tests, with pathlib and with snakepath
+        run: python check.py bench 10 ../sympy pytest --collect-only -q sympy

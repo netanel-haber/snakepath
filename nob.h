@@ -1137,47 +1137,16 @@ static const char *all_artifacts[] = {
     "test_msvc.exe", "test_msvc_cpp.exe", "test_fluent_msvc.exe", "api_demo.exe",
     /* PDB and obj files from MSVC */
     "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "api_demo.pdb",
-    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "api_demo.obj",
-    "snakepath.dll",
+    "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "api_demo.obj", "_snakepath.obj",
 #else
     "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
     "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
     "api_demo",
-    "libsnakepath.so",
 #endif
     NULL
 };
 
-/* Build the library the Python bindings load: test.c with -DSP_FFI */
-static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
-    Nob_Cmd cmd = {0};
-
-#ifdef _WIN32
-    if (compiler == COMPILER_MSVC) {
-        nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
-        nob_cmd_append(&cmd, "/W4", "/DSP_FFI");
-        nob_cmd_append(&cmd, "/Fe:snakepath.dll");
-        nob_cmd_append(&cmd, "test.c");
-    } else {
-        nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
-        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2");
-        nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
-        nob_cmd_append(&cmd, "-o", "snakepath.dll");
-        nob_cmd_append(&cmd, "test.c");
-    }
-#else
-    const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
-    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2");
-    nob_cmd_append(&cmd, "-Wall", "-Wextra");
-    nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
-    nob_cmd_append(&cmd, "-o", "libsnakepath.so");
-    nob_cmd_append(&cmd, "test.c");
-#endif
-
-    return nob_cmd_run(&cmd, .async = procs);
-}
-
-/* Run Python tests */
+/* The Python the package is built for and checked with */
 static const char *find_python(void) {
 #ifdef _WIN32
     return "python";
@@ -1187,10 +1156,68 @@ static const char *find_python(void) {
 #endif
 }
 
-/* Call depth, README embedding api_demo.c, and CPython's pathlib tests on the bindings */
+/* What a command prints (the caller frees it) */
+static char *command_output(const char *cmd) {
+#ifdef _WIN32
+    FILE *p = _popen(cmd, "rb");
+#else
+    FILE *p = popen(cmd, "r");
+#endif
+    Nob_String_Builder sb = {0};
+    char buf[4096];
+    for (size_t n; p && (n = fread(buf, 1, sizeof buf, p)) > 0;)
+        nob_da_append_many(&sb, buf, n);
+    if (p) {
+#ifdef _WIN32
+        _pclose(p);
+#else
+        pclose(p);
+#endif
+    }
+    nob_sb_append_null(&sb);
+    return sb.items;
+}
+
+/* The running Python's include directory, its file name for the _snakepath module, then the link flags an extension
+ * needs where the linker must see libpython (Windows, Android) or be told it will be there (macOS), one per line */
+#define PYTHON_BUILD_FLAGS                                                                                              \
+    "import os, sys, sysconfig as s; v = s.get_config_var; print(s.get_paths()['include'], '_snakepath' + "            \
+    "v('EXT_SUFFIX'), *(['/LIBPATH:' + os.path.join(sys.base_prefix, 'libs')] if os.name == 'nt' else "               \
+    "['-undefined', 'dynamic_lookup'] if sys.platform == 'darwin' else ['-L' + v('LIBDIR'), '-lpython' + "            \
+    "v('LDVERSION')] if hasattr(sys, 'getandroidapilevel') else []), sep=chr(10))"
+
+/* Build the Python package's C extension, _snakepath.c, for the running Python */
+static bool build_python_ext(Nob_Procs *procs) {
+    char *flags = command_output(nob_temp_sprintf("%s -c \"%s\"", find_python(), PYTHON_BUILD_FLAGS));
+    Nob_Cmd cmd = {0};
+    const char *lines[16] = {0};
+    size_t count = 0;
+    for (char *line = strtok(flags, "\r\n"); line && count < sizeof lines / sizeof lines[0]; line = strtok(NULL, "\r\n"))
+        lines[count++] = line;
+    if (count < 2) {
+        nob_log(NOB_ERROR, "Could not ask %s how to build a C extension", find_python());
+        free(flags);
+        return false;
+    }
+
+#ifdef _WIN32
+    nob_cmd_append(&cmd, "cl.exe", "/nologo", "/std:c11", "/O2", "/LD", "/W4", nob_temp_sprintf("/I%s", lines[0]));
+    nob_cmd_append(&cmd, nob_temp_sprintf("/Fe:%s", lines[1]), "_snakepath.c", "/link");
+#else
+    nob_cmd_append(&cmd, "clang", "-std=c11", "-O2", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror");
+    nob_cmd_append(&cmd, "-isystem", lines[0], "-o", lines[1], "_snakepath.c");
+#endif
+    for (size_t i = 2; i < count; i++)
+        nob_cmd_append(&cmd, lines[i]);
+    bool ok = nob_cmd_run(&cmd, .async = procs);
+    free(flags);
+    return ok;
+}
+
+/* Call depth and stack, README embedding api_demo.c, the pathlib fuzz, and CPython's pathlib tests on the package */
 static bool run_python(void) {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, find_python(), "snakepath.py");
+    nob_cmd_append(&cmd, find_python(), "check.py");
     return nob_cmd_run(&cmd);
 }
 
@@ -1202,7 +1229,7 @@ static bool run_python(void) {
     "AllowShortLoopsOnASingleLine: false, AllowShortBlocksOnASingleLine: Never, SortIncludes: Never, "                \
     "ReflowComments: Never}"
 
-/* Rewrite snakepath.h in that layout (./nob format), or check that it already is */
+/* Rewrite snakepath.h and _snakepath.c in that layout (./nob format), or check that they already are */
 static bool run_clang_format(bool rewrite) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "clang-format", SNAKEPATH_LAYOUT);
@@ -1210,7 +1237,7 @@ static bool run_clang_format(bool rewrite) {
         nob_cmd_append(&cmd, "-i");
     else
         nob_cmd_append(&cmd, "--dry-run", "--Werror");
-    nob_cmd_append(&cmd, "snakepath.h");
+    nob_cmd_append(&cmd, "snakepath.h", "_snakepath.c");
     return nob_cmd_run(&cmd);
 }
 
@@ -1378,25 +1405,7 @@ typedef struct {
 /* Line of set spec at size s in full from one side's driver: its input on the first line, its labeled results on the
  * second (the caller frees the text) */
 static char *diff_line_text(size_t side, size_t s, size_t spec, long line) {
-    const char *cmd = nob_temp_sprintf("%s %s %s - %ld 0", diff_exe(side, s), diff_specs[spec][0], diff_specs[spec][1], line);
-#ifdef _WIN32
-    FILE *p = _popen(cmd, "rb");
-#else
-    FILE *p = popen(cmd, "r");
-#endif
-    Nob_String_Builder sb = {0};
-    char buf[4096];
-    for (size_t n; p && (n = fread(buf, 1, sizeof buf, p)) > 0;)
-        nob_da_append_many(&sb, buf, n);
-    if (p) {
-#ifdef _WIN32
-        _pclose(p);
-#else
-        pclose(p);
-#endif
-    }
-    nob_sb_append_null(&sb);
-    return sb.items;
+    return command_output(nob_temp_sprintf("%s %s %s - %ld 0", diff_exe(side, s), diff_specs[spec][0], diff_specs[spec][1], line));
 }
 
 /* The input of a differing line and the results that differ, "label: base -> head" */
@@ -1669,10 +1678,10 @@ int main(int argc, char **argv) {
                 return 1;
             }
         } else if (strcmp(subcmd, "python") == 0) {
-            /* Build and test Python bindings only */
-            LOG_INFO( "=== Building Python bindings ===");
-            if (!build_python_lib(COMPILER_CLANG, NULL)) {
-                nob_log(NOB_ERROR, "Failed to build Python library");
+            /* Build and test the Python package only */
+            LOG_INFO( "=== Building the Python package's extension ===");
+            if (!build_python_ext(NULL)) {
+                nob_log(NOB_ERROR, "Failed to build _snakepath.c");
                 return 1;
             }
             LOG_INFO( "=== Running Python checks and tests ===");
@@ -1680,7 +1689,7 @@ int main(int argc, char **argv) {
                 nob_log(NOB_ERROR, "Python checks or tests failed");
                 return 1;
             }
-            LOG_INFO( "Python bindings built and tested successfully!");
+            LOG_INFO( "Python package built and tested successfully!");
             return 0;
         } else if (strcmp(subcmd, "format") == 0) {
             return run_clang_format(true) ? 0 : 1;
@@ -1741,13 +1750,9 @@ int main(int argc, char **argv) {
     LOG_INFO( "  Starting build: %s", demo_config.name);
     build_source_async(demo_config, "api_demo.c", &procs);
 
-    /* Build Python shared library */
-    LOG_INFO( "  Starting build: Python bindings");
-#ifdef _WIN32
-    build_python_lib(COMPILER_MSVC, &procs);
-#else
-    build_python_lib(COMPILER_CLANG, &procs);
-#endif
+    LOG_INFO( "  Starting build: Python package");
+    if (!build_python_ext(&procs))
+        all_ok = false;
 
     /* Wait for all builds to complete */
     if (!nob_procs_flush(&procs)) {
@@ -1780,7 +1785,7 @@ int main(int argc, char **argv) {
 
     LOG_INFO( "=== Checking snakepath.h's layout ===");
     if (!run_clang_format(false)) {
-        nob_log(NOB_ERROR, "snakepath.h needs ./nob format (clang-format 21: pip install clang-format==21.1.8)");
+        nob_log(NOB_ERROR, "snakepath.h or _snakepath.c needs ./nob format (clang-format 21: pip install clang-format==21.1.8)");
         all_ok = false;
     }
 

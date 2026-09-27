@@ -9,7 +9,6 @@
 /test_clangpp
 /test_fluent_gcc
 /test_fluent_clang
-/libsnakepath.so
 /api_demo
 # ./nob diff: the base ref's header, both sides' drivers and their outputs
 /diff_base/
@@ -17,7 +16,7 @@
 *.o
 *.dSYM/
 
-# MSVC outputs (tests, demo, nob, and the Python DLL with its .lib/.exp)
+# MSVC outputs (tests, demo, nob, and the Python extension's .lib/.exp)
 *.exe
 *.exe.old
 *.obj
@@ -27,7 +26,12 @@
 *.lib
 *.dll
 
-# Python
+# Python: the extension nob or pip builds, pip's build files, and CPython's downloaded tests
+/_snakepath*.so
+/_snakepath*.pyd
+/build/
+/dist/
+/*.egg-info/
 __pycache__/
 *.pyc
 /cpython_tests/

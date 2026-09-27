@@ -1903,19 +1903,31 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
     result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
     result.sp_size = SP_PRIV_CAST(long long, st.st_size);
+
+    /* The times' seconds and nanoseconds, where each platform keeps them */
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
+    long long sec[3] = {st.st_atimespec.tv_sec, st.st_mtimespec.tv_sec, st.st_ctimespec.tv_sec};
+    long long nsec[3] = {st.st_atimespec.tv_nsec, st.st_mtimespec.tv_nsec, st.st_ctimespec.tv_nsec};
+#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8)
+    /* glibc's strict C modes hide POSIX 2008's st_atim */
+    long long sec[3] = {st.st_atime, st.st_mtime, st.st_ctime};
+    long long nsec[3] = {st.st_atimensec, st.st_mtimensec, st.st_ctimensec};
 #else
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL;
+    long long sec[3] = {st.st_atim.tv_sec, st.st_mtim.tv_sec, st.st_ctim.tv_sec};
+    long long nsec[3] = {st.st_atim.tv_nsec, st.st_mtim.tv_nsec, st.st_ctim.tv_nsec};
 #endif
+    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    for (int i = 0; i < 3; i++)
+        *ns[i] = sec[i] * 1000000000LL + nsec[i];
 #endif
-    result.sp_atime = SP_PRIV_CAST(double, result.sp_atime_ns) / 1e9;
-    result.sp_mtime = SP_PRIV_CAST(double, result.sp_mtime_ns) / 1e9;
-    result.sp_ctime = SP_PRIV_CAST(double, result.sp_ctime_ns) / 1e9;
+
+    /* CPython's float times are seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
+    long long *times_ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    double *times[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
+    for (int i = 0; i < 3; i++) {
+        long long seconds = *times_ns[i] / 1000000000LL - (*times_ns[i] % 1000000000LL < 0 ? 1 : 0);
+        *times[i] = SP_PRIV_CAST(double, seconds) + SP_PRIV_CAST(double, *times_ns[i] - seconds * 1000000000LL) * 1e-9;
+    }
     return result;
 }
 
@@ -2603,10 +2615,11 @@ static SpError sp_priv_join_child(SpPath *dir, const char *name, size_t len) {
 }
 
 /* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
- * sp_priv_join_child builds it) and the name length is returned. At the end it returns 0, and out is an empty path
- * whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry too long to
- * join, which ends the listing). */
-static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) {
+ * sp_priv_join_child builds it), *type (unless type is NULL) the entry's type as the listing knows it without following
+ * a link (SP_PRIV_IFDIR, SP_PRIV_IFLNK, ..., or 0 when only a stat can tell, as for Windows reparse points), and the
+ * name length is returned. At the end it returns 0, and out is an empty path whose error says why: SP_OK when the
+ * listing is complete, or what failed (SP_ERR_TOO_LONG for an entry too long to join, which ends the listing). */
+static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out, unsigned int *type) {
     char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
     size_t at = dir->len + (last != '/' && last != sep && !(sep == '\\' && last == ':') ? 1 : 0);
@@ -2648,6 +2661,10 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
         end = sp_priv_from_wide(wide, wcslen(wide), out->buf + at, SP_PATH_MAX - at, &n);
         if (end != SP_OK)
             break;
+        DWORD attributes = fd.dwFileAttributes;
+        unsigned int listed = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 0
+                              : (attributes & FILE_ATTRIBUTE_DIRECTORY)   ? SP_PRIV_IFDIR
+                                                                          : SP_PRIV_IFREG;
 #else
         if (!*handle) {
             end = sp_priv_native(dir, &native);
@@ -2672,8 +2689,15 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
             break;
         }
         memcpy(out->buf + at, name, n + 1);
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(DT_DIR)
+        unsigned int listed = SP_PRIV_CAST(unsigned int, de->d_type) << 12; /* DTTOIF, where DT_UNKNOWN is 0 */
+#else
+        unsigned int listed = 0;
+#endif
 #endif
         out->len = at + n;
+        if (type)
+            *type = listed;
         return n;
     }
 
@@ -2681,38 +2705,56 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
     return 0;
 }
 
-/* CPython's _copy_info for local paths: access and modification times, then permissions */
-static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, bool follow_symlinks) {
+/* CPython's _copy_info for local paths: the source's access and modification times (from st, its stat result), then
+ * its permissions; a symlink's (st from not following it) are left out */
+static bool sp_priv_copy_metadata(const SpStatResult *st, const SpPrivChar *dst) {
+    bool link = (st->sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK;
 #ifdef SP_WINDOWS
-    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | (follow_symlinks ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
+    /* FILETIMEs count 100ns ticks since 1601 */
+    long long ns[2] = {st->sp_atime_ns, st->sp_mtime_ns};
+    FILETIME times[2];
+    for (int i = 0; i < 2; i++) {
+        unsigned long long ticks = SP_PRIV_CAST(unsigned long long, ns[i] / 100 + 116444736000000000LL);
+        times[i].dwLowDateTime = SP_PRIV_CAST(DWORD, ticks);
+        times[i].dwHighDateTime = SP_PRIV_CAST(DWORD, ticks >> 32);
+    }
+    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | (link ? FILE_FLAG_OPEN_REPARSE_POINT : 0);
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    HANDLE hs = CreateFileW(src, FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
     HANDLE hd = CreateFileW(dst, FILE_WRITE_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
-    FILETIME atime, mtime;
-    bool ok = hs != INVALID_HANDLE_VALUE && hd != INVALID_HANDLE_VALUE && GetFileTime(hs, NULL, &atime, &mtime) &&
-              SetFileTime(hd, NULL, &atime, &mtime);
-    if (hs != INVALID_HANDLE_VALUE)
-        CloseHandle(hs);
+    bool ok = hd != INVALID_HANDLE_VALUE && SetFileTime(hd, NULL, &times[0], &times[1]);
     if (hd != INVALID_HANDLE_VALUE)
         CloseHandle(hd);
 
-    /* chmod() on Windows only sets the read-only attribute, here the source's */
-    DWORD src_attrs = GetFileAttributesW(src);
+    /* chmod() on Windows only sets the read-only attribute, here the source's (sp_stat leaves out its write bits) */
     DWORD dst_attrs = GetFileAttributesW(dst);
-    DWORD attrs = (dst_attrs & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)) | (src_attrs & FILE_ATTRIBUTE_READONLY);
-    return ok && (!follow_symlinks ||
-                  (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
+    DWORD read_only = (st->sp_mode & 0222) == 0 ? FILE_ATTRIBUTE_READONLY : 0;
+    DWORD attrs = (dst_attrs & ~SP_PRIV_CAST(DWORD, FILE_ATTRIBUTE_READONLY)) | read_only;
+    return ok &&
+           (link || (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
 #else
-    struct stat st;
-    if ((follow_symlinks ? stat(src, &st) : lstat(src, &st)) != 0)
-        return false;
-    if (S_ISLNK(st.st_mode))
-        return true; /* utime() and chmod() would follow the link */
+    if (link)
+        return true; /* setting times and chmod() would follow it */
 
+    /* To the nanosecond with POSIX 2008's utimensat, where the headers show it (glibc's strict C modes don't), as
+     * os.utime(ns=...) does; else to the second */
+    long long ns[2] = {st->sp_atime_ns, st->sp_mtime_ns};
+    long long sec[2];
+    for (int i = 0; i < 2; i++)
+        sec[i] = ns[i] / 1000000000LL - (ns[i] % 1000000000LL < 0 ? 1 : 0);
+#ifdef AT_FDCWD
+    struct timespec times[2];
+    for (int i = 0; i < 2; i++) {
+        times[i].tv_sec = SP_PRIV_CAST(time_t, sec[i]);
+        times[i].tv_nsec = SP_PRIV_CAST(long, ns[i] - sec[i] * 1000000000LL);
+    }
+    bool timed = utimensat(AT_FDCWD, dst, times, 0) == 0;
+#else
     struct utimbuf times;
-    times.actime = st.st_atime;
-    times.modtime = st.st_mtime;
-    return utime(dst, &times) == 0 && chmod(dst, st.st_mode & 07777) == 0;
+    times.actime = SP_PRIV_CAST(time_t, sec[0]);
+    times.modtime = SP_PRIV_CAST(time_t, sec[1]);
+    bool timed = utime(dst, &times) == 0;
+#endif
+    return timed && chmod(dst, st->sp_mode & 07777) == 0;
 #endif
 }
 
@@ -2753,12 +2795,13 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         void *handle = SP_PRIV_NULL;
         SpPath child;
         SpMkdirOptions plain = SP_PRIV_ZERO;
-        size_t n = sp_priv_readdir_next(&handle, src, &child);
+        size_t n = sp_priv_readdir_next(&handle, src, &child, SP_PRIV_NULL);
         err = n == 0 ? child.error : SP_OK;
         if (err == SP_OK)
             err = sp_mkdir(dst, SP_MODE_DIR, plain);
 
-        for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child)) {
+        for (size_t len = dst->len; err == SP_OK && n > 0;
+             n = sp_priv_readdir_next(&handle, src, &child, SP_PRIV_NULL)) {
             err = sp_priv_join_child(dst, child.buf + child.len - n, n);
             if (err == SP_OK)
                 err = sp_priv_copy_tree(&child, dst, follow_symlinks, preserve_metadata);
@@ -2796,7 +2839,9 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
 #endif
     }
 
-    if (err == SP_OK && preserve_metadata && !sp_priv_copy_metadata(from.path, to.path, follow_symlinks))
+    if (err == SP_OK && preserve_metadata)
+        err = st.error; /* the source's times and permissions are its stat result's */
+    if (err == SP_OK && preserve_metadata && !sp_priv_copy_metadata(&st, to.path))
         err = sp_priv_last_error();
     return err;
 }
@@ -2834,7 +2879,7 @@ static SpError sp_priv_delete(const SpPath *p) {
     SpPath child;
     SpError err = SP_OK;
     while (err == SP_OK) {
-        if (sp_priv_readdir_next(&handle, p, &child) == 0) {
+        if (sp_priv_readdir_next(&handle, p, &child, SP_PRIV_NULL) == 0) {
             err = child.error; /* why the listing ended */
             break;
         }
@@ -3023,7 +3068,8 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         path->buf[path->len] = '\0';
         /* Like pathlib, a directory that can't be listed has no matches; an entry too long for a path is an error */
         SpPath entry;
-        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, path, &entry);
+        unsigned int type;
+        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, path, &entry, &type);
         if (n == 0 && entry.error == SP_ERR_TOO_LONG)
             it->error = SP_ERR_TOO_LONG;
         if (n == 0) {
@@ -3032,9 +3078,12 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             continue;
         }
 
-        /* sp_stat directly: through sp_is, is_mount's chain puts glob past the frame limit on Windows */
-        bool is_dir = (walk || !last) &&
-                      (sp_stat(&entry, !walk || it->priv_.recurse_symlinks).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+        /* The listing's type, or for a link followed (and a type the listing doesn't know) sp_stat's, called directly:
+         * through sp_is, is_mount's chain puts glob past the frame limit on Windows */
+        bool follow = !walk || it->priv_.recurse_symlinks;
+        if ((walk || !last) && (type == 0 || (follow && type == SP_PRIV_IFLNK)))
+            type = sp_stat(&entry, follow).sp_mode & SP_PRIV_IFMT;
+        bool is_dir = (walk || !last) && type == SP_PRIV_IFDIR;
         if (!last && !is_dir)
             continue;
         *path = entry;
@@ -3215,7 +3264,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (it->error != SP_OK || it->priv_.done)
         return false;
-    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out) > 0)
+    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out, SP_PRIV_NULL) > 0)
         return true;
 
     it->priv_.done = true;
@@ -3266,13 +3315,16 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0; count++) {
-        SpStatResult st = sp_stat(&child, follow);
+    unsigned int type;
+    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child, &type)) > 0; count++) {
+        /* The listing's type, or for a link followed (and a type the listing doesn't know) sp_stat's */
+        if (type == 0 || (follow && type == SP_PRIV_IFLNK))
+            type = sp_stat(&child, follow).sp_mode & SP_PRIV_IFMT;
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
         }
-        buf[used] = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR ? 'd' : 'f';
+        buf[used] = type == SP_PRIV_IFDIR ? 'd' : 'f';
         memcpy(buf + used + 1, child.buf + child.len - n, n + 1);
         used += n + 2;
     }

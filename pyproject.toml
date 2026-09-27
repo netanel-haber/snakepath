@@ -1,0 +1,16 @@
+# The snakepath Python package: snakepath.py over the C extension _snakepath.c, which builds snakepath.h in
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snakepath"
+version = "0.1.0"
+description = "pathlib's paths in C: pathlib's API, faster than pathlib"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+py-modules = ["snakepath"]
+ext-modules = [{ name = "_snakepath", sources = ["_snakepath.c"], depends = ["snakepath.h"] }]
