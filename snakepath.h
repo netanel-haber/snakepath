@@ -1934,11 +1934,11 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
 #endif
 
     /* As CPython: seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
-    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    long long *nanoseconds[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
     double *seconds[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
     for (int i = 0; i < 3; i++) {
-        long long whole = *ns[i] / 1000000000LL - (*ns[i] % 1000000000LL < 0 ? 1 : 0);
-        *seconds[i] = SP_PRIV_CAST(double, whole) + SP_PRIV_CAST(double, *ns[i] - whole * 1000000000LL) * 1e-9;
+        long long whole = *nanoseconds[i] / 1000000000LL - (*nanoseconds[i] % 1000000000LL < 0 ? 1 : 0);
+        *seconds[i] = SP_PRIV_CAST(double, whole) + SP_PRIV_CAST(double, *nanoseconds[i] - whole * 1000000000LL) * 1e-9;
     }
     return result;
 }
