@@ -690,47 +690,64 @@ runpy.run_module(sys.argv[0], run_name='__main__', alter_sys=True)
 
 def bench(runs, cwd, program):
     """Time program under pathlib and under snakepath, alternating sides so drift hits both alike, after one warm-up
-    run each (which fills the bytecode caches and makes whatever else a first run leaves behind); the timed runs must
-    succeed and print the same on both sides, timings aside"""
+    run each (which fills the bytecode caches and makes whatever else a first run leaves behind). Every run gets the
+    same hash seed, so set order can't make runs differ; the timed runs must succeed and print the same, timings aside,
+    within each side and across the two"""
     import difflib
     import statistics
     import time
 
+    env = dict(os.environ, PYTHONHASHSEED="0")
+
     def run(side):
         start = time.perf_counter()
-        done = subprocess.run([sys.executable, "-c", SWAP_LAUNCHER, side, *program], cwd=cwd, capture_output=True,
-                              text=True)
+        done = subprocess.run([sys.executable, "-c", SWAP_LAUNCHER, side, *program], cwd=cwd, env=env,
+                              capture_output=True, text=True)
         output = re.sub(r"[\d.]+s\b|\(\d+:\d\d:\d\d\)", "", done.stdout) + done.stderr
         return time.perf_counter() - start, done.returncode, output
+
+    def show_diff(what, a, b, a_name, b_name):
+        print(f"  {what}:")
+        diff = difflib.unified_diff(a.splitlines(), b.splitlines(), a_name, b_name, n=1, lineterm="")
+        print("\n".join(list(diff)[:80]))
 
     sides = ["pathlib", "snakepath"]
     for side in sides:
         run(side)
     times = {side: [] for side in sides}
-    results = {}
+    results = {side: [] for side in sides}
     for i in range(runs):
         for side in sides if i % 2 == 0 else sides[::-1]:
-            elapsed, *results[side] = run(side)
+            elapsed, *result = run(side)
             times[side].append(elapsed)
+            results[side].append(tuple(result))
 
     print(f"python -m {' '.join(program)} in {cwd}, {runs} runs per side:")
     for side in sides:
         print(f"  {side:9}  median {statistics.median(times[side]):7.3f} s  min {min(times[side]):7.3f} s")
     print(f"  snakepath is {statistics.median(times['pathlib']) / statistics.median(times['snakepath']):.2f}x "
           f"as fast (medians)")
-    last = results["snakepath"][1].strip().splitlines()[-1:]
+    last = results["snakepath"][0][1].strip().splitlines()[-1:]
     print(f"  last line: {last[0] if last else ''}")
-    failed = [side for side in sides if results[side][0] != 0]
-    for side in failed:
-        print(f"  {side} failed (exit {results[side][0]}):\n{results[side][1][-3000:]}")
-    if results["pathlib"][1] != results["snakepath"][1]:
-        print("  the outputs differ:")
-        diff = difflib.unified_diff(results["pathlib"][1].splitlines(), results["snakepath"][1].splitlines(),
-                                    "pathlib", "snakepath", n=1, lineterm="")
-        print("\n".join(list(diff)[:80]))
-        return 1
-    print("  same output on both sides")
-    return 1 if failed else 0
+
+    ok = True
+    for side in sides:
+        for code, output in set(results[side]):
+            if code != 0:
+                print(f"  {side} failed (exit {code}):\n{output[-3000:]}")
+                ok = False
+        first = results[side][0][1]
+        other = next((output for _, output in results[side] if output != first), None)
+        if other is not None:
+            show_diff(f"{side}'s runs differ from each other", first, other, f"{side} run 1", f"{side} later run")
+            ok = False
+    if results["pathlib"][0] != results["snakepath"][0]:
+        show_diff("pathlib's and snakepath's outputs differ", results["pathlib"][0][1], results["snakepath"][0][1],
+                  "pathlib", "snakepath")
+        ok = False
+    if ok:
+        print("  every run succeeded and printed the same, on both sides")
+    return 0 if ok else 1
 
 
 def main():
