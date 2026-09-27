@@ -1310,7 +1310,7 @@ static bool run_diff(const char *ref) {
         build_diff_driver(".", diff_sizes[s], diff_exe("head", diff_sizes[s]), &procs);
     }
     if (!nob_procs_flush(&procs)) {
-        nob_log(NOB_ERROR, "Building the differential drivers failed");
+        nob_log(NOB_ERROR, "Building the differential drivers failed: %s may have a different API than the working tree", ref);
         return false;
     }
 
