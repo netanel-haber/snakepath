@@ -539,11 +539,11 @@ typedef HANDLE SpPrivFile;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <stdlib.h> /* For realpath */
-#include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
-#include <utime.h>  /* For utime() */
-#include <pwd.h>    /* For getpwuid, getpwnam */
-#include <grp.h>    /* For getgrgid */
+#include <stdlib.h>
+#include <fcntl.h> /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
+#include <utime.h> /* For utime() */
+#include <pwd.h>   /* For getpwuid, getpwnam */
+#include <grp.h>   /* For getgrgid */
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
@@ -552,7 +552,6 @@ typedef int SpPrivFile;
 #ifndef __cplusplus
 extern int lstat(const char *path, struct stat *buf);
 extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
-extern char *realpath(const char *path, char *resolved_path);
 extern int symlink(const char *target, const char *linkpath);
 extern int link(const char *oldpath, const char *newpath);
 extern int chmod(const char *path, mode_t mode);
@@ -1898,11 +1897,13 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
 
     /* FILETIMEs count 100ns ticks since 1601 */
     FILETIME times[3] = {info.ftLastAccessTime, info.ftLastWriteTime, info.ftCreationTime};
-    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    long long sec[3];
+    long long nsec[3];
     for (int i = 0; i < 3; i++) {
         unsigned long long ticks =
             (SP_PRIV_CAST(unsigned long long, times[i].dwHighDateTime) << 32) | times[i].dwLowDateTime;
-        *ns[i] = (SP_PRIV_CAST(long long, ticks) - 116444736000000000LL) * 100;
+        sec[i] = SP_PRIV_CAST(long long, ticks / 10000000) - 11644473600LL;
+        nsec[i] = SP_PRIV_CAST(long long, ticks % 10000000) * 100;
     }
 
     CloseHandle(h);
@@ -1933,18 +1934,15 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     long long sec[3] = {st.st_atim.tv_sec, st.st_mtim.tv_sec, st.st_ctim.tv_sec};
     long long nsec[3] = {st.st_atim.tv_nsec, st.st_mtim.tv_nsec, st.st_ctim.tv_nsec};
 #endif
-    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
-    for (int i = 0; i < 3; i++)
-        *ns[i] = sec[i] * 1000000000LL + nsec[i];
 #endif
 
-    /* CPython's float times are seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
-    long long *nanoseconds[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
-    double *floats[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
+    /* As CPython computes them: the float times are seconds + nanoseconds * 1e-9, which rounds differently from
+     * nanoseconds / 1e9 */
+    long long *ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    double *seconds[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
     for (int i = 0; i < 3; i++) {
-        long long seconds = *nanoseconds[i] / 1000000000LL - (*nanoseconds[i] % 1000000000LL < 0 ? 1 : 0);
-        *floats[i] =
-            SP_PRIV_CAST(double, seconds) + SP_PRIV_CAST(double, *nanoseconds[i] - seconds * 1000000000LL) * 1e-9;
+        *ns[i] = sec[i] * 1000000000LL + nsec[i];
+        *seconds[i] = SP_PRIV_CAST(double, sec[i]) + SP_PRIV_CAST(double, nsec[i]) * 1e-9;
     }
     return result;
 }
@@ -2178,20 +2176,18 @@ static SpPath sp_priv_without_prefix(const SpPath *r, DWORD initial) {
 #endif
 
 #ifndef SP_WINDOWS
-/* Links resolve() follows inside each other's targets, as Linux's MAXSYMLINKS */
-#define SP_PRIV_MAX_LINKS 40
-
-/* posixpath.realpath's walk over text below path (which is resolved), one lstat per part: it follows the links
- * realpath() can't (to a missing file), applies ".." to what is resolved so far, and keeps the path of a link met
- * again while its own target is still being walked (a loop). A link is known by its file ID, which stands for its
- * path, as path's directories are resolved; past SP_PRIV_MAX_LINKS links inside each other's targets, SP_ERR_LIMIT. */
-static void sp_priv_resolve_rest(SpPath *path, const char *text, size_t len) {
+/* posixpath.realpath: path (resolved) extended by text one lstat per part, following links (to a missing file too),
+ * with ".." taking back what is resolved so far. A link met again while its own target is walked is a loop, which
+ * stays as it is, like a part that can't be read; strict makes those errors, and a non-directory with parts after it
+ * SP_ERR_NOT_DIR. Links are known by file ID, which stands for their path since the directories on it are resolved;
+ * past 40 links inside each other's targets (Linux's limit), SP_ERR_LIMIT. */
+static void sp_priv_realpath(SpPath *path, const char *text, size_t len, bool strict) {
     char rest[SP_PATH_MAX]; /* what is left to walk, at the buffer's end, so a link's target goes in front of it */
     struct {
         unsigned long long dev;
         unsigned long long ino;
         size_t until; /* its target is walked once no more than this is left */
-    } links[SP_PRIV_MAX_LINKS];
+    } links[40];
     size_t depth = 0;
     size_t at = SP_PATH_MAX - len;
     memcpy(rest + at, text, len);
@@ -2216,24 +2212,31 @@ static void sp_priv_resolve_rest(SpPath *path, const char *text, size_t len) {
             continue;
         }
 
-        /* A part that isn't a link (or can't be read as one) stays as it is, and so does a link in a loop */
         size_t dir_len = path->len;
         path->error = sp_priv_join_child(path, name, n);
         if (path->error != SP_OK)
             return;
         SpStatResult st = sp_stat(path, false);
-        bool loop = false;
-        for (size_t i = 0; i < depth; i++)
-            loop = loop || (links[i].dev == st.sp_dev && links[i].ino == st.sp_ino);
-        if (st.error != SP_OK || (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFLNK || loop)
-            continue;
-        SpPath target = sp_readlink(path);
-        if (target.error != SP_OK)
+        bool link = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK;
+        for (size_t i = 0; link && i < depth; i++)
+            if (links[i].dev == st.sp_dev && links[i].ino == st.sp_ino)
+                st.error = SP_ERR_LOOP;
+        SpPath target = link && st.error == SP_OK ? sp_readlink(path) : sp_priv_error_path(path->flavor, st.error);
+        size_t next = at;
+        while (next < SP_PATH_MAX && rest[next] == '/')
+            next++;
+        if (target.error == SP_OK && !link && next < SP_PATH_MAX && (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
+            target.error = SP_ERR_NOT_DIR;
+        if (strict && target.error != SP_OK) {
+            path->error = target.error;
+            return;
+        }
+        if (!link || target.error != SP_OK)
             continue;
 
         /* The link's target is walked next, from the root when it is absolute, else from the link's directory */
-        if (depth == SP_PRIV_MAX_LINKS || at < target.len + 1) {
-            path->error = depth == SP_PRIV_MAX_LINKS ? SP_ERR_LIMIT : SP_ERR_TOO_LONG;
+        if (depth == SP_ARRAY_LEN(links) || at < target.len + 1) {
+            path->error = depth == SP_ARRAY_LEN(links) ? SP_ERR_LIMIT : SP_ERR_TOO_LONG;
             return;
         }
         links[depth].dev = st.sp_dev;
@@ -2249,10 +2252,10 @@ static void sp_priv_resolve_rest(SpPath *path, const char *text, size_t len) {
 }
 #endif
 
-/* os.path.realpath of the absolute path. On POSIX, realpath() of the longest prefix it resolves (the whole path when
- * strict), then posixpath.realpath's walk over the rest. On Windows, ntpath.realpath: the final path of the whole path; without strict, of its
- * longest prefix Windows resolves (following a link by hand where Windows can't), then the rest. A "\\?\" prefix the
- * path didn't have comes off when the path without it resolves the same. */
+/* os.path.realpath of the absolute path. On POSIX, posixpath.realpath's walk from the root. On Windows,
+ * ntpath.realpath: the final path of the whole path; without strict, of its longest prefix Windows resolves (following
+ * a link by hand where Windows can't), then the rest. A "\\?\" prefix the path didn't have comes off when the path
+ * without it resolves the same. */
 SpPath sp_resolve(const SpPath *p, bool strict) {
     SpPrivNative native;
     SpError err = sp_priv_native(p, &native);
@@ -2351,25 +2354,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         r = sp_priv_without_prefix(&r, initial);
     return r.error != SP_OK ? r : sp_path_from_n(r.buf, r.len, p->flavor);
 #else
-    /* realpath() allocates its result: a buffer of ours could be shorter than the PATH_MAX it may fill */
-    for (size_t n = abs.len;;) {
-        SpPath prefix = sp_priv_prefix(&abs, n);
-        char *real = realpath(prefix.len == 0 ? "." : prefix.buf, SP_PRIV_NULL);
-        if (real) {
-            SpPath r = sp_path_from_n(real, strlen(real), p->flavor);
-            free(real);
-            if (n < abs.len && r.error == SP_OK)
-                sp_priv_resolve_rest(&r, abs.buf + n, abs.len - n);
-            return r.error == SP_OK ? r : sp_priv_error_path(p->flavor, r.error);
-        }
-        if (strict)
-            return sp_priv_error_path(p->flavor, sp_priv_last_error());
-
-        size_t parent = sp_priv_parent_len(abs.buf, n, abs.flavor, abs.anchor);
-        if (parent == n)
-            return abs;
-        n = parent;
-    }
+    SpPath r = sp_path_from_n("/", 1, p->flavor);
+    sp_priv_realpath(&r, abs.buf, abs.len, strict);
+    return r.error == SP_OK ? r : sp_priv_error_path(p->flavor, r.error);
 #endif
 }
 
