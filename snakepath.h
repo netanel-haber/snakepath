@@ -1911,7 +1911,8 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
 #elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8)
     /* glibc's strict C modes hide POSIX 2008's st_atim */
     long long sec[3] = {st.st_atime, st.st_mtime, st.st_ctime};
-    long long nsec[3] = {st.st_atimensec, st.st_mtimensec, st.st_ctimensec};
+    long long nsec[3] = {SP_PRIV_CAST(long long, st.st_atimensec), SP_PRIV_CAST(long long, st.st_mtimensec),
+                         SP_PRIV_CAST(long long, st.st_ctimensec)};
 #else
     long long sec[3] = {st.st_atim.tv_sec, st.st_mtim.tv_sec, st.st_ctim.tv_sec};
     long long nsec[3] = {st.st_atim.tv_nsec, st.st_mtim.tv_nsec, st.st_ctim.tv_nsec};
@@ -1922,11 +1923,12 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
 #endif
 
     /* CPython's float times are seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
-    long long *times_ns[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
-    double *times[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
+    long long *nanoseconds[3] = {&result.sp_atime_ns, &result.sp_mtime_ns, &result.sp_ctime_ns};
+    double *floats[3] = {&result.sp_atime, &result.sp_mtime, &result.sp_ctime};
     for (int i = 0; i < 3; i++) {
-        long long seconds = *times_ns[i] / 1000000000LL - (*times_ns[i] % 1000000000LL < 0 ? 1 : 0);
-        *times[i] = SP_PRIV_CAST(double, seconds) + SP_PRIV_CAST(double, *times_ns[i] - seconds * 1000000000LL) * 1e-9;
+        long long seconds = *nanoseconds[i] / 1000000000LL - (*nanoseconds[i] % 1000000000LL < 0 ? 1 : 0);
+        *floats[i] =
+            SP_PRIV_CAST(double, seconds) + SP_PRIV_CAST(double, *nanoseconds[i] - seconds * 1000000000LL) * 1e-9;
     }
     return result;
 }

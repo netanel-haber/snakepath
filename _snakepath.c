@@ -1381,7 +1381,6 @@ static PyTypeObject WalkType = {
     .tp_basicsize = sizeof(WalkObject),
     .tp_dealloc = (destructor)walk_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_iter = PyObject_SelfIter,
     .tp_iternext = (iternextfunc)walk_next,
 };
 
@@ -1489,6 +1488,7 @@ PyMODINIT_FUNC PyInit__snakepath(void) {
                                                      "An operation the path doesn't support "
                                                      "(pathlib.UnsupportedOperation)",
                                                      PyExc_NotImplementedError, NULL);
+    WalkType.tp_iter = PyObject_SelfIter; /* a DLL's function: MSVC takes its address at run time */
     if (!stat_result || find_stat_fields() < 0 || !no_args || !str_flavor || !str_native || !str_with_segments ||
         !str_empty || !UnsupportedOperation || PyType_Ready(&PurePathType) < 0 || PyType_Ready(&PathType) < 0 ||
         PyType_Ready(&WalkType) < 0)

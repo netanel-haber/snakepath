@@ -123,10 +123,10 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Install snakepath, pytest and SymPy's tests
+      - name: Install snakepath, and SymPy's tests with what SymPy's CI installs for them
         run: |
-          pip install . pytest mpmath
           git clone --depth 1 --branch sympy-1.14.0 https://github.com/sympy/sympy.git ../sympy
+          pip install . -r ../sympy/requirements-dev.txt
 
       - name: pytest collecting SymPy's tests, with pathlib and with snakepath
-        run: python check.py bench 10 ../sympy pytest --collect-only -q sympy
+        run: python check.py bench 10 ../sympy pytest --collect-only -q

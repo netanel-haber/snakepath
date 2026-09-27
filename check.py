@@ -702,6 +702,11 @@ def bench(runs, cwd, program):
 
     sides = ["pathlib", "snakepath"]
     outputs = {side: run(side)[1] for side in sides}
+    for side in sides:
+        if outputs[side][0] != 0:
+            print(f"python -m {' '.join(program)} failed with {side} (exit {outputs[side][0]}):")
+            print(outputs[side][1][-3000:], outputs[side][2][-3000:])
+            return 1
     times = {side: [] for side in sides}
     for i in range(runs):
         for side in sides if i % 2 == 0 else sides[::-1]:
@@ -713,7 +718,7 @@ def bench(runs, cwd, program):
     print(f"  snakepath is {statistics.median(times['pathlib']) / statistics.median(times['snakepath']):.2f}x "
           f"as fast (medians)")
     last = outputs["snakepath"][1].strip().splitlines()[-1:]
-    print(f"  exit code {outputs['snakepath'][0]}, last line: {last[0] if last else ''}")
+    print(f"  last line: {last[0] if last else ''}")
     if outputs["pathlib"] != outputs["snakepath"]:
         print("  OUTPUTS DIFFER:")
         for side in sides:
