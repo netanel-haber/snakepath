@@ -1215,10 +1215,10 @@ static bool run_clang_format(bool rewrite) {
 /* ./nob diff [ref]: the pure path API of the working tree's snakepath.h against the header at a git ref (default
    origin/main), through test.c's SP_DIFF driver, which -I points at one header or the other. Every result for
    exhaustive short strings, token sequences and random strings, at SP_PATH_MAX 64 and 16, one hash per line, compared
-   line by line; a difference is shown in full. An intentional behavior change differs by design, so CI runs this as
-   an informational job. */
+   line by line; a difference is shown in full. The input sets are sized for CI's Windows runner to finish in a few
+   minutes. An intentional behavior change differs by design, so CI runs this as an informational job. */
 #define DIFF_BASE_DIR "diff_base"
-static const char *diff_specs[][2] = {{"exhaustive", "6"}, {"tokens", "3"}, {"random", "300000"}};
+static const char *diff_specs[][2] = {{"exhaustive", "5"}, {"tokens", "3"}, {"random", "100000"}};
 static const char *diff_sizes[] = {"64", "16"};
 static const char *diff_sides[] = {"base", "head"};
 

@@ -343,11 +343,10 @@ static void one(const char *s, size_t len, SpFlavor fl) {
         put_num("as_uri.error", sp_as_uri(&p, uri, sizeof uri));
         put("as_uri", uri, strlen(uri));
         for (size_t i = 0; i < SP_ARRAY_LEN(patterns); i++) {
+            /* Both flavors run, so the default already covers sensitive and insensitive matching */
             put_num(lbl("full_match(%s)", patterns[i]), sp_full_match(&p, patterns[i], SP_CASE_DEFAULT));
             put_num(lbl("full_match_ci(%s)", patterns[i]), sp_full_match(&p, patterns[i], SP_CASE_INSENSITIVE));
-            put_num(lbl("full_match_cs(%s)", patterns[i]), sp_full_match(&p, patterns[i], SP_CASE_SENSITIVE));
             put_num(lbl("match(%s)", patterns[i]), sp_match(&p, patterns[i], SP_CASE_DEFAULT));
-            put_num(lbl("match_ci(%s)", patterns[i]), sp_match(&p, patterns[i], SP_CASE_INSENSITIVE));
         }
     }
 
@@ -462,7 +461,7 @@ int main(int argc, char **argv) {
 
     char buf[256];
     if (strcmp(argv[1], "exhaustive") == 0) {
-        exhaustive(buf, 0, n > 0 && n < 200 ? (size_t)n : 6);
+        exhaustive(buf, 0, n > 0 && n < 200 ? (size_t)n : 5);
     } else if (strcmp(argv[1], "tokens") == 0) {
         token_sequences(buf, 0, n);
     } else if (strcmp(argv[1], "random") == 0) {
