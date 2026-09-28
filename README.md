@@ -1,6 +1,5 @@
 C99 STB-style header-only port of [Python's pathlib](https://docs.python.org/3/library/pathlib.html). Passes CPython 3.15's own pathlib test suite.
 POSIX + Windows. No malloc (OS functions like `opendir`/`stat` may allocate internally).
-Every failure is an explicit `SpError` the compiler won't let you ignore, and nothing is ever silently truncated.
 Vibe-coded with Claude + Codex.
 
 The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
@@ -34,7 +33,7 @@ rm -f demo snakepath.h
 cc -x c -o nob nob.h && ./nob
 ```
 
-Needs a C compiler, Python 3 and clang-format 21; `./nob format` applies `snakepath.h`'s layout.
+Needs a C compiler, Python and clang-format.
 
 
 <details markdown="1">
