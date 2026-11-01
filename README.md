@@ -6,6 +6,8 @@ Vibe-coded with Claude + Codex.
 
 The original API was created by [Antoine Pitrou](https://peps.python.org/pep-0428/).
 
+<!-- The site shows the text above in its header, beside the logo. -->
+
 ```bash
 u=https://raw.githubusercontent.com/netanel-haber/snakepath/main/snakepath.h &&
 curl -sSLo snakepath.h "$u" &&
@@ -35,8 +37,28 @@ rm -f demo snakepath.h
 cc -x c -o nob nob.h && ./nob
 ```
 
-Needs a C compiler, Python and clang-format.
+<details>
+<summary>MIT License</summary>
+Copyright (c) 2026 Netanel Haber
 
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</details>
 
 <details markdown="1">
 <summary>Snakepath API Reference (<a href="https://github.com/netanel-haber/snakepath/blob/main/api_demo.c">api_demo.c</a>)</summary>
@@ -437,29 +459,6 @@ int main(void) {
 }
 ```
 
-</details>
-
-<details>
-<summary>MIT License</summary>
-Copyright (c) 2026 Netanel Haber
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 </details>
 
 

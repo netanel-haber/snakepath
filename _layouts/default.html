@@ -69,7 +69,7 @@
       line-height: 1.4;
       font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace;
     }
-    .container { width: 90%; max-width: 1000px; margin: 0 auto; }
+    .container { max-width: 52rem; margin: 0 auto; padding: 0 2rem; }
     section { display: block; margin: 0 0 0.75rem 0; }
     h1, h2, h3, h4, h5, h6 { margin: 0 0 0.75rem; }
     li { line-height: 1.4; }
@@ -78,12 +78,17 @@
       width: 100%;
       border-bottom: 1px dashed #b5e853;
       padding: 0.75rem 0;
-      margin: 0 0 1.25rem 0;
+      margin: 0 0 0.75rem 0;
     }
+    .hero { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 2rem; align-items: center; }
+    .hero .logo { display: block; height: 180px; width: auto; }
+    .hero p { margin: 0 0 0.5rem; max-width: 60em; }
+    .hero .title { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1.25rem; }
+    .hero #downloads { margin: 0; }
     header h1 {
-      font-size: 1.375rem;
+      font-size: 2.25rem;
       line-height: 1.3;
-      margin: 0 0 0 -40px;
+      margin: 0;
       font-weight: bold;
       font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace;
       color: #b5e853;
@@ -91,9 +96,8 @@
       letter-spacing: -1px;
       -webkit-font-smoothing: antialiased;
     }
-    @media (max-width: 1000px) { header h1 { margin-left: 0; } }
-    header h1:before { content: "./ "; font-size: 1.25rem; }
-    header h2 { font-size: 0.8125rem; font-weight: 300; color: #666; }
+    header h1:before { content: "./ "; font-size: 2rem; }
+    header h2 { font-size: 1.05rem; font-weight: 300; color: #888; margin: 0.2rem 0 0.8rem; }
     #downloads .btn { display: inline-block; text-align: center; margin: 0; }
     #main_content { width: 100%; -webkit-font-smoothing: antialiased; }
     section img { max-width: 100%; }
@@ -118,6 +122,7 @@
       border: 1px solid rgba(255, 255, 255, 0.15);
       padding: 0.5rem;
       font-size: 0.8125rem;
+      line-height: 1.3;
       color: #b5e853;
       border-radius: 2px;
       word-wrap: normal;
@@ -161,48 +166,46 @@
     }
     a { color: #63c0f5; text-shadow: 0 0 5px rgba(104, 182, 255, 0.5); }
     #a-title { text-decoration: none; }
-    @media (min-width: 1300px) {
-      .container { width: auto; max-width: 1520px; padding: 0 2rem; }
-      header { padding: 0.5rem 0; margin-bottom: 1rem; }
-      header .container { display: flex; align-items: center; gap: 1rem; }
-      header h1 { margin: 0; }
-      header h2 { margin: 0; flex: 1; }
-      #main_content { display: grid; grid-template-columns: clamp(200px, 20vw, 300px) minmax(0, 1fr) max-content; grid-template-rows: auto auto auto 1fr auto auto auto; column-gap: 1.5rem; }
-      #main_content > p { grid-column: 2; }
-      #main_content > h2 { grid-column: 2; grid-row: 5; }
-      #main_content > h2 + div { grid-column: 2; grid-row: 6; }
-      #main_content > h2 + div + p { grid-column: 2; grid-row: 7; margin: 0; }
-      #main_content > p:last-child { grid-column: 1; grid-row: 1 / 8; margin: 0; }
-      #main_content > div.highlighter-rouge:first-of-type { grid-column: 3; grid-row: 1 / 8; }
-      #main_content > div.highlighter-rouge:first-of-type pre { margin: 0; }
-      #main_content > details { grid-column: 1 / -1; }
-      #main_content > details:first-of-type { margin-top: 1rem; }
-      #main_content p, #main_content pre { margin: 0 0 0.6rem; }
-      #main_content h2 { margin: 0.4rem 0 0.5rem; }
-      #main_content details { margin-bottom: 0.4rem; }
-      #main_content img { display: block; width: 100%; height: auto; }
+    #main_content div.highlighter-rouge { width: fit-content; max-width: 100%; }
+    #main_content p, #main_content pre { margin: 0 0 0.6rem; }
+    #main_content h2 { margin: 0.6rem 0 0.35rem; }
+    #main_content details { margin-bottom: 0.3rem; }
+    #main_content #build--test, #build--test + div.highlighter-rouge { display: inline-block; vertical-align: middle; margin: 0 0.75rem 0.6rem 0; }
+    #build--test + div.highlighter-rouge pre { margin: 0; }
+    #main_content > p:has(> img[src$="snakepath.png"]) { display: none; }
+    @media (max-width: 700px) {
+      .container { padding: 0 1rem; }
+      .hero { grid-template-columns: 1fr; row-gap: 0.75rem; }
+      .hero .logo { height: 140px; }
     }
     @media (min-width: 1700px) { html { font-size: 112.5%; } }
   </style>
 </head>
 
 <body>
+  {%- comment -%} The README's intro, everything before its marker comment, goes in the header beside the logo. {%- endcomment -%}
+  {%- assign parts = content | split: "<!-- The site shows the text above in its header, beside the logo. -->" %}
   <header>
-    <div class="container">
-      <a id="a-title" href="/">
-        <h1>snakepath</h1>
-      </a>
-      <h2>Python's pathlib in C99
-      </h2>
-      <section id="downloads">
-        <a href="https://github.com/netanel-haber/snakepath" class="btn btn-github">
-          <span class="icon"></span>View on GitHub</a>
-      </section>
+    <div class="container hero">
+      <img class="logo" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+      <div>
+        <div class="title">
+          <a id="a-title" href="/">
+            <h1>snakepath</h1>
+          </a>
+          <section id="downloads">
+            <a href="https://github.com/netanel-haber/snakepath" class="btn btn-github">
+              <span class="icon"></span>View on GitHub</a>
+          </section>
+        </div>
+        <h2>Python's pathlib in C99</h2>
+{{ parts[0] }}
+      </div>
     </div>
   </header>
   <div class="container">
     <section id="main_content">
-{{ content }}
+{{ parts[1] }}
     </section>
   </div>
   <!-- Cloudflare Web Analytics -->
