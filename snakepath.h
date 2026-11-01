@@ -916,8 +916,12 @@ static int sp_priv_text_cmp(const char *a, size_t alen, const char *b, size_t bl
     return a_left == b_left ? 0 : a_left ? 1 : -1;
 }
 
-/* The end of the part at s[i..len): its next separator ('/' or sep), or len */
+/* The end of the part at s[i..len): its next separator ('/' or sep), or len. With one separator memchr finds it */
 static size_t sp_priv_part_end(const char *s, size_t len, size_t i, char sep) {
+    if (sep == '/') {
+        const char *found = i < len ? SP_PRIV_CAST(const char *, memchr(s + i, '/', len - i)) : SP_PRIV_NULL;
+        return found ? SP_PRIV_CAST(size_t, found - s) : (i < len ? len : i);
+    }
     while (i < len && s[i] != '/' && s[i] != sep)
         i++;
     return i;
@@ -945,9 +949,14 @@ static size_t sp_priv_drive_len(const char *s, size_t len, SpFlavor flavor) {
     return n < len && s[n] == ':' ? n + 1 : 0;
 }
 
-/* The empty path, carrying an error (SP_OK for a plain empty path) */
+/* The empty path, carrying an error (SP_OK for a plain empty path). Nothing reads a buffer past its length and NUL, so
+ * the rest of it stays unwritten: zeroing SP_PATH_MAX bytes was most of the cost of making a path */
 static SpPath sp_priv_error_path(SpFlavor flavor, SpError error) {
-    SpPath p = SP_PRIV_ZERO;
+    SpPath p;
+    p.buf[0] = '\0';
+    p.len = 0;
+    p.anchor = 0;
+    p.drive = 0;
     p.flavor = flavor;
     p.error = error;
     return p;
@@ -972,14 +981,13 @@ static void sp_priv_append(SpPath *r, const char *s, size_t len, bool separated)
     r->buf[r->len] = '\0';
 }
 
+/* One return, so the path is made in the caller's place rather than copied there */
 static SpPath sp_priv_path_from_raw(const char *s, size_t len, SpFlavor flavor) {
-    if (len >= SP_PATH_MAX)
-        return sp_priv_error_path(flavor, SP_ERR_TOO_LONG);
-
-    SpPath p = sp_priv_error_path(flavor, SP_OK);
-    p.len = len;
-    if (len > 0)
+    SpPath p = sp_priv_error_path(flavor, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
+    if (p.error == SP_OK && len > 0) {
         memcpy(p.buf, s, len);
+        p.len = len;
+    }
     return p;
 }
 
@@ -1069,15 +1077,21 @@ static void sp_priv_normalize(SpPath *p) {
         while (i < len && (buf[i] == '/' || buf[i] == sep))
             i++;
         end = sp_priv_part_end(buf, len, i, sep);
-
-        size_t next = end;
-        while (next < len && (buf[next] == '/' || buf[next] == sep))
-            next++;
-        bool protects = j == 0 && sep == '\\' && sp_priv_drive_len(buf + next, len - next, p->flavor) > 0;
-        if (i == end || (end - i == 1 && buf[i] == '.' && !protects))
+        if (i == end)
             continue;
 
-        memmove(buf + j, buf + i, end - i);
+        /* A '.' goes, unless it is first and a drive-like part follows (Windows) */
+        if (end - i == 1 && buf[i] == '.') {
+            size_t next = end;
+            while (next < len && (buf[next] == '/' || buf[next] == sep))
+                next++;
+            if (!(j == 0 && sep == '\\' && sp_priv_drive_len(buf + next, len - next, p->flavor) > 0))
+                continue;
+        }
+
+        /* A part already in its place (an already normal path's every part) needs no move */
+        if (i != j)
+            memmove(buf + j, buf + i, end - i);
         j += end - i;
         if (end < len)
             buf[j++] = sep;
@@ -2202,7 +2216,7 @@ static SpPath sp_priv_without_prefix(const SpPath *r, DWORD initial) {
 #endif
 
 #ifndef SP_WINDOWS
-/* posixpath.realpath: path (resolved) extended by text one lstat per part, following links (to a missing file too),
+/* posixpath.realpath: path (resolved) extended by text one part at a time, following links (to a missing file too),
  * with ".." taking back what is resolved so far. A link met again while its own target is walked is a loop, which
  * stays as it is, like a part that can't be read; strict makes those errors, and a non-directory with parts after it
  * SP_ERR_NOT_DIR. Links are known by file ID, which stands for their path since the directories on it are resolved;
@@ -2242,38 +2256,50 @@ static void sp_priv_realpath(SpPath *path, const char *text, size_t len, bool st
         path->error = sp_priv_join_child(path, name, n);
         if (path->error != SP_OK)
             return;
-        SpStatResult st = sp_stat(path, false);
-        bool link = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK;
-        for (size_t i = 0; link && i < depth; i++)
-            if (links[i].dev == st.sp_dev && links[i].ino == st.sp_ino)
-                st.error = SP_ERR_LOOP;
-        SpPath target = link && st.error == SP_OK ? sp_readlink(path) : sp_priv_error_path(path->flavor, st.error);
+        /* One readlink per part, as glibc's realpath walks: anything but a link answers SP_ERR_NOT_LINK, and a missing
+         * or unreadable part the error lstat would. lstat is asked only for a link's file ID and, strict, for whether a
+         * part with "." or ".." after it is a directory (a name after a non-directory fails its own readlink) */
+        SpPath target = sp_readlink(path);
+        bool link = target.error == SP_OK;
+        SpError err = link || target.error == SP_ERR_NOT_LINK ? SP_OK : target.error;
         size_t next = at;
         while (next < SP_PATH_MAX && rest[next] == '/')
             next++;
-        if (target.error == SP_OK && !link && next < SP_PATH_MAX && (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
-            target.error = SP_ERR_NOT_DIR;
-        if (strict && target.error != SP_OK) {
-            path->error = target.error;
-            return;
-        }
-        if (!link || target.error != SP_OK)
-            continue;
+        size_t dots = 0;
+        while (dots < 2 && next + dots < SP_PATH_MAX && rest[next + dots] == '.')
+            dots++;
+        bool dots_next = dots > 0 && (next + dots == SP_PATH_MAX || rest[next + dots] == '/');
+        SpStatResult st = SP_PRIV_ZERO;
+        if (link || (strict && err == SP_OK && dots_next))
+            st = sp_stat(path, false);
+        err = err != SP_OK ? err : st.error;
+        for (size_t i = 0; link && i < depth; i++)
+            if (links[i].dev == st.sp_dev && links[i].ino == st.sp_ino)
+                err = SP_ERR_LOOP;
+        if (err == SP_OK && !link && strict && dots_next && (st.sp_mode & SP_PRIV_IFMT) != SP_PRIV_IFDIR)
+            err = SP_ERR_NOT_DIR;
 
         /* The link's target is walked next, from the root when it is absolute, else from the link's directory */
-        if (depth == SP_ARRAY_LEN(links) || at < target.len + 1) {
-            path->error = depth == SP_ARRAY_LEN(links) ? SP_ERR_LIMIT : SP_ERR_TOO_LONG;
+        if (link && err == SP_OK) {
+            if (depth == SP_ARRAY_LEN(links) || at < target.len + 1) {
+                path->error = depth == SP_ARRAY_LEN(links) ? SP_ERR_LIMIT : SP_ERR_TOO_LONG;
+                return;
+            }
+            links[depth].dev = st.sp_dev;
+            links[depth].ino = st.sp_ino;
+            links[depth].until = SP_PATH_MAX - at;
+            depth++;
+            at -= target.len + 1;
+            memcpy(rest + at, target.buf, target.len);
+            rest[at + target.len] = '/';
+            path->len = target.buf[0] == '/' ? path->anchor : dir_len;
+            path->buf[path->len] = '\0';
+            continue;
+        }
+        if (strict && err != SP_OK) {
+            path->error = err;
             return;
         }
-        links[depth].dev = st.sp_dev;
-        links[depth].ino = st.sp_ino;
-        links[depth].until = SP_PATH_MAX - at;
-        depth++;
-        at -= target.len + 1;
-        memcpy(rest + at, target.buf, target.len);
-        rest[at + target.len] = '/';
-        path->len = target.buf[0] == '/' ? path->anchor : dir_len;
-        path->buf[path->len] = '\0';
     }
 }
 #endif
@@ -2380,7 +2406,12 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         r = sp_priv_without_prefix(&r, initial);
     return r.error != SP_OK ? r : sp_path_from_n(r.buf, r.len, p->flavor);
 #else
-    SpPath r = sp_path_from_n("/", 1, p->flavor);
+    /* The walk starts at the root, made in place (a 4 KB copy and a normalize were a fifth of a resolve's work) */
+    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
+    r.buf[0] = '/';
+    r.buf[1] = '\0';
+    r.len = 1;
+    r.anchor = 1;
     sp_priv_realpath(&r, abs.buf, abs.len, strict);
     return r.error == SP_OK ? r : sp_priv_error_path(p->flavor, r.error);
 #endif
