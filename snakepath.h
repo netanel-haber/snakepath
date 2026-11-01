@@ -728,14 +728,15 @@ static SpError sp_priv_from_wide(const wchar_t *w, size_t wlen, char *out, size_
 }
 #endif
 
-/* Text copied from data[0..len), which fits: text from a path is shorter than its buffer */
+/* Text copied from data[0..len), which fits: text from a path is shorter than its buffer. Only the text and its NUL are
+ * written, as for a path (zeroing SP_PATH_MAX bytes was most of what sp_name cost) */
 static SpTerm sp_priv_term(const char *data, size_t len, SpError error) {
-    SpTerm t = SP_PRIV_ZERO;
+    SpTerm t;
+    t.len = error == SP_OK ? len : 0;
     t.error = error;
-    if (error == SP_OK && len > 0) {
-        memcpy(t.buf, data, len);
-        t.len = len;
-    }
+    if (t.len > 0)
+        memcpy(t.buf, data, t.len);
+    t.buf[t.len] = '\0';
     return t;
 }
 
@@ -991,14 +992,16 @@ static void sp_priv_append(SpPath *r, const char *s, size_t len, bool separated)
     r->buf[r->len] = '\0';
 }
 
-/* One return, so the path is made in the caller's place rather than copied there */
-static SpPath sp_priv_path_from_raw(const char *s, size_t len, SpFlavor flavor) {
-    SpPath p = sp_priv_error_path(flavor, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
-    if (p.error == SP_OK && len > 0) {
-        memcpy(p.buf, s, len);
-        p.len = len;
+/* p made the text s[0..len) as it is, before normalizing, in place: a function that returned the path would copy its
+ * SP_PATH_MAX bytes out under gcc, which elides no result whose address is taken */
+static void sp_priv_path_raw(SpPath *p, const char *s, size_t len, SpFlavor flavor) {
+    p->flavor = flavor;
+    sp_priv_set_error(p, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
+    if (p->error == SP_OK && len > 0) {
+        memcpy(p->buf, s, len);
+        p->buf[len] = '\0';
+        p->len = len;
     }
-    return p;
 }
 
 /* p cut to its first len bytes, at or past its anchor, so the anchor stays right */
@@ -1132,7 +1135,8 @@ static size_t sp_priv_parent_len(const char *buf, size_t len, SpFlavor flavor, s
 }
 
 SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor) {
-    SpPath p = sp_priv_path_from_raw(s, len, sp_priv_flavor(flavor));
+    SpPath p;
+    sp_priv_path_raw(&p, s, len, sp_priv_flavor(flavor));
     sp_priv_normalize(&p);
     return p;
 }
@@ -1333,7 +1337,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
                                      sp_priv_case_map(bc, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs)));
         replace = bdrive == 0 || !same || (olen > odrive && (other[odrive] == '/' || other[odrive] == '\\'));
         if (!replace) { /* Same drive: keep the base path, spelling the drive like the other. */
-            r = sp_priv_path_from_raw(other, odrive, flavor);
+            sp_priv_path_raw(&r, other, odrive, flavor);
             sp_priv_append(&r, base->buf + bdrive, base->len - bdrive, false);
             other += odrive;
             olen -= odrive;
@@ -1341,7 +1345,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
     }
 
     if (replace)
-        r = sp_priv_path_from_raw(other, olen, flavor);
+        sp_priv_path_raw(&r, other, olen, flavor);
     else
         sp_priv_append(&r, other, olen, add_sep);
     sp_priv_normalize(&r);
@@ -2228,7 +2232,8 @@ static int sp_priv_readlink_step(SpPath *path) {
 /* r without its "\\?\" prefix when the path without it resolves the same (or fails the same way, initial) */
 static SpPath sp_priv_without_prefix(const SpPath *r, DWORD initial) {
     bool unc = r->len >= 8 && memcmp(r->buf + 4, "UNC\\", 4) == 0;
-    SpPath stripped = unc ? sp_priv_path_from_raw("\\\\", 2, r->flavor) : sp_priv_error_path(r->flavor, SP_OK);
+    SpPath stripped;
+    sp_priv_path_raw(&stripped, "\\\\", unc ? 2 : 0, r->flavor);
     sp_priv_append(&stripped, r->buf + (unc ? 8 : 4), r->len - (unc ? 8 : 4), false);
 
     SpPath again;
@@ -2409,7 +2414,8 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
             break;
         }
 
-        SpPath joined = sp_priv_path_from_raw(name.data, name.len, p->flavor);
+        SpPath joined;
+        sp_priv_path_raw(&joined, name.data, name.len, p->flavor);
         sp_priv_append(&joined, tail.buf, tail.len, tail.len > 0);
         tail = joined;
         rest.len = sp_priv_parent_len(rest.buf, rest.len, rest.flavor, rest.anchor);
@@ -2764,9 +2770,15 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
     SpError end = SP_OK;
     SpPrivNative native;
 
+    /* dir's text once, not its whole buffer per entry */
+    out->len = dir->len;
+    out->anchor = dir->anchor;
+    out->drive = dir->drive;
+    out->flavor = dir->flavor;
+    out->error = SP_OK;
+    memcpy(out->buf, dir->buf, dir->len);
+    out->buf[dir->len] = sep;
     for (;;) {
-        *out = *dir;
-        out->buf[dir->len] = sep;
 #ifdef SP_WINDOWS
         WIN32_FIND_DATAW fd;
         if (!*handle) {
@@ -2780,8 +2792,10 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
             native.buf[wlen + 1] = L'*';
             native.buf[wlen + 2] = L'\0';
 
-            /* Only an empty drive root has no "." entry to find */
-            *handle = FindFirstFileW(native.buf, &fd);
+            /* Only an empty drive root has no "." entry to find. FindExInfoBasic skips the short 8.3 names, which nothing
+             * reads, and a large fetch asks the file system for more entries per call */
+            *handle = FindFirstFileExW(native.buf, FindExInfoBasic, &fd, FindExSearchNameMatch, SP_PRIV_NULL,
+                                       FIND_FIRST_EX_LARGE_FETCH);
             if (*handle == INVALID_HANDLE_VALUE) {
                 *handle = SP_PRIV_NULL;
                 end = GetLastError() == ERROR_FILE_NOT_FOUND ? SP_OK : sp_priv_last_error();
@@ -3325,7 +3339,9 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
     size_t len = strlen(dir);
     while (len > 0 && dir[len - 1] == '/')
         len--;
-    return len > 0 ? sp_priv_path_from_raw(dir, len, flavor) : sp_priv_path_from_raw("/", 1, flavor);
+    SpPath home;
+    sp_priv_path_raw(&home, len > 0 ? dir : "/", len > 0 ? len : 1, flavor);
+    return home;
 #endif
 }
 
@@ -3347,7 +3363,8 @@ SpPath sp_expanduser(const SpPath *p) {
         return r;
 
     /* The remaining parts stay parts: a leading "./" keeps one like "c:" from parsing as a drive */
-    SpPath rest = sp_priv_path_from_raw("./", 2, p->flavor);
+    SpPath rest;
+    sp_priv_path_raw(&rest, "./", 2, p->flavor);
     sp_priv_append(&rest, p->buf + end + 1, p->len - end - 1, false);
     r = rest.error != SP_OK ? rest : sp_priv_join_len(&r, rest.buf, rest.len);
     return r;
