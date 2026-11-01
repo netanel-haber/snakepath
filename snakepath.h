@@ -811,6 +811,13 @@ static unsigned long sp_priv_case_map(unsigned long cp, const long *runs, size_t
     return SP_PRIV_CAST(unsigned long, SP_PRIV_CAST(long, cp) + run[3]);
 }
 
+/* The simple lowercase of cp: ASCII's without the table */
+static unsigned long sp_priv_lower(unsigned long cp) {
+    if (cp < 0x80)
+        return cp >= 'A' && cp <= 'Z' ? cp + 32 : cp;
+    return sp_priv_case_map(cp, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
+}
+
 /* Whether cp lies in one of the (first, last) ranges */
 static bool sp_priv_in_ranges(unsigned long cp, const long *ranges, size_t n) {
     size_t at = sp_priv_entries_before(cp, ranges, 2, n);
@@ -827,8 +834,13 @@ static unsigned long sp_priv_case_group(unsigned long cp) {
 
 /* Whether two lowercase code points are the same letter to re's IGNORECASE (equal, or in one of its case groups) */
 static bool sp_priv_case_equiv(unsigned long a, unsigned long b) {
+    if (a == b)
+        return true;
+    if (a < 0x80 && b < 0x80)
+        return false; /* no case group holds two ASCII letters */
+
     unsigned long group = sp_priv_case_group(a);
-    return a == b || (group != 0 && group == sp_priv_case_group(b));
+    return group != 0 && group == sp_priv_case_group(b);
 }
 
 /* Whether some code point in [lo, hi] lowercases to cp: cp itself when it is its own lowercase, or one in the runs that
@@ -862,6 +874,11 @@ static unsigned long sp_priv_lower_next(const char *s, size_t len, size_t *pos, 
     *owed = 0;
     if (c != 0)
         return c;
+    if (SP_PRIV_CAST(unsigned char, s[start]) < 0x80) { /* ASCII lowers alone, whatever surrounds it */
+        c = SP_PRIV_CAST(unsigned char, s[start]);
+        *pos = start + 1;
+        return c >= 'A' && c <= 'Z' ? c + 32 : c;
+    }
 
     c = sp_priv_utf8_next(s, len, pos);
     if (c == 0x130)
@@ -902,14 +919,26 @@ static unsigned long sp_priv_lower_next(const char *s, size_t len, size_t *pos, 
 
 /* How CPython orders two strings: by the code points of their str.lower() when lower (Windows paths), else by byte */
 static int sp_priv_text_cmp(const char *a, size_t alen, const char *b, size_t blen, bool lower) {
+    if (!lower) {
+        int c = memcmp(a, b, alen < blen ? alen : blen);
+        if (c != 0)
+            return c < 0 ? -1 : 1;
+        return alen == blen ? 0 : alen < blen ? -1 : 1;
+    }
+
     size_t i = 0;
     size_t j = 0;
     unsigned long owed_a = 0;
     unsigned long owed_b = 0;
 
     while ((i < alen || owed_a != 0) && (j < blen || owed_b != 0)) {
-        unsigned long ca = lower ? sp_priv_lower_next(a, alen, &i, &owed_a) : SP_PRIV_CAST(unsigned char, a[i++]);
-        unsigned long cb = lower ? sp_priv_lower_next(b, blen, &j, &owed_b) : SP_PRIV_CAST(unsigned char, b[j++]);
+        if (owed_a == 0 && owed_b == 0 && a[i] == b[j] && SP_PRIV_CAST(unsigned char, a[i]) < 0x80) {
+            i++;
+            j++;
+            continue; /* the same ASCII lowers the same */
+        }
+        unsigned long ca = sp_priv_lower_next(a, alen, &i, &owed_a);
+        unsigned long cb = sp_priv_lower_next(b, blen, &j, &owed_b);
         if (ca != cb)
             return ca < cb ? -1 : 1;
     }
@@ -1334,9 +1363,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
         size_t bi = 0;
         unsigned long oc = sp_priv_utf8_next(other, odrive, &oi);
         unsigned long bc = bdrive > 0 ? sp_priv_utf8_next(base->buf, bdrive, &bi) : 0;
-        bool same = oc == bc || (oc != 0x130 && bc != 0x130 &&
-                                 sp_priv_case_map(oc, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs)) ==
-                                     sp_priv_case_map(bc, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs)));
+        bool same = oc == bc || (oc != 0x130 && bc != 0x130 && sp_priv_lower(oc) == sp_priv_lower(bc));
         replace = bdrive == 0 || !same || (olen > odrive && (other[odrive] == '/' || other[odrive] == '\\'));
         if (!replace) { /* Same drive: keep the base path, spelling the drive like the other. */
             sp_priv_path_raw(&r, other, odrive, flavor);
@@ -1696,7 +1723,14 @@ int sp_path_cmp(const SpPath *a, const SpPath *b) {
     size_t lb = b->len ? b->len : 1;
     char sep = a->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
 
-    for (size_t i = 0, j = 0;;) {
+    /* Whole parts with the same bytes compare equal: start at the part with the first different byte */
+    size_t i = 0;
+    while (i < la && i < lb && sa[i] == sb[i])
+        i++;
+    while (i > 0 && sa[i - 1] != '/' && sa[i - 1] != sep)
+        i--;
+
+    for (size_t j = i;;) {
         size_t ea = sp_priv_part_end(sa, la, i, sep);
         size_t eb = sp_priv_part_end(sb, lb, j, sep);
         int c = sp_priv_text_cmp(sa + i, ea - i, sb + j, eb - j, a->flavor == SP_FLAVOR_WINDOWS);
@@ -1714,12 +1748,15 @@ unsigned long sp_path_hash(const SpPath *p) {
     unsigned long hash = 5381;
     const char *str = sp_str(p);
     size_t len = p->len > 0 ? p->len : 1;
-    unsigned long owed = 0;
-    bool lower = p->flavor == SP_FLAVOR_WINDOWS;
-
-    for (size_t i = 0; i < len || owed != 0;) {
-        hash = hash * 33 + (lower ? sp_priv_lower_next(str, len, &i, &owed) : SP_PRIV_CAST(unsigned char, str[i++]));
+    if (p->flavor != SP_FLAVOR_WINDOWS) {
+        for (size_t i = 0; i < len; i++)
+            hash = hash * 33 + SP_PRIV_CAST(unsigned char, str[i]);
+        return hash;
     }
+
+    unsigned long owed = 0;
+    for (size_t i = 0; i < len || owed != 0;)
+        hash = hash * 33 + sp_priv_lower_next(str, len, &i, &owed);
     return hash;
 }
 
@@ -1777,8 +1814,15 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
             if (walk)
                 pi++; /* Skip the separator too: recursive stars may consume no parts. */
 
+            /* What follows starting with an ASCII literal, no other ASCII can start its match (nor end the text) */
+            unsigned char next = SP_PRIV_CAST(unsigned char, pi < plen ? pat[pi] : '\0');
+            bool literal = next < 0x80 && next != sep && strchr("*?[/", next) == SP_PRIV_NULL;
+
             for (;;) {
-                if (sp_priv_match_path(pat + pi, plen - pi, s + k, slen - k, ci, recursive, flavor))
+                unsigned char at = SP_PRIV_CAST(unsigned char, k < slen ? s[k] : '\0');
+                bool may_start =
+                    !literal || at >= 0x80 || at == next || (ci && sp_priv_lower(at) == sp_priv_lower(next));
+                if (may_start && sp_priv_match_path(pat + pi, plen - pi, s + k, slen - k, ci, recursive, flavor))
                     return true;
                 if (walk) {
                     k = sp_priv_part_end(s, slen, k == si ? k + 1 : k, sep);
@@ -1808,7 +1852,7 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
                 close++;
 
             if (close < end) {
-                unsigned long lower = sp_priv_case_map(c, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
+                unsigned long lower = sp_priv_lower(c);
                 bool hit = false;
                 for (size_t k = first; k < close;) {
                     unsigned long lo = sp_priv_utf8_next(pat, close, &k);
@@ -1839,8 +1883,8 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
             /* re.IGNORECASE: the same simple lowercase, or lowercases in one of its case groups */
             unsigned long pc = sp_priv_utf8_next(pat, plen, &pi);
             if (ci) {
-                pc = sp_priv_case_map(pc, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
-                c = sp_priv_case_map(c, sp_priv_lower_runs, SP_ARRAY_LEN(sp_priv_lower_runs));
+                pc = sp_priv_lower(pc);
+                c = sp_priv_lower(c);
             }
             if (pc != c && !(ci && sp_priv_case_equiv(pc, c)))
                 return false;
@@ -1853,7 +1897,9 @@ static bool sp_priv_match_path(const char *pat, size_t plen, const char *s, size
  * be all of its parts for an anchored pattern (CPython's) */
 bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions options) {
     SP_ASSERT_PATH_INVARIANT(p);
-    SpPath pat = sp_path_from_n(pattern, strlen(pattern), p->flavor);
+    SpPath pat; /* made in place: gcc copies a returned path out of its local */
+    sp_priv_path_raw(&pat, pattern, strlen(pattern), p->flavor);
+    sp_priv_normalize(&pat);
     SpCaseSensitivity cs = options.case_sensitive;
     bool ci = cs == SP_CASE_INSENSITIVE || (cs == SP_CASE_DEFAULT && p->flavor == SP_FLAVOR_WINDOWS);
     if (options.full) {
