@@ -962,6 +962,16 @@ static SpPath sp_priv_error_path(SpFlavor flavor, SpError error) {
     return p;
 }
 
+/* p made the empty path carrying error, in place: assigning sp_priv_error_path's result copies all SP_PATH_MAX bytes,
+ * which a function returning one named result would pay on every error (as sp_readlink does per non-link part) */
+static void sp_priv_set_error(SpPath *p, SpError error) {
+    p->buf[0] = '\0';
+    p->len = 0;
+    p->anchor = 0;
+    p->drive = 0;
+    p->error = error;
+}
+
 /* Append one piece, optionally separated; a path that can't hold it becomes an SP_ERR_TOO_LONG error, and a path
  * with an error stays as it is */
 static void sp_priv_append(SpPath *r, const char *s, size_t len, bool separated) {
@@ -970,7 +980,7 @@ static void sp_priv_append(SpPath *r, const char *s, size_t len, bool separated)
     if (r->error != SP_OK)
         return;
     if (r->len + (add_sep ? 1 : 0) + len >= SP_PATH_MAX) {
-        *r = sp_priv_error_path(r->flavor, SP_ERR_TOO_LONG);
+        sp_priv_set_error(r, SP_ERR_TOO_LONG);
         return;
     }
 
@@ -1067,7 +1077,7 @@ static void sp_priv_normalize(SpPath *p) {
         if (buf[i] == '/')
             buf[i] = sep;
     if (p->anchor > len && j + 1 >= SP_PATH_MAX) {
-        *p = sp_priv_error_path(p->flavor, SP_ERR_TOO_LONG);
+        sp_priv_set_error(p, SP_ERR_TOO_LONG);
         return;
     }
     if (p->anchor > len)
@@ -1130,19 +1140,19 @@ SpPath sp_path_from_n(const char *s, size_t len, SpFlavor flavor) {
 SpPath sp_path_new(const char *s, SpFlavor flavor) { return sp_path_from_n(s, s ? strlen(s) : 0, flavor); }
 
 SpPath sp_path_convert(const char *s, SpFlavor src_flavor, SpFlavor dest_flavor) {
-    SpPath src = sp_path_from_n(s, s ? strlen(s) : 0, src_flavor);
-    SpPath dest = src;
-    dest.flavor = sp_priv_flavor(dest_flavor);
-    if (src.flavor == dest.flavor)
-        return src;
+    SpPath p = sp_path_from_n(s, s ? strlen(s) : 0, src_flavor);
+    SpFlavor dest = sp_priv_flavor(dest_flavor);
+    if (p.flavor == dest)
+        return p;
 
-    char ssep = src.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-    char dsep = dest.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
-    for (size_t i = 0; i < dest.len; i++)
-        if (dest.buf[i] == ssep)
-            dest.buf[i] = dsep;
-    sp_priv_normalize(&dest);
-    return dest;
+    char ssep = p.flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
+    char dsep = dest == SP_FLAVOR_WINDOWS ? '\\' : '/';
+    p.flavor = dest;
+    for (size_t i = 0; i < p.len; i++)
+        if (p.buf[i] == ssep)
+            p.buf[i] = dsep;
+    sp_priv_normalize(&p);
+    return p;
 }
 
 /* "" for a path with an error, which release builds (where it doesn't assert) must not mistake for "." */
@@ -1439,9 +1449,9 @@ SpPath sp_cwd(SpFlavor flavor) {
         p.error = sp_priv_last_error();
 #endif
     if (p.error != SP_OK)
-        return sp_priv_error_path(flavor, p.error);
-
-    sp_priv_normalize(&p);
+        sp_priv_set_error(&p, p.error);
+    else
+        sp_priv_normalize(&p);
     return p;
 }
 
@@ -1487,8 +1497,10 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
     while ((skip = sp_priv_relative_len(p, &base)) == SP_PRIV_CAST(size_t, -1)) {
         SpStr name = sp_priv_name_sv(&base);
         size_t parent = sp_priv_parent_len(base.buf, base.len, base.flavor, base.anchor);
-        if (!walk_up || parent == base.len || (name.len == 2 && memcmp(name.data, "..", 2) == 0))
-            return sp_priv_error_path(p->flavor, SP_ERR_NOT_RELATIVE);
+        if (!walk_up || parent == base.len || (name.len == 2 && memcmp(name.data, "..", 2) == 0)) {
+            sp_priv_set_error(&r, SP_ERR_NOT_RELATIVE);
+            return r;
+        }
 
         sp_priv_append(&r, "..", 2, true);
         base.len = parent;
@@ -1614,9 +1626,9 @@ static void sp_priv_unquote_append(char *buf, size_t *n, const char *s, size_t l
 /* urllib.request.url2pathname(uri, require_scheme=True), which must give an absolute path */
 SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
     flavor = sp_priv_flavor(flavor);
-    SpPath err = sp_priv_error_path(flavor, SP_ERR_INVALID_ARG);
+    SpPath r = sp_priv_error_path(flavor, SP_ERR_INVALID_ARG);
     if (strlen(uri) < 5 || sp_priv_text_cmp(uri, 5, "file:", 5, true) != 0)
-        return err;
+        return r;
 
     const char *path = uri + 5;
     const char *auth = path;
@@ -1634,7 +1646,7 @@ SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
     size_t n = 0;
     if (flavor != SP_FLAVOR_WINDOWS) {
         if (!local)
-            return err;
+            return r;
     } else if (sp_priv_drive_len(auth, alen, flavor) > 0) { /* file://c:/file.txt */
         sp_priv_unquote_append(buf, &n, auth, alen);
     } else if (!local) { /* file://server/share/file.txt */
@@ -1660,10 +1672,10 @@ SpPath sp_from_uri(const char *uri, SpFlavor flavor) {
     sp_priv_unquote_append(buf, &n, path, plen);
     if (pipe > 0)
         buf[pipe] = ':';
-    SpPath r = sp_path_from_n(buf, n, flavor);
-    if (r.error != SP_OK || sp_is_absolute(&r))
-        return r;
-    return sp_priv_error_path(flavor, SP_ERR_NOT_ABSOLUTE);
+    r = sp_path_from_n(buf, n, flavor);
+    if (r.error == SP_OK && !sp_is_absolute(&r))
+        sp_priv_set_error(&r, SP_ERR_NOT_ABSOLUTE);
+    return r;
 }
 
 bool sp_path_eq(const SpPath *a, const SpPath *b) { return a->flavor == b->flavor && sp_path_cmp(a, b) == 0; }
@@ -2040,7 +2052,6 @@ bool sp_info(const SpPath *p, SpPathInfo *info, SpFileType type, bool follow_sym
 /* os.readlink(), as a path: the target of the symlink (or junction) at p. On Windows that is the substitute name,
  * with its "\??\" prefix read as "\\?\". */
 SpPath sp_readlink(const SpPath *p) {
-    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     SpPrivNative native;
     SpError err = sp_priv_native(p, &native);
     if (err != SP_OK)
@@ -2085,21 +2096,33 @@ SpPath sp_readlink(const SpPath *p) {
     wchar_t *target = data.wide + (names + offset) / 2;
     if (bytes / 2 > 4 && memcmp(target, L"\\??\\", 4 * sizeof(wchar_t)) == 0)
         target[1] = L'\\';
+    SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     err = sp_priv_from_wide(target, bytes / 2, r.buf, SP_PATH_MAX, &r.len);
-#else
-    ssize_t n = readlink(native.path, r.buf, SP_PATH_MAX);
-    if (n < 0)
-        return sp_priv_error_path(p->flavor, errno == EINVAL ? SP_ERR_NOT_LINK : sp_priv_last_error());
-    if (n >= SP_PATH_MAX)
-        return sp_priv_error_path(p->flavor, SP_ERR_TOO_LONG);
-    r.len = SP_PRIV_CAST(size_t, n);
-    r.buf[n] = '\0';
-#endif
     if (err != SP_OK)
-        return sp_priv_error_path(p->flavor, err);
-
-    sp_priv_normalize(&r);
+        sp_priv_set_error(&r, err);
+    else
+        sp_priv_normalize(&r);
     return r;
+#else
+    /* The target is read in a block of its own and an error returned after it: inside, every return is the target, so
+     * it is built in the caller's place; outside, a part that isn't a link (most of what sp_resolve asks) comes back as
+     * a fresh empty path, which a compiler that won't elide an address-taken result (gcc) doesn't copy either */
+    {
+        SpPath r = sp_priv_error_path(p->flavor, SP_OK);
+        ssize_t n = readlink(native.path, r.buf, SP_PATH_MAX);
+        if (n >= 0 && n < SP_PATH_MAX) {
+            r.len = SP_PRIV_CAST(size_t, n);
+            r.buf[n] = '\0';
+            sp_priv_normalize(&r);
+            return r;
+        }
+        if (n >= SP_PATH_MAX)
+            err = SP_ERR_TOO_LONG;
+        else
+            err = errno == EINVAL ? SP_ERR_NOT_LINK : sp_priv_last_error();
+    }
+    return sp_priv_error_path(p->flavor, err);
+#endif
 }
 
 #ifdef SP_WINDOWS
@@ -2320,7 +2343,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
 #endif
     SpPath abs = sp_absolute(p);
     if (abs.error != SP_OK)
-        return abs;
+        return sp_priv_error_path(p->flavor, abs.error);
 
 #ifdef SP_WINDOWS
     sp_priv_collapse_dots(&abs, abs.anchor, abs.drive);
@@ -2392,7 +2415,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         rest.len = sp_priv_parent_len(rest.buf, rest.len, rest.flavor, rest.anchor);
         rest.buf[rest.len] = '\0';
         if (tail.error != SP_OK)
-            return tail;
+            return sp_priv_error_path(p->flavor, tail.error);
         if (rest.len == 0) {
             r = tail;
             break;
@@ -2413,7 +2436,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
     r.len = 1;
     r.anchor = 1;
     sp_priv_realpath(&r, abs.buf, abs.len, strict);
-    return r.error == SP_OK ? r : sp_priv_error_path(p->flavor, r.error);
+    if (r.error != SP_OK)
+        sp_priv_set_error(&r, r.error);
+    return r;
 #endif
 }
 
@@ -2817,7 +2842,7 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
         return n;
     }
 
-    *out = sp_priv_error_path(dir->flavor, end);
+    sp_priv_set_error(out, end);
     return 0;
 }
 
@@ -3031,20 +3056,24 @@ SpPath sp_rename(const SpPath *p, const SpPath *target, bool replace) {
 /* Path.move: rename, or across filesystems copy (keeping symlinks and metadata) and delete */
 SpPath sp_move(const SpPath *p, const SpPath *target, bool into) {
     SpPath dst = sp_priv_destination(p, target, into);
-    if (dst.error == SP_OK && sp_samefile(p, &dst))
-        return sp_priv_error_path(target->flavor, SP_ERR_SAME_FILE);
-
-    SpPath r = dst.error != SP_OK ? dst : sp_rename(p, &dst, true);
-    if (r.error != SP_ERR_CROSS_DEVICE)
-        return r;
-
-    SpPath tree = dst;
-    SpError err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
-                                                                            : sp_priv_copy_tree(p, &tree, false, true);
-    SpPathInfo info = SP_PRIV_ZERO;
+    SpError err = dst.error;
+    if (err == SP_OK && sp_samefile(p, &dst))
+        err = SP_ERR_SAME_FILE;
     if (err == SP_OK)
-        err = sp_priv_delete(p, &info);
-    return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
+        err = sp_rename(p, &dst, true).error;
+
+    /* Across filesystems: copy, keeping symlinks and metadata, then delete */
+    if (err == SP_ERR_CROSS_DEVICE) {
+        SpPath tree = dst;
+        err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
+                                                                        : sp_priv_copy_tree(p, &tree, false, true);
+        SpPathInfo info = SP_PRIV_ZERO;
+        if (err == SP_OK)
+            err = sp_priv_delete(p, &info);
+    }
+    if (err != SP_OK)
+        sp_priv_set_error(&dst, err);
+    return dst;
 }
 
 static SpStr sp_priv_glob_part(const SpGlobIter *it, size_t pos) {
@@ -3243,7 +3272,6 @@ static SpPath sp_priv_getenv_path(const wchar_t *name, SpFlavor flavor) {
 
 /* os.path.expanduser("~" + user) as a path: SP_ERR_NO_HOME when the home directory is unknown */
 static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) {
-    SpPath err = sp_priv_error_path(flavor, SP_ERR_NO_HOME);
 #ifdef SP_WINDOWS
     /* ntpath: USERPROFILE, else HOMEDRIVE joined with HOMEPATH */
     SpPath home = sp_priv_getenv_path(L"USERPROFILE", flavor);
@@ -3270,8 +3298,10 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
     while (base > 0 && home.buf[base - 1] != '\\' && home.buf[base - 1] != '/')
         base--;
     if (current.error != SP_OK || home.len - base != current.len ||
-        memcmp(home.buf + base, current.buf, current.len) != 0)
-        return err;
+        memcmp(home.buf + base, current.buf, current.len) != 0) {
+        sp_priv_set_error(&home, SP_ERR_NO_HOME);
+        return home;
+    }
     home.len = base;
     home.buf[base] = '\0';
     sp_priv_append(&home, user, ulen, false);
@@ -3282,13 +3312,13 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
     if (!dir) {
         char name[256];
         if (ulen >= sizeof(name))
-            return err;
+            return sp_priv_error_path(flavor, SP_ERR_NO_HOME);
         memcpy(name, user, ulen);
         name[ulen] = '\0';
 
         struct passwd *pw = ulen == 0 ? getpwuid(getuid()) : getpwnam(name);
         if (!pw || !pw->pw_dir)
-            return err;
+            return sp_priv_error_path(flavor, SP_ERR_NO_HOME);
         dir = pw->pw_dir;
     }
 
@@ -3319,7 +3349,8 @@ SpPath sp_expanduser(const SpPath *p) {
     /* The remaining parts stay parts: a leading "./" keeps one like "c:" from parsing as a drive */
     SpPath rest = sp_priv_path_from_raw("./", 2, p->flavor);
     sp_priv_append(&rest, p->buf + end + 1, p->len - end - 1, false);
-    return rest.error != SP_OK ? rest : sp_priv_join_len(&r, rest.buf, rest.len);
+    r = rest.error != SP_OK ? rest : sp_priv_join_len(&r, rest.buf, rest.len);
+    return r;
 }
 
 /* The file owner's name in the user database: SP_ERR_NOT_FOUND when it has none there */
