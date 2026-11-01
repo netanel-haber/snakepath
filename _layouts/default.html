@@ -161,6 +161,20 @@
     }
     a { color: #63c0f5; text-shadow: 0 0 5px rgba(104, 182, 255, 0.5); }
     #a-title { text-decoration: none; }
+    @media (min-width: 900px) {
+      header { padding: 0.5rem 0; margin-bottom: 0.75rem; }
+      header .container { display: flex; align-items: center; gap: 1rem; }
+      header h1 { margin-bottom: 0; }
+      header h2 { margin: 0; flex: 1; }
+      #main_content > div.highlighter-rouge:first-of-type { float: right; width: max-content; max-width: 62%; margin: 0 0 0.5rem 1.5rem; }
+      #main_content > div.highlighter-rouge:first-of-type pre { margin: 0; }
+      #main_content p { margin: 0 0 0.6rem; }
+      #main_content pre { margin: 0 0 0.6rem; }
+      #main_content h2 { margin-bottom: 0.5rem; }
+      #main_content details { margin-bottom: 0.4rem; }
+      #main_content img { height: 260px; width: auto; }
+      .container { max-width: 1120px; }
+    }
   </style>
 </head>
 
