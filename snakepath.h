@@ -2979,7 +2979,7 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
 static SpError sp_priv_delete(const SpPath *p, SpPathInfo *info) {
     bool tree = !sp_info(p, info, SP_SYMLINK, false) && sp_info(p, info, SP_DIR, true);
 #ifdef SP_WINDOWS
-    tree = tree && !sp_is(p, SP_JUNCTION, false);
+    tree = tree && sp_stat(p, false).sp_reparse_tag != SP_PRIV_REPARSE_TAG_MOUNT_POINT;
 #endif
     if (!tree)
         return sp_priv_remove_impl(p, false);

@@ -128,7 +128,8 @@ Dict in `snakepath.py` mapping error substrings → `(class_name, test_name)` tu
 
 - Windows CI: race condition with parallel MSVC builds
 - The test binaries' `main` holds hundreds of paths in one frame, past Windows' 1 MB default stack at `/Od`: nob links them with `/STACK:8388608`
-- Clang `-Wnrvo` (not eliding copies on multi-return paths such as `sp_path_convert`); disabled via SNAKEPATH_NO_NRVO
+- Clang `-Wnrvo` (not eliding copies on multi-return paths such as `sp_path_convert`); disabled via SNAKEPATH_NO_NRVO. The Linux runner's clang has it since about 2026-10-27 (13 sites, `main` included), so `build-linux` sets the knob; zig's bundled clang 22 (`pip download ziglang`) reproduces it where the system clang is older
+- The call-depth check measures the host's preprocessed header, so a Windows-only call chain (like `sp_is`'s mount-point test through the case tables) shows only in `build-windows`. To see it from Linux, run `check_frames` with `CC` set to a wrapper around `zig cc -target x86_64-windows-gnu`
 - Windows console: Turkish İ (U+0130) needs UTF-8 wrapper
 - clang for MinGW (`zig cc -target x86_64-windows-gnu`, a quick Windows compile check from Linux) rejects `test.c` with `-Werror` because `link_opts` is unused there; MSVC, which CI uses, doesn't warn
 - Some containers' clang ships no ASan runtime, so `SNAKEPATH_SANITIZE=1` fails to link there: build the sanitizers with gcc (`-fsanitize=address,undefined`) instead, as a local stand-in

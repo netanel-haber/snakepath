@@ -34,6 +34,7 @@ jobs:
         run: ./nob
         env:
           SNAKEPATH_SANITIZE: "1"
+          SNAKEPATH_NO_NRVO: "1" # the runner's clang has -Wnrvo (AGENTS.md, Known Issues)
 
   build-windows:
     runs-on: windows-latest
