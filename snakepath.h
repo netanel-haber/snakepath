@@ -1037,9 +1037,14 @@ static void sp_priv_path_raw(SpPath *p, const char *s, size_t len, SpFlavor flav
 
 /* p cut to its first len bytes, at or past its anchor, so the anchor stays right */
 static SpPath sp_priv_prefix(const SpPath *p, size_t len) {
-    SpPath r = *p;
-    r.len = len;
+    SpPath r; /* p with only len bytes of text copied: copying all of p would move SP_PATH_MAX */
+    memcpy(r.buf, p->buf, len);
     r.buf[len] = '\0';
+    r.len = len;
+    r.anchor = p->anchor;
+    r.drive = p->drive;
+    r.flavor = p->flavor;
+    r.error = p->error;
     return r;
 }
 
@@ -1349,7 +1354,7 @@ static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t ole
     bool add_sep = !(base->drive > 0 && base->anchor == base->drive && base->drive == base->len &&
                      base->buf[base->drive - 1] == ':');
     bool replace = false; /* by an anchored other */
-    SpPath r = *base;
+    SpPath r = sp_priv_prefix(base, base->len);
 
     if (olen > 0 && (other[0] == '/' || (flavor == SP_FLAVOR_WINDOWS && other[0] == '\\'))) {
         replace = base->drive == 0 || sp_priv_is_unc(other, olen, flavor);
@@ -1523,7 +1528,7 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
     if (p->error != SP_OK || other->error != SP_OK)
         return p->error != SP_OK ? *p : *other;
 
-    SpPath base = *other;
+    SpPath base = sp_priv_prefix(other, other->len);
     SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     size_t skip; /* the length of p's prefix that equals base */
 
@@ -1911,20 +1916,34 @@ bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions options) {
     SpPartsIter pattern_parts = sp_parts_begin(&pat);
     SpStr pp, sp;
     size_t count = 0;
-    size_t total = 0;
     for (SpPartsIter it = pattern_parts; sp_parts_next(&it, &pp);)
         count++;
-    for (SpPartsIter it = path; sp_parts_next(&it, &sp);)
-        total++;
     assert(count > 0 && "empty pattern");
-    if (total < count || (total > count && pattern_parts.anchor > 0))
-        return false;
 
-    for (size_t skip = total - count; sp_parts_next(&path, &sp);)
-        if (skip > 0)
-            skip--;
-        else if (sp_parts_next(&pattern_parts, &pp) &&
-                 !sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor))
+    /* The pattern matches the path's last parts: find where they start, back from the end to the parts past the anchor
+     * (the anchor is the part before those). Runs of separators count as one, like the parts iterator's */
+    char sep = p->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
+    size_t first = path.pos > path.anchor ? path.pos : path.anchor;
+    size_t start = p->len;
+    size_t found = 0;
+    for (;;) {
+        while (start > first && (p->buf[start - 1] == '/' || p->buf[start - 1] == sep))
+            start--;
+        if (start == first || found == count)
+            break;
+        while (start > first && p->buf[start - 1] != '/' && p->buf[start - 1] != sep)
+            start--;
+        found++;
+    }
+    bool shorter = found < count && (path.anchor == 0 || found + 1 < count);
+    bool longer = found == count && (start > first || path.anchor > 0);
+    if (shorter || (longer && pattern_parts.anchor > 0))
+        return false;
+    if (found == count)
+        path.pos = start;
+
+    while (sp_parts_next(&pattern_parts, &pp) && sp_parts_next(&path, &sp))
+        if (!sp_priv_match_path(pp.data, pp.len, sp.data, sp.len, ci, false, p->flavor))
             return false;
     return true;
 }

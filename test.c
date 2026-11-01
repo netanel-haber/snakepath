@@ -2022,7 +2022,7 @@ int main(void) {
         ASSERT_PATH(sp_relative_to(&drive_child, &win_empty, false), ".\\c:\\x");
     }
     {
-        /* readlink can return unnormalized paths; both directions of parts traversal must skip empty parts. */
+        /* A path made by hand may be unnormalized: both directions of parts traversal must skip empty parts. */
         SpPath raw = sp_path_f("", SP_FLAVOR_POSIX), base = sp_path_f("a", SP_FLAVOR_POSIX);
         memcpy(raw.buf, "a///b//", 8);
         raw.len = 7;
