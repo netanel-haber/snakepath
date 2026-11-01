@@ -148,6 +148,7 @@ typedef struct {
 typedef struct {
     bool dir;        /* rmdir; else unlink */
     bool missing_ok; /* unlink's */
+    bool recursive;  /* Path._delete: a directory with what is in it (links in it unlinked, not followed); dir unused */
 } SpRemoveOptions;
 
 typedef struct {
@@ -227,9 +228,19 @@ typedef struct {
     size_t current_len;
 } SpParentsIter;
 
+/* Path.info (pathlib.types.PathInfo): what stat and lstat said of a path, each asked at most once. Zero knows nothing
+ * yet; an entry of a listing starts with what the listing said (SpIterdirIter.info), as os.scandir's DirEntry does */
+typedef struct {
+    struct {
+        unsigned int lstat; /* 0 unknown, 1 missing, else 2 | the mode's file type bits */
+        unsigned int stat;
+    } priv_;
+} SpPathInfo;
+
 typedef struct {
     SpPath dir;
-    SpError error; /* why the listing ended early (or never started) */
+    SpError error;   /* why the listing ended early (or never started) */
+    SpPathInfo info; /* of the entry sp_iterdir_next gave last */
     struct {
         void *handle;
         bool done;
@@ -366,6 +377,9 @@ SP_NODISCARD bool sp_match(const SpPath *p, const char *pattern, SpMatchOptions 
 /* exists and the is_* predicates: follow_symlinks matters for SP_ANY, SP_FILE and SP_DIR (pathlib follows for the
  * devices, fifos and sockets, never for SP_SYMLINK and SP_JUNCTION; SP_MOUNT looks at the path itself) */
 SP_NODISCARD bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks);
+/* Path.info's exists (SP_ANY), is_dir, is_file and is_symlink, and the other types a mode tells (not SP_MOUNT or
+ * SP_JUNCTION), from what info knows or asks once */
+SP_NODISCARD bool sp_info(const SpPath *p, SpPathInfo *info, SpFileType type, bool follow_symlinks);
 
 typedef struct {
     unsigned int sp_mode;
@@ -456,6 +470,8 @@ typedef struct sp_fluent_ SpPrivDontUseThisDirectly_;
     X_TERM(bool, is_absolute, (void), sp_is_absolute(&sp_priv_f_ctx))                                                  \
     X_TERM(bool, is_relative_to, (const SpPath *o), sp_is_relative_to(&sp_priv_f_ctx, o))                              \
     X_TERM(bool, is, (SpFileType type, bool follow_symlinks), sp_is(&sp_priv_f_ctx, type, follow_symlinks))            \
+    X_TERM(bool, info, (SpPathInfo * info, SpFileType type, bool follow_symlinks),                                     \
+           sp_info(&sp_priv_f_ctx, info, type, follow_symlinks))                                                       \
     X_TERM(SpStatResult, stat, (bool follow_symlinks), sp_stat(&sp_priv_f_ctx, follow_symlinks))                       \
     X_TERM(bool, eq, (const SpPath *o), sp_path_eq(&sp_priv_f_ctx, o))                                                 \
     X_TERM(bool, ne, (const SpPath *o), sp_path_ne(&sp_priv_f_ctx, o))                                                 \
@@ -1979,10 +1995,12 @@ static bool sp_priv_is_mount(const SpPath *p) {
 #endif
 }
 
+/* The file type bits of each SpFileType up to SP_SOCKET */
+static const unsigned int sp_priv_type_modes[] = {
+    0, SP_PRIV_IFREG, SP_PRIV_IFDIR, SP_PRIV_IFLNK, SP_PRIV_IFBLK, SP_PRIV_IFCHR, SP_PRIV_IFIFO, SP_PRIV_IFSOCK};
+
 /* A junction is lstat's mount point reparse tag (os.path.isjunction); the others are stat's file type */
 bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks) {
-    static const unsigned int modes[] = {
-        0, SP_PRIV_IFREG, SP_PRIV_IFDIR, SP_PRIV_IFLNK, SP_PRIV_IFBLK, SP_PRIV_IFCHR, SP_PRIV_IFIFO, SP_PRIV_IFSOCK};
     SP_ASSERT_PATH_INVARIANT(p);
     if (type == SP_MOUNT)
         return sp_priv_is_mount(p);
@@ -1990,7 +2008,19 @@ bool sp_is(const SpPath *p, SpFileType type, bool follow_symlinks) {
     SpStatResult st = sp_stat(p, follow_symlinks && type != SP_SYMLINK && type != SP_JUNCTION);
     if (type == SP_JUNCTION)
         return st.error == SP_OK && st.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT;
-    return st.error == SP_OK && (type == SP_ANY || (st.sp_mode & SP_PRIV_IFMT) == modes[type]);
+    return st.error == SP_OK && (type == SP_ANY || (st.sp_mode & SP_PRIV_IFMT) == sp_priv_type_modes[type]);
+}
+
+bool sp_info(const SpPath *p, SpPathInfo *info, SpFileType type, bool follow_symlinks) {
+    SP_ASSERT_PATH_INVARIANT(p);
+    assert(type != SP_MOUNT && type != SP_JUNCTION && "sp_info knows file types; ask sp_is");
+    bool follow = follow_symlinks && type != SP_SYMLINK;
+    unsigned int *known = follow ? &info->priv_.stat : &info->priv_.lstat;
+    if (*known == 0) {
+        SpStatResult st = sp_stat(p, follow);
+        *known = st.error == SP_OK ? 2 | (st.sp_mode & SP_PRIV_IFMT) : 1;
+    }
+    return type == SP_ANY ? *known != 1 : (*known & SP_PRIV_IFMT) == sp_priv_type_modes[type];
 }
 
 /* os.readlink(), as a path: the target of the symlink (or junction) at p. On Windows that is the substitute name,
@@ -2471,9 +2501,9 @@ SpError sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
 #endif
 }
 
-/* os.unlink() or os.rmdir(); a missing file is fine with missing_ok. Like CPython on Windows, unlinking a symlink or
- * junction to a directory removes the link with RemoveDirectory. */
-static SpError sp_priv_remove_impl(const SpPath *p, bool is_dir, bool missing_ok) {
+/* os.unlink() or os.rmdir(). Like CPython on Windows, unlinking a symlink or junction to a directory removes the link
+ * with RemoveDirectory. */
+static SpError sp_priv_remove_impl(const SpPath *p, bool is_dir) {
     SpPrivNative native;
     SpError err = sp_priv_native(p, &native);
     if (err != SP_OK)
@@ -2494,12 +2524,7 @@ static SpError sp_priv_remove_impl(const SpPath *p, bool is_dir, bool missing_ok
 #else
     bool ok = (is_dir ? rmdir(native.path) : unlink(native.path)) == 0;
 #endif
-    err = ok ? SP_OK : sp_priv_last_error();
-    return err == SP_ERR_NOT_FOUND && missing_ok ? SP_OK : err;
-}
-
-SpError sp_remove(const SpPath *p, SpRemoveOptions options) {
-    return sp_priv_remove_impl(p, options.dir, options.missing_ok);
+    return ok ? SP_OK : sp_priv_last_error();
 }
 
 /* os.chmod(). On Windows the owner's write bit clears or sets the read-only attribute: of the file a link leads to
@@ -2672,10 +2697,11 @@ static void sp_priv_readdir_close(void **handle) {
 }
 
 /* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
- * sp_priv_join_child builds it) and the name length is returned. At the end it returns 0, and out is an empty path
- * whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry too long to
- * join, which ends the listing). */
-static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out) {
+ * sp_priv_join_child builds it), info what the listing says of its type (as os.scandir's DirEntry: the link itself,
+ * and following it only when it isn't a symlink), and the name length is returned. At the end it returns 0, and out is
+ * an empty path whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry
+ * too long to join, which ends the listing). */
+static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out, SpPathInfo *info) {
     char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
     size_t at = dir->len + (last != '/' && last != sep && !(sep == '\\' && last == ':') ? 1 : 0);
@@ -2717,6 +2743,11 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
         end = sp_priv_from_wide(wide, wcslen(wide), out->buf + at, SP_PATH_MAX - at, &n);
         if (end != SP_OK)
             break;
+
+        /* Only a symlink is S_IFLNK, as in sp_stat; a junction is the directory it is */
+        bool symlink = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+        unsigned int mode = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? SP_PRIV_IFDIR : SP_PRIV_IFREG;
+        mode = symlink ? SP_PRIV_IFLNK : mode;
 #else
         if (!*handle) {
             end = sp_priv_native(dir, &native);
@@ -2741,8 +2772,17 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
             break;
         }
         memcpy(out->buf + at, name, n + 1);
+
+        /* d_type is the file type bits shifted down (BSD's DTTOIF); DT_UNKNOWN, 0, leaves it to stat */
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(DT_UNKNOWN)
+        unsigned int mode = SP_PRIV_CAST(unsigned int, de->d_type) << 12;
+#else
+        unsigned int mode = 0;
+#endif
 #endif
         out->len = at + n;
+        info->priv_.lstat = mode != 0 ? 2 | mode : 0;
+        info->priv_.stat = mode != SP_PRIV_IFLNK ? info->priv_.lstat : 0;
         return n;
     }
 
@@ -2831,13 +2871,14 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         /* Children are listed before dst is created, so an unreadable src leaves no dst behind */
         void *handle = SP_PRIV_NULL;
         SpPath child;
+        SpPathInfo listed; /* unused: each child is stat()ed as a source */
         SpMkdirOptions plain = SP_PRIV_ZERO;
-        size_t n = sp_priv_readdir_next(&handle, src, &child);
+        size_t n = sp_priv_readdir_next(&handle, src, &child, &listed);
         err = n == 0 ? child.error : SP_OK;
         if (err == SP_OK)
             err = sp_mkdir(dst, SP_MODE_DIR, plain);
 
-        for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child)) {
+        for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child, &listed)) {
             err = sp_priv_join_child(dst, child.buf + child.len - n, n);
             if (err == SP_OK)
                 err = sp_priv_copy_tree(&child, dst, follow_symlinks, preserve_metadata);
@@ -2902,26 +2943,36 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
     return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
-/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively */
-static SpError sp_priv_delete(const SpPath *p) {
-    SpStatResult lst = sp_stat(p, false);
-    bool dir = (sp_stat(p, true).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
-    if (!dir || (lst.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFLNK || lst.sp_reparse_tag == SP_PRIV_REPARSE_TAG_MOUNT_POINT)
-        return sp_priv_remove_impl(p, false, false);
+/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively. info is p's: a child's
+ * is what its listing said, so a tree's files and directories are removed without a stat each */
+static SpError sp_priv_delete(const SpPath *p, SpPathInfo *info) {
+    bool tree = !sp_info(p, info, SP_SYMLINK, false) && sp_info(p, info, SP_DIR, true);
+#ifdef SP_WINDOWS
+    tree = tree && !sp_is(p, SP_JUNCTION, false);
+#endif
+    if (!tree)
+        return sp_priv_remove_impl(p, false);
 
     void *handle = SP_PRIV_NULL;
     SpPath child;
+    SpPathInfo child_info;
     SpError err = SP_OK;
     while (err == SP_OK) {
-        if (sp_priv_readdir_next(&handle, p, &child) == 0) {
+        if (sp_priv_readdir_next(&handle, p, &child, &child_info) == 0) {
             err = child.error; /* why the listing ended */
             break;
         }
-        err = sp_priv_delete(&child);
+        err = sp_priv_delete(&child, &child_info);
     }
     sp_priv_readdir_close(&handle);
 
-    return err != SP_OK ? err : sp_priv_remove_impl(p, true, false);
+    return err != SP_OK ? err : sp_priv_remove_impl(p, true);
+}
+
+SpError sp_remove(const SpPath *p, SpRemoveOptions options) {
+    SpPathInfo info = SP_PRIV_ZERO;
+    SpError err = options.recursive ? sp_priv_delete(p, &info) : sp_priv_remove_impl(p, options.dir);
+    return err == SP_ERR_NOT_FOUND && options.missing_ok ? SP_OK : err;
 }
 
 /* os.rename, or os.replace (replace): on POSIX a missing replace means an existing target is an error */
@@ -2959,8 +3010,9 @@ SpPath sp_move(const SpPath *p, const SpPath *target, bool into) {
     SpPath tree = dst;
     SpError err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
                                                                             : sp_priv_copy_tree(p, &tree, false, true);
+    SpPathInfo info = SP_PRIV_ZERO;
     if (err == SP_OK)
-        err = sp_priv_delete(p);
+        err = sp_priv_delete(p, &info);
     return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
@@ -3102,7 +3154,8 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         path->buf[path->len] = '\0';
         /* Like pathlib, a directory that can't be listed has no matches; an entry too long for a path is an error */
         SpPath entry;
-        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, path, &entry);
+        SpPathInfo info;
+        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, path, &entry, &info);
         if (n == 0 && entry.error == SP_ERR_TOO_LONG)
             it->error = SP_ERR_TOO_LONG;
         if (n == 0) {
@@ -3111,9 +3164,8 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
             continue;
         }
 
-        /* sp_stat directly: through sp_is, is_mount's chain puts glob past the frame limit on Windows */
-        bool is_dir = (walk || !last) &&
-                      (sp_stat(&entry, !walk || it->priv_.recurse_symlinks).sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR;
+        /* What the listing said, as CPython's glob asks os.scandir's entries: a stat only for a link to follow */
+        bool is_dir = (walk || !last) && sp_info(&entry, &info, SP_DIR, !walk || it->priv_.recurse_symlinks);
         if (!last && !is_dir)
             continue;
         *path = entry;
@@ -3298,7 +3350,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (it->error != SP_OK || it->priv_.done)
         return false;
-    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out) > 0)
+    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out, &it->info) > 0)
         return true;
 
     it->priv_.done = true;
@@ -3347,15 +3399,16 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     size_t count = 0;
     bool follow = it->priv_.options.follow_symlinks;
 
+    /* A directory or not as the listing says, like os.walk's scandir entries: a stat only for a link to follow */
     void *handle = SP_PRIV_NULL;
     SpPath child;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child)) > 0; count++) {
-        SpStatResult st = sp_stat(&child, follow);
+    SpPathInfo info;
+    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child, &info)) > 0; count++) {
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
         }
-        buf[used] = st.error == SP_OK && (st.sp_mode & SP_PRIV_IFMT) == SP_PRIV_IFDIR ? 'd' : 'f';
+        buf[used] = sp_info(&child, &info, SP_DIR, follow) ? 'd' : 'f';
         memcpy(buf + used + 1, child.buf + child.len - n, n + 1);
         used += n + 2;
     }

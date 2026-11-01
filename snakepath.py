@@ -18,6 +18,7 @@ import subprocess
 import sys
 import unittest
 import urllib.request
+import warnings
 from ctypes import c_char_p, c_size_t, c_int, c_uint, POINTER, Structure, byref, create_string_buffer
 
 # Find and load the shared library
@@ -88,6 +89,7 @@ _SpParentsIter = _opaque(_lib.sp_sizeof_parents_iter)
 _SpGlobIter = _opaque(_lib.sp_sizeof_glob_iter)
 _SpIterdirIter = _opaque(_lib.sp_sizeof_iterdir_iter)
 _SpWalkIter = _opaque(_lib.sp_sizeof_walk_iter)
+_SpPathInfo = _opaque(_lib.sp_sizeof_path_info)
 
 
 class _SpStatResult(Structure):
@@ -178,7 +180,8 @@ _sig('sp_stat_wrap', [_PP, c_int, _PStat])
 _sig('sp_stat_eq_wrap', [_PStat, _PStat], c_int)
 _sig('sp_mkdir_wrap', [_PP, c_uint, c_int, c_int, c_uint], c_int)
 _sig('sp_touch_wrap', [_PP, c_uint, c_int], c_int)
-_sig('sp_remove_wrap', [_PP, c_int, c_int], c_int)
+_sig('sp_remove_wrap', [_PP, c_int, c_int, c_int], c_int)
+_sig('sp_info_wrap', [_PP, POINTER(_SpPathInfo), c_int, c_int], c_int)
 _sig('sp_chmod_wrap', [_PP, c_uint, c_int], c_int)
 _sig('sp_link_to_wrap', [_PP, _PP, c_int, c_int], c_int)
 _sig('sp_read_file_wrap', [_PP, c_char_p, c_size_t, POINTER(_SpIOResult)])
@@ -187,6 +190,7 @@ _sig('sp_iterdir_begin_wrap', [_PP, POINTER(_SpIterdirIter)])
 _sig('sp_iterdir_next_wrap', [POINTER(_SpIterdirIter), _PP], c_int)
 _sig('sp_iterdir_end_wrap', [POINTER(_SpIterdirIter)])
 _sig('sp_iterdir_error_wrap', [POINTER(_SpIterdirIter)], c_int)
+_sig('sp_iterdir_info_wrap', [POINTER(_SpIterdirIter), POINTER(_SpPathInfo)])
 _sig('sp_glob_next_wrap', [POINTER(_SpGlobIter), _PP], c_int)
 _sig('sp_glob_end_wrap', [POINTER(_SpGlobIter)])
 _sig('sp_glob_error_wrap', [POINTER(_SpGlobIter)], c_int)
@@ -238,10 +242,11 @@ def _text(term):
 
 
 class _TermProp:
-    """Descriptor for SpTerm properties (drive, root, anchor, name, stem, suffix)"""
-    __slots__ = ('_func',)
+    # Descriptor for SpTerm properties (drive, root, anchor, name, stem, suffix), documented as pathlib's
+    __slots__ = ('_func', '__doc__')
     def __init__(self, name):
         self._func = getattr(_lib, f'sp_{name}_wrap')
+        self.__doc__ = None
     def __get__(self, obj, objtype=None):
         if obj is None:
             return self
@@ -251,10 +256,11 @@ class _TermProp:
 
 
 class _PathProp:
-    """Descriptor for path-returning properties (parent)"""
-    __slots__ = ('_func',)
+    # Descriptor for path-returning properties (parent), documented as pathlib's
+    __slots__ = ('_func', '__doc__')
     def __init__(self, name):
         self._func = getattr(_lib, f'sp_{name}_wrap')
+        self.__doc__ = None
     def __get__(self, obj, objtype=None):
         if obj is None: return self
         out = _SpPath()
@@ -321,6 +327,39 @@ def _get_pathlib_flavor(obj):
 
 def _case(case_sensitive):
     return SP_CASE_DEFAULT if case_sensitive is None else SP_CASE_SENSITIVE if case_sensitive else SP_CASE_INSENSITIVE
+
+
+# ============ PathInfo ============
+
+class _PathInfo:
+    """pathlib.types.PathInfo over the C library's SpPathInfo: each answer from what it knows or asks once"""
+    __slots__ = ('_path', '_info')
+
+    def __init__(self, path, info=None):
+        self._path = path
+        self._info = info if info is not None else _SpPathInfo()
+
+    def __repr__(self):
+        return f"<{'WindowsPath' if os.name == 'nt' else 'PosixPath'}.info>"
+
+    def _ask(self, file_type, follow_symlinks):
+        return bool(_lib.sp_info_wrap(byref(self._path._sp), byref(self._info), file_type, 1 if follow_symlinks else 0))
+
+    def exists(self, *, follow_symlinks=True):
+        """Whether this path exists."""
+        return self._ask(SP_ANY, follow_symlinks)
+
+    def is_dir(self, *, follow_symlinks=True):
+        """Whether this path is a directory."""
+        return self._ask(SP_DIR, follow_symlinks)
+
+    def is_file(self, *, follow_symlinks=True):
+        """Whether this path is a regular file."""
+        return self._ask(SP_FILE, follow_symlinks)
+
+    def is_symlink(self):
+        """Whether this path is a symbolic link."""
+        return self._ask(SP_SYMLINK, False)
 
 
 # ============ PathParents ============
@@ -425,6 +464,16 @@ class PurePath:
         _check(out.error, *pathsegments[:1])
         return self._from_sp(out)
 
+    def __reduce__(self):
+        return self.__class__, (str(self),)
+
+    @classmethod
+    def _parse_path(cls, path):
+        """pathlib's private parse of a path string: its drive, its root and the parts after them"""
+        parsed = cls(path)
+        parts = list(parsed.parts)
+        return parsed.drive, parsed.root, parts[1:] if parsed.anchor else parts
+
     def _from_sp(self, sp_value):
         result = self.__class__.__new__(self.__class__)
         result._sp = _SpPath()
@@ -513,13 +562,18 @@ class PurePath:
         _lib.sp_as_posix_wrap(byref(self._sp), byref(term))
         return _text(term)
 
-    def as_uri(self):
+    def _as_uri(self, relative_message):
         buf = create_string_buffer(SP_PATH_MAX * 3 + 8)  # every byte percent-encoded, after "file:///"
         err = _lib.sp_as_uri_wrap(byref(self._sp), buf, len(buf))
         if err == SP_ERR_NOT_ABSOLUTE:
-            raise ValueError("relative path can't be expressed as a file URI")
+            raise ValueError(relative_message)
         _check(err, self)
         return buf.value.decode('utf-8')
+
+    def as_uri(self):
+        warnings.warn("pathlib.PurePath.as_uri() is deprecated and scheduled for removal in Python 3.19. "
+                      "Use pathlib.Path.as_uri().", DeprecationWarning, stacklevel=2)
+        return self._as_uri("relative path can't be expressed as a file URI")
 
     is_absolute = _bool_method('is_absolute')
 
@@ -600,7 +654,19 @@ class PureWindowsPath(PurePath):
 
 class Path(PurePath):
     """Path object with I/O operations."""
-    __slots__ = ()
+    __slots__ = ('_info',)
+
+    @property
+    def info(self):
+        """
+        A PathInfo object that exposes the file type and other file attributes
+        of this path.
+        """
+        try:
+            return self._info
+        except AttributeError:
+            self._info = _PathInfo(self)
+            return self._info
 
     def __new__(cls, *args, **kwargs):
         if cls is Path:
@@ -643,8 +709,14 @@ class Path(PurePath):
         _check(out.error, self, *([target] if target is not None else []))
         return self._from_sp(out)
 
+    def as_uri(self):
+        return self._as_uri("relative paths can't be expressed as file URIs")
+
     def absolute(self):
-        return self._path_op(_lib.sp_absolute_wrap)
+        # The working directory where pathlib asks for it, os.getcwd() (or a drive's own, os.path.abspath), joined in C
+        if self.is_absolute():
+            return self
+        return self.with_segments(os.path.abspath(self.drive) if self.drive else os.getcwd(), self)
 
     def expanduser(self):
         """Expand ~ to user's home directory."""
@@ -742,11 +814,15 @@ class Path(PurePath):
 
     def unlink(self, missing_ok=False):
         """Remove the file."""
-        _check(_lib.sp_remove_wrap(byref(self._sp), 0, 1 if missing_ok else 0), self)
+        _check(_lib.sp_remove_wrap(byref(self._sp), 0, 1 if missing_ok else 0, 0), self)
 
     def rmdir(self):
         """Remove the empty directory."""
-        _check(_lib.sp_remove_wrap(byref(self._sp), 1, 0), self)
+        _check(_lib.sp_remove_wrap(byref(self._sp), 1, 0, 0), self)
+
+    def _delete(self):
+        """Delete this file or directory (including all sub-directories)."""
+        _check(_lib.sp_remove_wrap(byref(self._sp), 0, 0, 1), self)
 
     def rename(self, target):
         """Rename this file/directory to the given target."""
@@ -851,7 +927,11 @@ class Path(PurePath):
         try:
             out = _SpPath()
             while _lib.sp_iterdir_next_wrap(byref(it), byref(out)):
-                yield self._from_sp(out)
+                child = self._from_sp(out)
+                info = _SpPathInfo()
+                _lib.sp_iterdir_info_wrap(byref(it), byref(info))
+                child._info = _PathInfo(child, info)
+                yield child
             _check(_lib.sp_iterdir_error_wrap(byref(it)), self)
         finally:
             _lib.sp_iterdir_end_wrap(byref(it))
@@ -889,9 +969,20 @@ class WindowsPath(Path, PureWindowsPath):
     __slots__ = ()
 
 
+# pathlib's protocols (pathlib.types, Python 3.14 on) and its documentation of each method, from the host's pathlib
+try:
+    from pathlib import types
+except ImportError:
+    types = None
+for _ours, _theirs in [(PurePath, pathlib.PurePath), (Path, pathlib.Path)]:
+    for _name, _attr in vars(_ours).items():
+        _doc = getattr(getattr(_theirs, _name, None), '__doc__', None)
+        if _name[0] != '_' and _doc is not None:
+            getattr(_attr, '__func__', _attr).__doc__ = _doc
+
 __all__ = [
     'PurePath', 'PurePosixPath', 'PureWindowsPath',
-    'Path', 'PosixPath', 'WindowsPath', 'UnsupportedOperation',
+    'Path', 'PosixPath', 'WindowsPath', 'UnsupportedOperation', 'types',
 ]
 
 
@@ -1210,6 +1301,18 @@ def check_fs(limit=20):
                             lambda: sorted((str(d), sorted(ds), sorted(fs))
                                            for d, ds, fs in real.walk(top_down, follow_symlinks=follow)))
 
+        # Path.info: a fresh one per path, and each listed entry's, which answers from the listing as os.scandir does
+        info_questions = [("exists", True), ("exists", False), ("is_dir", True), ("is_dir", False), ("is_file", True),
+                          ("is_file", False), ("is_symlink", None)]
+        def answers(info):
+            return [getattr(info, q)() if follow is None else getattr(info, q)(follow_symlinks=follow)
+                    for q, follow in info_questions]
+        for name in entries:
+            compare(f"{name!r}.info", lambda: answers(Path(root, name).info),
+                    lambda: answers(pathlib.Path(root, name).info))
+            compare(f"{name!r}.iterdir() infos", lambda: sorted((p.name, answers(p.info)) for p in Path(root, name).iterdir()),
+                    lambda: sorted((p.name, answers(p.info)) for p in pathlib.Path(root, name).iterdir()))
+
         # Actions, judged by what CPython's os.stat sees afterwards, against pathlib doing the same
         for name in ["f.txt", "d"]:
             ours_copy = Path(root, name).copy(Path(root, f"copy-ours-{name}"), preserve_metadata=True)
@@ -1217,6 +1320,22 @@ def check_fs(limit=20):
             for field in ["st_mode", "st_size", "st_mtime_ns"]:
                 compare(f"{name!r}.copy(preserve_metadata=True) then os.stat().{field}",
                         lambda: getattr(os.stat(ours_copy), field), lambda: getattr(os.stat(real_copy), field))
+        # Path._delete, step by step on twin trees, each with a link out to d that must not be followed
+        def tree_snapshot(side):
+            top = os.path.join(root, f"tree-{side}")
+            walked = sorted((os.path.relpath(d, top), sorted(ds), sorted(fs)) for d, ds, fs in os.walk(top))
+            return os.path.lexists(top), walked, sorted(os.listdir(os.path.join(root, "d")))
+        for side in ["ours", "real"]:
+            tree = pathlib.Path(root, f"tree-{side}")
+            (tree / "a" / "b").mkdir(parents=True)
+            (tree / "a" / "b" / "leaf").write_bytes(b"x")
+            try:
+                (tree / "a" / "out").symlink_to(pathlib.Path(root, "d"), target_is_directory=True)
+            except OSError:
+                pass  # Windows without the privilege to make symlinks
+        for step in ["a/b/leaf", "a", "", ""]:
+            compare(f"tree/{step}._delete()", lambda: (Path(root, "tree-ours", step)._delete(), tree_snapshot("ours")),
+                    lambda: (pathlib.Path(root, "tree-real", step)._delete(), tree_snapshot("real")))
         Path(root, "twin-ours").chmod(0o640)
         pathlib.Path(root, "twin-real").chmod(0o640)
         compare("chmod(0o640) then os.stat().st_mode", lambda: os.stat(Path(root, "twin-ours")).st_mode,
@@ -1241,48 +1360,18 @@ CLASS_TIMEOUT = 600  # seconds a test class may run before its worker dumps trac
 
 # Tests expected to fail with specific error messages
 # Format: {expected_error_substring: [(class_name, test_name), ...]}
-# These exercise Python-only pathlib machinery with no C counterpart. Both flavors are listed where the host
-# decides the flavor (PurePath, Path); the other flavor's tests are skipped, which counts as not passing.
-_PURE = ["PurePathTest", "PurePosixPathTest", "PureWindowsPathTest", "PurePathSubclassTest"]
+# Every pathlib feature passes, Python-only machinery included (pickling, warnings, docstrings, private hooks); these
+# check which Python functions CPython's own implementation calls. Both flavors are listed where the host decides the
+# flavor (Path); the other flavor's tests are skipped, which counts as not passing.
 _PATH = ["PathTest", "PathSubclassTest", "PosixPathTest", "WindowsPathTest"]
 EXPECTED_FAILURES = {
-    # PurePath.as_uri() is deprecated in favor of Path.as_uri() - a warnings.warn() about Python classes
-    "DeprecationWarning not triggered": [
-        (cls, test) for cls in ["PurePathTest", "PurePosixPathTest", "PurePathSubclassTest"]
-        for test in ["test_as_uri_posix", "test_as_uri_non_ascii", "test_as_uri_windows"]
-    ] + [("PureWindowsPathTest", "test_as_uri_windows")],
-
-    # Private CPython hooks: _parse_path (parser internals) and _delete (shutil.rmtree wrapper)
-    "has no attribute '_parse_path'": [
-        (cls, test) for cls in _PURE + _PATH
-        for test in ["test_parse_path_common", "test_parse_path_posix", "test_parse_path_windows"]
-    ],
-    "has no attribute '_delete'": [
-        (cls, f"test_delete_{what}") for cls in _PATH
-        for what in ["dir", "file", "missing", "on_named_pipe", "does_not_choke_on_failing_lstat",
-                     "inner_junction", "outer_junction", "symlink", "inner_symlink", "unwritable"]
-    ],
-
-    # Path.info (a caching PathInfo object) and pathlib.types protocols
-    "has no attribute 'info'": [
-        (cls, test) for cls in _PATH
-        for test in ["test_info_exists_caching", "test_info_is_dir_caching", "test_info_is_file_caching",
-                     "test_info_is_symlink_caching", "test_glob_posix"]
-    ],
-    "has no attribute 'types'": [(cls, "test_matches_writablepath_docstrings") for cls in _PATH],
-
-    # Pickling: C-backed objects with __slots__, and the pathlib._local module path of 3.13 pickles
-    "cannot be pickled": [("PurePathSubclassTest", "test_pickling_common")],
-    "pathlib._local": [(cls, "test_unpicking_3_13") for cls in _PURE + _PATH],
-
-    # Mocks of Python functions the C library never calls: parser.isjunction, os.getcwd, fast-copy syscalls
+    # Mocks of Python functions inside CPython's implementation, which only a Python implementation could call:
+    # is_junction() through os.path.isjunction, and copy()'s fast paths (fcntl.ioctl's FICLONE and the like), patched
+    # to fail. On Windows copy has no such fast path and the test passes
     "MagicMock": [(cls, "test_is_junction_true") for cls in _PATH],
-    "!=": [(cls, test) for cls in _PATH for test in ["test_absolute_common", "test_absolute_windows"]],
-    # Only POSIX has the patched fast-copy functions; on Windows the test passes
     "FileNotFoundError not raised": [
         (cls, "test_copy_error_handling") for cls in ["PathTest", "PathSubclassTest", "PosixPathTest"] if os.name != 'nt'
     ],
-
 }
 
 # Build reverse lookup: (class_name, test_name) -> expected_error_substring
@@ -1340,7 +1429,11 @@ def setup_pathlib_patch(testfn=None):
     pathlib_pkg.PosixPath = PosixPath
     pathlib_pkg.WindowsPath = WindowsPath
     pathlib_pkg.UnsupportedOperation = UnsupportedOperation
+    pathlib_pkg.types = globals()['types']  # this module's, which the stdlib types imported above hides
     sys.modules['pathlib'] = pathlib_pkg
+    # Where Python 3.13 pickled pathlib's classes from (CPython keeps pathlib._local for them)
+    pathlib_pkg._local = pathlib_pkg
+    sys.modules['pathlib._local'] = pathlib_pkg
 
     # Stub test.support
     test_pkg = _stub_module('test')
@@ -1438,7 +1531,12 @@ def setup_pathlib_patch(testfn=None):
     os_helper.skip_unless_xattr = unittest.skip("xattr not available")
     os_helper.skip_unless_working_chmod = unittest.skipUnless(have_chmod, "chmod does not work here")
     os_helper.skip_unless_symlink = unittest.skipUnless(have_symlink, "symlinks do not work here")
-    os_helper.skip_if_dac_override = lambda f: f
+    def dac_override(target, link):
+        """Like CPython's os_helper.can_dac_override: a read-only file opens for writing (root's privilege)"""
+        os.chmod(target, 0o400)
+        open(target, 'w').close()
+    have_dac_override = probe(touch_then(dac_override))
+    os_helper.skip_if_dac_override = unittest.skipIf(have_dac_override, "permissions don't bind this user")
     os_helper.skip_unless_hardlink = unittest.skipUnless(have_hardlink, "hard links do not work here")
     os_helper._longpath = lambda path: path
 
