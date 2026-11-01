@@ -3167,6 +3167,10 @@ static bool sp_priv_part_is(SpStr part, const char *s) {
     return part.len == strlen(s) && memcmp(part.data, s, part.len) == 0;
 }
 
+static bool sp_priv_glob_wildcard(SpStr part) {
+    return memchr(part.data, '*', part.len) || memchr(part.data, '?', part.len) || memchr(part.data, '[', part.len);
+}
+
 /* A frame deeper than SP_GLOB_MAX_DEPTH stops the glob with SP_ERR_LIMIT */
 static void sp_priv_glob_push(SpGlobIter *it, size_t from, size_t to, size_t root_len) {
     if (it->depth + 1 >= SP_GLOB_MAX_DEPTH) {
@@ -3191,15 +3195,18 @@ static bool sp_priv_glob_select(SpGlobIter *it, size_t seg, bool exists, bool tr
         bool special = part.len == 0 || sp_priv_part_is(part, ".."); /* a trailing separator's, or ".." */
         bool walk = sp_priv_part_is(part, "**");
         bool only_walks = walk;
-        bool wildcard =
-            memchr(part.data, '*', part.len) || memchr(part.data, '?', part.len) || memchr(part.data, '[', part.len);
+        bool wildcard = sp_priv_glob_wildcard(part);
 
         if (walk || (!special && (it->priv_.case_pedantic || wildcard))) {
-            /* Group recursive selectors to avoid duplicate visits when following symlinks. */
+            /* Group recursive selectors to avoid duplicate visits when following symlinks. Not following them, the
+             * walk takes only more "**" and a last part it would list anyway (a wildcard, or with explicit case):
+             * a part with more after it may name a link to a directory the walk doesn't enter */
             while (walk && end < it->priv_.pattern_len) {
                 SpStr next = sp_priv_glob_part(it, end + 1);
+                bool listed_last = end + 1 + next.len == it->priv_.pattern_len &&
+                                   (it->priv_.case_pedantic || sp_priv_glob_wildcard(next));
                 if (next.len == 0 || sp_priv_part_is(next, "..") ||
-                    (!it->priv_.recurse_symlinks && !sp_priv_part_is(next, "**")))
+                    (!it->priv_.recurse_symlinks && !sp_priv_part_is(next, "**") && !listed_last))
                     break;
                 only_walks = only_walks && sp_priv_part_is(next, "**");
                 end += 1 + next.len;

@@ -1290,9 +1290,10 @@ def check_fs(limit=20):
             compare(f"{name!r}.samefile(f.txt)", lambda: ours.samefile(Path(root, "f.txt")),
                     lambda: real.samefile(pathlib.Path(root, "f.txt")))
             compare(f"{name!r}.iterdir()", lambda: sorted(ours.iterdir()), lambda: sorted(real.iterdir()))
-            for pattern in ["*", "**/*", "*/*.py"]:
-                compare(f"{name!r}.glob({pattern!r})", lambda: sorted(ours.glob(pattern)),
-                        lambda: sorted(real.glob(pattern)))
+            for pattern in ["*", "**/*", "*/*.py", "**/*.py", "**/e/*", "**/h.txt", "**/*/", "**/H.TXT", "**/*.PY"]:
+                for options in [{}, {"case_sensitive": False}, {"recurse_symlinks": True}]:
+                    compare(f"{name!r}.glob({pattern!r}, **{options})", lambda: sorted(ours.glob(pattern, **options)),
+                            lambda: sorted(real.glob(pattern, **options)))
             for top_down in (True, False):
                 for follow in (True, False):
                     compare(f"{name!r}.walk(top_down={top_down}, follow_symlinks={follow})",
