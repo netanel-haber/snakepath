@@ -1018,7 +1018,6 @@ typedef struct {
 } BuildConfig;
 
 static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
-    bool no_nrvo = getenv("SNAKEPATH_NO_NRVO") != NULL;
     switch (compiler) {
     case COMPILER_GCC:
         nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS, GCC_WARNINGS, GCC_C_WARNINGS);
@@ -1026,7 +1025,6 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     case COMPILER_CLANG:
         nob_cmd_append(cmd, BASE_WARNINGS, C_ONLY_WARNINGS);
         nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_C_EXCLUSIONS);
-        if (no_nrvo) nob_cmd_append(cmd, "-Wno-nrvo");
         break;
     case COMPILER_GPP:
         nob_cmd_append(cmd, BASE_WARNINGS, GCC_WARNINGS);
@@ -1034,7 +1032,6 @@ static void append_warnings(Nob_Cmd *cmd, Compiler compiler) {
     case COMPILER_CLANGPP:
         nob_cmd_append(cmd, BASE_WARNINGS);
         nob_cmd_append(cmd, CLANG_EVERYTHING, CLANG_CPP_EXCLUSIONS);
-        if (no_nrvo) nob_cmd_append(cmd, "-Wno-nrvo");
         break;
 #ifdef _WIN32
     case COMPILER_MSVC:

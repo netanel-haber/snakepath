@@ -80,6 +80,7 @@ SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
 SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
 SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
 SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
+SP_EXPORT size_t sp_sizeof_path_info(void) { return sizeof(SpPathInfo); }
 SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
 
 /* Making and converting paths */
@@ -169,9 +170,12 @@ SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int
     return sp_mkdir(p, mode, options);
 }
 SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) { return sp_touch(p, mode, exist_ok != 0); }
-SP_EXPORT int sp_remove_wrap(const SpPath *p, int dir, int missing_ok) {
-    SpRemoveOptions options = {dir != 0, missing_ok != 0};
+SP_EXPORT int sp_remove_wrap(const SpPath *p, int dir, int missing_ok, int recursive) {
+    SpRemoveOptions options = {dir != 0, missing_ok != 0, recursive != 0};
     return sp_remove(p, options);
+}
+SP_EXPORT int sp_info_wrap(const SpPath *p, SpPathInfo *info, int type, int follow_symlinks) {
+    return sp_info(p, info, (SpFileType)type, follow_symlinks != 0) ? 1 : 0;
 }
 SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode, int follow_symlinks) {
     return sp_chmod(p, mode, follow_symlinks != 0);
@@ -192,6 +196,7 @@ SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) { *out
 SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) { return sp_iterdir_next(it, out) ? 1 : 0; }
 SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) { sp_iterdir_end(it); }
 SP_EXPORT int sp_iterdir_error_wrap(const SpIterdirIter *it) { return it->error; }
+SP_EXPORT void sp_iterdir_info_wrap(const SpIterdirIter *it, SpPathInfo *out) { *out = it->info; }
 SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int recursive, int recurse_symlinks, int cs,
                                   SpGlobIter *out) {
     SpGlobOptions options = {recursive != 0, recurse_symlinks != 0, (SpCaseSensitivity)cs};
@@ -555,6 +560,13 @@ static inline SpMkdirOptions mkdir_opts(bool parents, bool exist_ok, unsigned in
 static inline SpRemoveOptions remove_opts(bool dir, bool missing_ok) {
     SpRemoveOptions o = SP_PRIV_ZERO;
     o.dir = dir;
+    o.missing_ok = missing_ok;
+    return o;
+}
+
+static inline SpRemoveOptions recursive_opts(bool missing_ok) {
+    SpRemoveOptions o = SP_PRIV_ZERO;
+    o.recursive = true;
     o.missing_ok = missing_ok;
     return o;
 }
@@ -999,6 +1011,15 @@ static void test_fluent_filesystem(void) {
 
     /* Non-existent directory should return false */
     ASSERT(SPF("/nonexistent/dir")->is(SP_DIR, true) == false);
+
+    /* ============ info (fluent terminator) ============ */
+    {
+        SpPathInfo info = SP_PRIV_ZERO;
+        ASSERT(SPF(__FILE__)->info(&info, SP_FILE, true) == true);
+        ASSERT(SPF(__FILE__)->info(&info, SP_DIR, true) == false);
+        SpPathInfo missing = SP_PRIV_ZERO;
+        ASSERT(SPF("/nonexistent/file.txt")->info(&missing, SP_ANY, false) == false);
+    }
 
     /* ============ exists (fluent) ============ */
 
@@ -2341,6 +2362,82 @@ int main(void) {
     }
     ASSERT(iterdir_count == 3);
 
+    /* Path.info of each entry: the listing's own answers, as os.scandir's DirEntry gives them */
+    {
+        int files = 0;
+        int dirs = 0;
+        idit = sp_iterdir_begin(&iterdir_base);
+        while (sp_iterdir_next(&idit, &entry)) {
+            SpPathInfo info = idit.info;
+            bool is_dir = sp_info(&entry, &info, SP_DIR, true);
+            ASSERT(is_dir == sp_is(&entry, SP_DIR, true));
+            ASSERT(sp_info(&entry, &info, SP_DIR, false) == is_dir);
+            ASSERT(sp_info(&entry, &info, SP_FILE, true) == !is_dir);
+            ASSERT(sp_info(&entry, &info, SP_ANY, true) && sp_info(&entry, &info, SP_ANY, false));
+            ASSERT(!sp_info(&entry, &info, SP_SYMLINK, false));
+            files += is_dir ? 0 : 1;
+            dirs += is_dir ? 1 : 0;
+        }
+        sp_iterdir_end(&idit);
+        ASSERT(files == 2 && dirs == 1);
+
+        /* The listing answered: a file removed after it was listed is still a file to its info */
+        idit = sp_iterdir_begin(&iterdir_base);
+        SpPath listed;
+        SpPathInfo listed_info = SP_PRIV_ZERO;
+        bool found = false;
+        while (sp_iterdir_next(&idit, &entry)) {
+            SpTerm name = sp_name(&entry);
+            if (strcmp(name.buf, "file2.txt") == 0) {
+                listed = entry;
+                listed_info = idit.info;
+                found = true;
+            }
+        }
+        sp_iterdir_end(&idit);
+        ASSERT(found);
+        remove(iterdir_f2);
+        ASSERT(sp_info(&listed, &listed_info, SP_FILE, true) && sp_info(&listed, &listed_info, SP_ANY, false));
+        SpPathInfo fresh = SP_PRIV_ZERO;
+        ASSERT(!sp_info(&listed, &fresh, SP_ANY, true));
+
+        /* A path's own info asks once: what it found stays, and a new info asks again */
+        SpPath later = sp_join_one(&iterdir_base, "later.txt");
+        SpPathInfo later_info = SP_PRIV_ZERO;
+        ASSERT(!sp_info(&later, &later_info, SP_ANY, true) && !sp_info(&later, &later_info, SP_FILE, false));
+        ASSERT(!sp_info(&later, &later_info, SP_SYMLINK, false));
+        FILE *made = fopen(sp_str(&later), "w");
+        if (made)
+            fclose(made);
+        ASSERT(!sp_info(&later, &later_info, SP_ANY, true) && !sp_info(&later, &later_info, SP_FILE, true));
+        ASSERT(!sp_info(&later, &later_info, SP_ANY, false));
+        SpPathInfo later_fresh = SP_PRIV_ZERO;
+        ASSERT(sp_info(&later, &later_fresh, SP_FILE, true) && !sp_info(&later, &later_fresh, SP_DIR, true));
+        remove(sp_str(&later));
+
+#ifndef SP_WINDOWS
+        /* A link: itself without following, its target's type following */
+        SpPath dir_link = sp_join_one(&iterdir_base, "dir_link");
+        SpPath subdir_name = sp_path_f("subdir", SP_FLAVOR_NATIVE);
+        ASSERT(sp_link_to(&dir_link, &subdir_name, link_opts(false, true)) == SP_OK);
+        idit = sp_iterdir_begin(&iterdir_base);
+        int links = 0;
+        while (sp_iterdir_next(&idit, &entry)) {
+            SpPathInfo info = idit.info;
+            if (!sp_info(&entry, &info, SP_SYMLINK, false))
+                continue;
+            links++;
+            ASSERT(sp_info(&entry, &info, SP_DIR, true) && !sp_info(&entry, &info, SP_DIR, false));
+            ASSERT(!sp_info(&entry, &info, SP_FILE, false) && sp_info(&entry, &info, SP_ANY, false));
+        }
+        sp_iterdir_end(&idit);
+        ASSERT(links == 1);
+        SpPathInfo link_info = SP_PRIV_ZERO;
+        ASSERT(sp_info(&dir_link, &link_info, SP_SYMLINK, false) && sp_info(&dir_link, &link_info, SP_DIR, true));
+        ASSERT(sp_remove(&dir_link, remove_opts(false, false)) == SP_OK);
+#endif
+    }
+
     /* Cleanup */
     remove(iterdir_f1);
     remove(iterdir_f2);
@@ -2418,6 +2515,54 @@ int main(void) {
 
     printf("  walk tests OK\n");
 
+    /* Path._delete: sp_remove with recursive */
+    printf("\nrecursive remove Tests:\n");
+    {
+        char tree_path[128];
+        char outside_path[128];
+        snprintf(tree_path, sizeof(tree_path), "./test_delete_%ld", pid);
+        snprintf(outside_path, sizeof(outside_path), "./test_delete_outside_%ld", pid);
+        SpPath tree = sp_path_f(tree_path, SP_FLAVOR_NATIVE);
+        SpPath inner = sp_join_one(&tree, "a");
+        inner = sp_join_one(&inner, "b");
+        SpPath outside = sp_path_f(outside_path, SP_FLAVOR_NATIVE);
+        outside = sp_join_one(&outside, "kept.txt");
+        SpPath outside_dir = sp_parent(&outside);
+        ASSERT(sp_mkdir(&inner, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_mkdir(&outside_dir, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        SpPath leaf = sp_join_one(&inner, "leaf.txt");
+        ASSERT(sp_write_file(&leaf, "x", 1).error == SP_OK);
+        ASSERT(sp_write_file(&outside, "y", 1).error == SP_OK);
+        SpPath top_file = sp_join_one(&tree, "top.txt");
+        ASSERT(sp_write_file(&top_file, "z", 1).error == SP_OK);
+#ifndef SP_WINDOWS
+        /* Links inside are removed, not followed */
+        SpPath inner_link = sp_join_one(&inner, "out");
+        SpPath outside_abs = sp_absolute(&outside_dir);
+        ASSERT(sp_link_to(&inner_link, &outside_abs, link_opts(false, true)) == SP_OK);
+#endif
+
+        /* A file, the tree, then nothing left */
+        ASSERT(sp_remove(&top_file, recursive_opts(false)) == SP_OK);
+        ASSERT(!sp_is(&top_file, SP_ANY, false));
+        ASSERT(sp_remove(&tree, recursive_opts(false)) == SP_OK);
+        ASSERT(!sp_is(&tree, SP_ANY, false));
+        ASSERT(sp_is(&outside, SP_FILE, true));
+        ASSERT(sp_remove(&tree, recursive_opts(false)) == SP_ERR_NOT_FOUND);
+        ASSERT(sp_remove(&tree, recursive_opts(true)) == SP_OK);
+
+#ifndef SP_WINDOWS
+        /* A link to a directory is unlinked, its target kept */
+        SpPath dir_link = sp_path_f(tree_path, SP_FLAVOR_NATIVE);
+        ASSERT(sp_link_to(&dir_link, &outside_abs, link_opts(false, true)) == SP_OK);
+        ASSERT(sp_remove(&dir_link, recursive_opts(false)) == SP_OK);
+        ASSERT(!sp_is(&dir_link, SP_ANY, false) && sp_is(&outside, SP_FILE, true));
+#endif
+        ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
+        ASSERT(!sp_is(&outside_dir, SP_ANY, false));
+    }
+    printf("  recursive remove tests OK\n");
+
     test_errors(pid);
 
     /* ============ Struct Size Tests ============ */
@@ -2429,6 +2574,7 @@ int main(void) {
     printf("  SpGlobIter:      %4zu bytes\n", sizeof(SpGlobIter));
     printf("  SpParentsIter:   %4zu bytes\n", sizeof(SpParentsIter));
     printf("  SpIterdirIter:   %4zu bytes\n", sizeof(SpIterdirIter));
+    printf("  SpPathInfo:      %4zu bytes\n", sizeof(SpPathInfo));
     printf("  SpPartsIter:     %4zu bytes\n", sizeof(SpPartsIter));
     printf("  SpSuffixes:      %4zu bytes\n", sizeof(SpSuffixes));
     printf("  SpStatResult:    %4zu bytes\n", sizeof(SpStatResult));
@@ -2448,7 +2594,8 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpParentsIter), 16);
     ASSERT_SIZE(sizeof(SpSuffixes), 272);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
-    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 24);
+    ASSERT_SIZE(sizeof(SpPathInfo), 8);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 32);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
     ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
     ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * 24);
