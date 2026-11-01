@@ -103,3 +103,34 @@ jobs:
 
       - name: Differential check against the base branch
         run: .\nob.exe diff origin/${{ github.base_ref }}
+
+  # The site as GitHub Pages builds it, screenshotted at 1920x1080 for the maintainer to look at before merging. The
+  # fonts are the Ubuntu runner's, not a Mac's.
+  site-screenshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build the site with GitHub Pages' builder
+        uses: actions/jekyll-build-pages@v1
+
+      - name: Screenshot the site at 1920x1080
+        run: >
+          google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --window-size=1920,1080
+          --screenshot="$PWD/site-1920x1080.png" "file://$PWD/_site/index.html"
+
+      - name: Upload the screenshot
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: site-1920x1080.png
+          archive: false
+
+      - name: Link the screenshot from the job summary
+        run: echo "[Site at 1920x1080]($URL)" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          URL: ${{ steps.upload.outputs.artifact-url }}
