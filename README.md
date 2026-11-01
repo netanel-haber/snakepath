@@ -377,6 +377,16 @@ int main(void) {
     SP_ITERDIR_FOREACH(&tmpdir, entry)
         printf("  iterdir: %s\n", sp_str(&entry));
 
+    /* .info https://docs.python.org/3/library/pathlib.html#pathlib.Path.info
+     * exists, is_dir, is_file and is_symlink, each of stat and lstat asked at most once; a listed entry's info starts
+     * with what the listing said, as os.scandir's does, so these ask the OS nothing */
+    SpIterdirIter listing = sp_iterdir_begin(&tmpdir);
+    for (SpPath entry; sp_iterdir_next(&listing, &entry);) {
+        SpPathInfo info = listing.info;
+        printf("  info:    %s is_dir=%d\n", sp_str(&entry), sp_info(&entry, &info, SP_DIR, true));
+    }
+    sp_iterdir_end(&listing);
+
     /* .glob https://docs.python.org/3/library/pathlib.html#pathlib.Path.glob */
     SP_GLOB_FOREACH(&tmpdir, "*.txt", (SpGlobOptions){0}, match)
         printf("  glob:    %s\n", sp_str(&match));
@@ -414,15 +424,14 @@ int main(void) {
     tmp = SPF("/")->with_name("x")->join("more")->path();
     printf("  (fluent) %s\n", sp_error_str(tmp.error));
 
-    /* .unlink and .rmdir are sp_remove, with .missing_ok and .dir */
+    /* .unlink and .rmdir are sp_remove, with .missing_ok and .dir; .recursive removes a tree (Path._delete) */
     SpRemoveOptions file = {0};
     SpRemoveOptions dir = {.dir = true};
     check("unlink:", sp_remove(&link, file));
     check("unlink:", sp_remove(&copied, file));
     check("unlink:", sp_remove(&renamed, file));
     check("rmdir:", sp_remove(&tmpdir, dir)); /* not empty yet */
-    check("rmdir:", sp_remove(&subdir, dir));
-    check("rmdir:", sp_remove(&tmpdir, dir));
+    check("delete:", sp_remove(&tmpdir, (SpRemoveOptions){.recursive = true}));
 
     return 0;
 }
