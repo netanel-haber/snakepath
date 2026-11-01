@@ -49,38 +49,25 @@ Good: extract helpers, delegate to primitives, early return, remove dead code.
 Bad: shorten names, define convenience macros, remove whitespace/braces, add macro layers that only reduce LOC before preprocessing.
 Rule: semantic compression must compress the expanded code too. If `cc -E -P` turns the "cleanup" back into the same amount of code, more code, or harder-to-follow code, it is not a cleanup.
 
+## Skills
+
+Use the maintainer's skills from https://github.com/netanel-haber/skills (the maintainer, 2026-11-01), with this file's rules on top where they are stricter:
+- `coding-comms` for every text about code: commit and PR messages, review replies, issues, comments, docstrings, AGENTS.md entries.
+- `sem-compress` for `/sem-compress` (below).
+
 ## Pseudo Commands
 
 ### `/sem-compress [path] [optional goal]`
 
-Meaning: do a cleanup-only pass focused on semantic compression for the target file or section.
-
-Scope: `snakepath.h` only unless the maintainer names other files. Touch `snakepath.py`, `test.c` or other files only where a header change forces it, and list other ideas in the report instead of doing them.
-
-Required behavior:
-- Do not do whitespace-only cleanup, naming cleanup, brace cleanup, or cosmetic churn.
-- Remove repetition, dead wrappers, duplicated control flow, and low-value helper layers.
-- Treat source LOC reduction as a side effect, not the goal.
-- Judge macro refactors by the expanded code. If `cc -E -P` shows the same boilerplate or more indirection, reject the refactor.
-- Keep public API sections concrete when possible. Prefer small implementation-local helpers over public macro inventories.
-- Stop when the next change would save lines only by hiding code structure, adding slot-order coupling, or making the expanded code harder to follow.
-- Never make the library even slightly worse to save lines: a change that needs a trick whose correctness takes a proof, an argument or flag that only one caller needs, coupling to another function's incidental behavior, more stack or frames, a C-runtime side effect, or a macro that does more than name something stays out, whatever it saves (examples under Learnings).
+The `sem-compress` skill, with snakepath's rules:
+- Scope: `snakepath.h` only unless the maintainer names other files. Touch `snakepath.py`, `test.c` or other files only where a header change forces it, and list other ideas in the report instead of doing them.
+- Read `README.md` and `snakepath.h` in full before editing. The expanded form a refactor is judged by is `cc -E -P` of the touched region.
+- Keep public API sections concrete. Prefer small implementation-local helpers over public macro inventories, and stop at changes that add slot-order coupling.
+- "Never make the library even slightly worse" includes more stack or frames (the checks below) and C-runtime side effects (examples under Learnings).
 - Ship a change only if it alone is net −60 lines or more (post format). When the maintainer asks for the small things, bundle real simplifications (each a removed layer or dead branch, never cosmetic) into one PR, and say plainly that no single item clears −60.
-
-Required workflow:
-1. Read `README.md` and `snakepath.h` in full before editing, then read the target in full.
-2. Identify the largest repeated or wrapper-heavy regions.
-3. If macros are involved, inspect the preprocessed view of the touched region.
-4. Make only the changes that are simpler in both source and expanded form.
-5. When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with `./nob diff` (default base `origin/main`). It builds `test.c` as the `SP_DIFF` driver against both headers, which prints every public result per input over exhaustive short strings over `/\ac:.?U`, token sequences (`\\?\UNC\` and `\\.\` prefixes, drives, case-folding pairs, which random generation never hits) and random strings, in both flavors and at `SP_PATH_MAX` 64 and 16. nob splits each set into 16 parts, runs one driver per core, compares the outputs while the drivers write them and prints each set's first difference as soon as both sides have it (the input and the labeled results that differ), then how many lines differ; the base side's drivers and outputs are cached in `diff_base/` while the base header, `test.c` and the build commands stay the same, so a repeat run only builds and runs the working tree's side. CI runs the same check against the PR's base on Linux and Windows (`diff-linux`, `diff-windows`), the only differential coverage of Windows-only pure logic such as `collapse_dots`: read its report. An intentional behavior change differs by design, so the job is informational and never blocks a merge. The check must stay fast enough to run locally whenever it helps: the maintainer asked for about 30 seconds on their phone and accepted the speed of 2026-09-27 (a repeat run about 10 s with Termux in the foreground, where it gets all 8 cores, and about 40 s in the background, where Android gives it 3), and it reports the first differences as soon as it finds them, so a broken change is fixed while the rest still runs. When it gets slower, profile the driver and make the library (or the driver's glue) faster rather than running it less.
-6. Run `./nob format`, then verify with `nob`.
-7. If a failure may be local-environment noise, baseline against clean `main` with `./nob clean` before calling it a regression.
-
-Required final report:
-- Net LOC delta for the target file, post format.
-- The `./nob diff` result, locally and from CI's `diff-windows` job.
-- Which changes survived and why they are simpler.
-- Which tempting changes were rejected because they only compressed source text, not expanded code.
+- When a change rewrites pure path logic (parsing, normalizing, joining, matching), prove it behaves identically with `./nob diff` (default base `origin/main`). It builds `test.c` as the `SP_DIFF` driver against both headers, which prints every public result per input over exhaustive short strings over `/\ac:.?U`, token sequences (`\\?\UNC\` and `\\.\` prefixes, drives, case-folding pairs, which random generation never hits) and random strings, in both flavors and at `SP_PATH_MAX` 64 and 16. nob splits each set into 16 parts, runs one driver per core, compares the outputs while the drivers write them and prints each set's first difference as soon as both sides have it (the input and the labeled results that differ), then how many lines differ; the base side's drivers and outputs are cached in `diff_base/` while the base header, `test.c` and the build commands stay the same, so a repeat run only builds and runs the working tree's side. CI runs the same check against the PR's base on Linux and Windows (`diff-linux`, `diff-windows`), the only differential coverage of Windows-only pure logic such as `collapse_dots`: read its report. An intentional behavior change differs by design, so the job is informational and never blocks a merge. The check must stay fast enough to run locally whenever it helps: the maintainer asked for about 30 seconds on their phone and accepted the speed of 2026-09-27 (a repeat run about 10 s with Termux in the foreground, where it gets all 8 cores, and about 40 s in the background, where Android gives it 3), and it reports the first differences as soon as it finds them, so a broken change is fixed while the rest still runs. When it gets slower, profile the driver and make the library (or the driver's glue) faster rather than running it less.
+- Format with `./nob format`, then verify with `nob`. Baseline a possibly environmental failure against clean `main` with `./nob clean`.
+- The report adds the `./nob diff` result, locally and from CI's `diff-windows` job, to the skill's.
 
 ## Testing
 
