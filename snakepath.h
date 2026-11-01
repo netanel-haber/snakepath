@@ -562,6 +562,9 @@ typedef HANDLE SpPrivFile;
 #include <utime.h>  /* For utime() */
 #include <pwd.h>    /* For getpwuid, getpwnam */
 #include <grp.h>    /* For getgrgid */
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
@@ -2975,6 +2978,23 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
 #ifndef SP_WINDOWS
 /* The bytes of in, written to out */
 static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
+#ifdef __linux__
+    /* In the kernel, as CPython's copy does with sendfile (copy_file_range, which it tries first, is declared only for
+     * _GNU_SOURCE). A file sendfile can't take, before anything is sent, is read and written instead */
+    for (bool sent_any = false;;) {
+        ssize_t sent = sendfile(out, in, SP_PRIV_NULL, 0x40000000);
+        if (sent == 0)
+            return SP_OK;
+        if (sent < 0 && errno == EINTR)
+            continue;
+        if (sent < 0 && (sent_any || (errno != EINVAL && errno != ENOSYS)))
+            return sp_priv_last_error();
+        if (sent < 0)
+            break;
+        sent_any = true;
+    }
+#endif
+
     char buf[8192];
     size_t got;
     size_t wrote;
