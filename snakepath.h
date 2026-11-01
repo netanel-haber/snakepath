@@ -229,7 +229,8 @@ typedef struct {
 } SpParentsIter;
 
 /* Path.info (pathlib.types.PathInfo): what stat and lstat said of a path, each asked at most once. Zero knows nothing
- * yet; an entry of a listing starts with what the listing said (SpIterdirIter.info), as os.scandir's DirEntry does */
+ * yet; an entry of a listing starts with what the listing said (SpIterdirIter.info), as os.scandir's DirEntry does.
+ * Like CPython's, the answers are a snapshot that is never refreshed: sp_is and sp_stat ask the file system again */
 typedef struct {
     struct {
         unsigned int lstat; /* 0 unknown, 1 missing, else 2 | the mode's file type bits */
@@ -241,6 +242,7 @@ typedef struct {
     SpPath dir;
     SpError error;   /* why the listing ended early (or never started) */
     SpPathInfo info; /* of the entry sp_iterdir_next gave last */
+    SpStr name; /* that entry's name (DirEntry.name): the end of its path, NUL-terminated, valid while that path is */
     struct {
         void *handle;
         bool done;
@@ -3429,8 +3431,11 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (it->error != SP_OK || it->priv_.done)
         return false;
-    if (sp_priv_readdir_next(&it->priv_.handle, &it->dir, out, &it->info) > 0)
+    size_t n = sp_priv_readdir_next(&it->priv_.handle, &it->dir, out, &it->info);
+    if (n > 0) {
+        it->name = SP_PRIV_STR(out->buf + out->len - n, n);
         return true;
+    }
 
     it->priv_.done = true;
     it->error = out->error;

@@ -2362,6 +2362,15 @@ int main(void) {
     }
     ASSERT(iterdir_count == 3);
 
+    /* The entry's name (os.scandir's DirEntry.name): the end of the path just given, NUL-terminated */
+    idit = sp_iterdir_begin(&iterdir_base);
+    while (sp_iterdir_next(&idit, &entry)) {
+        SpTerm name = sp_name(&entry);
+        ASSERT(idit.name.len == name.len && memcmp(idit.name.data, name.buf, name.len) == 0);
+        ASSERT(idit.name.data == entry.buf + entry.len - idit.name.len && idit.name.data[idit.name.len] == '\0');
+    }
+    sp_iterdir_end(&idit);
+
     /* Path.info of each entry: the listing's own answers, as os.scandir's DirEntry gives them */
     {
         int files = 0;
@@ -2595,7 +2604,7 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpSuffixes), 272);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpPathInfo), 8);
-    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 32);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 48);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
     ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
     ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * 24);
