@@ -35,3 +35,6 @@ __pycache__/
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp
 test_fluent_symtgt_*.tmp
+/snakepath.egg-info/
+/build/
+/dist/

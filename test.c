@@ -3,7 +3,8 @@
  * the driver ./nob diff compares two versions of the header with. */
 #ifdef SP_PYTHON
 #define PY_SSIZE_T_CLEAN
-#include <Python.h> /* before any system header, as Python requires */
+#define Py_LIMITED_API 0x030C0000 /* the stable ABI from 3.12 on: one build for every later CPython (abi3) */
+#include <Python.h>               /* before any system header, as Python requires */
 #endif
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
@@ -28,12 +29,14 @@
 #ifdef SP_PYTHON
 
 /* The Python bindings' extension module, _snakepath: one function per library function snakepath.py calls, taking
- * and returning Python objects. A path is an immutable SpPath object holding exactly its text, plus its anchor, drive,
- * flavor and error (an error path is empty), rebuilt as an SpPath on the stack for each call. */
+ * and returning Python objects, through CPython's stable ABI. A path is an immutable SpPath object holding exactly its
+ * text, plus its anchor, drive, flavor and error (an error path is empty), rebuilt as an SpPath on the stack for each
+ * call. */
 #include <stddef.h>
 
 typedef struct {
-    PyObject_VAR_HEAD /* ob_size: the text's length */
+    PyObject_VAR_HEAD
+    size_t len;
     size_t anchor;
     size_t drive;
     int flavor;
@@ -43,11 +46,20 @@ typedef struct {
     char text[1];   /* NUL-terminated */
 } PyPath;
 
-static PyTypeObject PyPath_Type;
+static PyTypeObject *PyPath_Type;
+static PyTypeObject *PyWalk_Type;
+
+/* A heap type's object: freed by the type's own tp_free, and its reference to the type dropped */
+static void pyobject_free(PyObject *o) {
+    PyTypeObject *type = Py_TYPE(o);
+    freefunc free_object = (freefunc)PyType_GetSlot(type, Py_tp_free);
+    free_object(o);
+    Py_DECREF(type);
+}
 
 static void pypath_dealloc(PyObject *o) {
     Py_XDECREF(((PyPath *)o)->str);
-    Py_TYPE(o)->tp_free(o);
+    pyobject_free(o);
 }
 
 static PyMemberDef pypath_members[] = {
@@ -56,24 +68,23 @@ static PyMemberDef pypath_members[] = {
     {NULL, 0, 0, 0, NULL},
 };
 
-static PyTypeObject PyPath_Type = {
-    .ob_base = PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "_snakepath.SpPath",
-    .tp_basicsize = offsetof(PyPath, text) + 1,
-    .tp_itemsize = 1,
-    .tp_dealloc = pypath_dealloc,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_members = pypath_members,
+static PyType_Slot pypath_slots[] = {
+    {Py_tp_dealloc, (void *)pypath_dealloc},
+    {Py_tp_members, (void *)pypath_members},
+    {0, NULL},
 };
+
+static PyType_Spec pypath_spec = {"_snakepath.SpPath", (int)offsetof(PyPath, text) + 1, 1,
+                                  Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION, pypath_slots};
 
 /* The C path of a Python one, and back */
 static int load(PyObject *o, SpPath *p) {
-    if (!Py_IS_TYPE(o, &PyPath_Type)) {
+    if (Py_TYPE(o) != PyPath_Type) {
         PyErr_SetString(PyExc_TypeError, "expected a _snakepath.SpPath");
         return 0;
     }
     PyPath *pp = (PyPath *)o;
-    size_t len = (size_t)Py_SIZE(pp);
+    size_t len = pp->len;
     memcpy(p->buf, pp->text, len + 1);
     p->len = len;
     p->anchor = pp->anchor;
@@ -84,10 +95,10 @@ static int load(PyObject *o, SpPath *p) {
 }
 
 static PyObject *made(const SpPath *p) {
-    PyPath *o = PyObject_NewVar(PyPath, &PyPath_Type, (Py_ssize_t)p->len + 1);
+    PyPath *o = PyObject_NewVar(PyPath, PyPath_Type, (Py_ssize_t)p->len + 1);
     if (!o)
         return NULL;
-    Py_SET_SIZE(o, (Py_ssize_t)p->len);
+    o->len = p->len;
     memcpy(o->text, p->buf, p->len);
     o->text[p->len] = '\0';
     o->anchor = p->anchor;
@@ -103,7 +114,7 @@ static PyObject *made(const SpPath *p) {
 static const char *utf8(PyObject *s, Py_ssize_t *len, PyObject **keep) {
     *keep = NULL;
     if (!PyUnicode_Check(s)) {
-        PyErr_Format(PyExc_TypeError, "expected str, not %s", Py_TYPE(s)->tp_name);
+        PyErr_SetString(PyExc_TypeError, "expected str");
         return NULL;
     }
     const char *u = PyUnicode_AsUTF8AndSize(s, len);
@@ -113,8 +124,8 @@ static const char *utf8(PyObject *s, Py_ssize_t *len, PyObject **keep) {
     *keep = PyUnicode_AsEncodedString(s, "utf-8", "surrogatepass");
     if (!*keep)
         return NULL;
-    *len = PyBytes_GET_SIZE(*keep);
-    return PyBytes_AS_STRING(*keep);
+    *len = PyBytes_Size(*keep);
+    return PyBytes_AsString(*keep);
 }
 
 static PyObject *text(const char *s, size_t len) { return PyUnicode_DecodeUTF8(s, (Py_ssize_t)len, "surrogatepass"); }
@@ -156,11 +167,11 @@ static PyObject *py_convert(PyObject *m, PyObject *const *args, Py_ssize_t nargs
 
 static PyObject *py_str(PyObject *m, PyObject *o) {
     (void)m;
-    if (!Py_IS_TYPE(o, &PyPath_Type))
+    if (Py_TYPE(o) != PyPath_Type)
         return PyErr_Format(PyExc_TypeError, "expected a _snakepath.SpPath");
     PyPath *pp = (PyPath *)o;
     if (!pp->str)
-        pp->str = Py_SIZE(pp) == 0 ? PyUnicode_FromString(".") : text(pp->text, (size_t)Py_SIZE(pp));
+        pp->str = pp->len == 0 ? PyUnicode_FromString(".") : text(pp->text, pp->len);
     return Py_XNewRef(pp->str);
 }
 
@@ -283,10 +294,10 @@ static PyObject *py_join(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
 static PyObject *py_join_path(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
     (void)m;
     SpPath p;
-    if (!arity(nargs, 2, "join_path") || !load(args[0], &p) || !Py_IS_TYPE(args[1], &PyPath_Type))
+    if (!arity(nargs, 2, "join_path") || !load(args[0], &p) || Py_TYPE(args[1]) != PyPath_Type)
         return PyErr_Occurred() ? NULL : PyErr_Format(PyExc_TypeError, "expected a _snakepath.SpPath");
     PyPath *other = (PyPath *)args[1];
-    SpPath r = sp_join_n(&p, other->text, (size_t)Py_SIZE(other));
+    SpPath r = sp_join_n(&p, other->text, other->len);
     return made(&r);
 }
 
@@ -295,30 +306,33 @@ static PyObject *py_with_segments(PyObject *m, PyObject *const *args, Py_ssize_t
     SpPath p;
     if (!arity(nargs, 2, "with_segments") || !load(args[0], &p))
         return NULL;
-    PyObject *seq = PySequence_Fast(args[1], "segments must be a sequence");
-    if (!seq)
+    Py_ssize_t n = PySequence_Size(args[1]);
+    if (n < 0)
         return NULL;
-    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
     const char **parts = PyMem_Calloc((size_t)(n > 0 ? n : 1), sizeof(char *));
+    PyObject **items = PyMem_Calloc((size_t)(n > 0 ? n : 1), sizeof(PyObject *));
     PyObject **keeps = PyMem_Calloc((size_t)(n > 0 ? n : 1), sizeof(PyObject *));
     PyObject *result = NULL;
     Py_ssize_t i = 0;
-    for (; parts && keeps && i < n; i++) {
+    for (; parts && items && keeps && i < n; i++) {
         Py_ssize_t len;
-        if (!(parts[i] = utf8(PySequence_Fast_GET_ITEM(seq, i), &len, &keeps[i])))
+        items[i] = PySequence_GetItem(args[1], i);
+        if (!items[i] || !(parts[i] = utf8(items[i], &len, &keeps[i])))
             break;
     }
-    if (parts && keeps && i == n) {
+    if (parts && items && keeps && i == n) {
         SpPath r = sp_with_segments(&p, parts, (size_t)n);
         result = made(&r);
     } else if (!PyErr_Occurred()) {
         PyErr_NoMemory();
     }
-    for (Py_ssize_t k = 0; keeps && k < i; k++)
+    for (Py_ssize_t k = 0; items && keeps && k <= i && k < n; k++) {
+        Py_XDECREF(items[k]);
         Py_XDECREF(keeps[k]);
+    }
     PyMem_Free(parts);
+    PyMem_Free(items);
     PyMem_Free(keeps);
-    Py_DECREF(seq);
     return result;
 }
 
@@ -563,12 +577,17 @@ static PyObject *py_read_file(PyObject *m, PyObject *const *args, Py_ssize_t nar
     if (!bytes)
         return NULL;
     SpIOResult r;
-    char *buf = PyBytes_AS_STRING(bytes);
+    char *buf = PyBytes_AsString(bytes);
     Py_BEGIN_ALLOW_THREADS
     r = sp_read_file(&p, buf, (size_t)size);
     Py_END_ALLOW_THREADS
-    if (r.error == SP_OK && _PyBytes_Resize(&bytes, (Py_ssize_t)r.bytes) < 0)
-        return NULL;
+    if (r.error == SP_OK && (Py_ssize_t)r.bytes != PyBytes_Size(bytes)) {
+        PyObject *read = PyBytes_FromStringAndSize(buf, (Py_ssize_t)r.bytes); /* a shorter file than its size said */
+        Py_DECREF(bytes);
+        if (!read)
+            return NULL;
+        bytes = read;
+    }
     return Py_BuildValue("(Nin)", bytes, (int)r.error, (Py_ssize_t)r.bytes);
 }
 
@@ -590,11 +609,11 @@ static PyObject *py_write_file(PyObject *m, PyObject *const *args, Py_ssize_t na
 
 /* Path.info: an SpPathInfo in a bytearray */
 static SpPathInfo *info_of(PyObject *o) {
-    if (!PyByteArray_Check(o) || PyByteArray_GET_SIZE(o) != (Py_ssize_t)sizeof(SpPathInfo)) {
+    if (!PyByteArray_Check(o) || PyByteArray_Size(o) != (Py_ssize_t)sizeof(SpPathInfo)) {
         PyErr_SetString(PyExc_TypeError, "expected an SpPathInfo bytearray");
         return NULL;
     }
-    return (SpPathInfo *)(void *)PyByteArray_AS_STRING(o);
+    return (SpPathInfo *)(void *)PyByteArray_AsString(o);
 }
 
 static PyObject *info_new(const SpPathInfo *info) {
@@ -677,16 +696,16 @@ static void pywalk_dealloc(PyObject *o) {
     sp_walk_end(&w->it);
     PyMem_Free(w->buf);
     Py_XDECREF(w->keep);
-    Py_TYPE(o)->tp_free(o);
+    pyobject_free(o);
 }
 
-static PyTypeObject PyWalk_Type = {
-    .ob_base = PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "_snakepath.Walk",
-    .tp_basicsize = sizeof(PyWalk),
-    .tp_dealloc = pywalk_dealloc,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
+static PyType_Slot pywalk_slots[] = {
+    {Py_tp_dealloc, (void *)pywalk_dealloc},
+    {0, NULL},
 };
+
+static PyType_Spec pywalk_spec = {"_snakepath.Walk", (int)sizeof(PyWalk), 0,
+                                  Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION, pywalk_slots};
 
 static PyObject *py_walk(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
     (void)m;
@@ -694,7 +713,7 @@ static PyObject *py_walk(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
     if (!arity(nargs, 4, "walk") || !load(args[0], &p))
         return NULL;
     Py_ssize_t size = PyLong_AsSsize_t(args[3]);
-    PyWalk *w = PyObject_New(PyWalk, &PyWalk_Type);
+    PyWalk *w = PyObject_New(PyWalk, PyWalk_Type);
     if (!w)
         return NULL;
     w->buf = PyMem_Malloc((size_t)size);
@@ -715,7 +734,7 @@ static PyObject *names_list(char **names, size_t count) {
         if (!item)
             Py_CLEAR(list);
         else
-            PyList_SET_ITEM(list, (Py_ssize_t)i, item);
+            PyList_SetItem(list, (Py_ssize_t)i, item); /* takes item's reference */
     }
     return list;
 }
@@ -723,7 +742,7 @@ static PyObject *names_list(char **names, size_t count) {
 /* (dirpath, dirnames, filenames, error), or None at the end (with the walk's error left in walk_error) */
 static PyObject *py_walk_next(PyObject *m, PyObject *o) {
     (void)m;
-    if (!Py_IS_TYPE(o, &PyWalk_Type))
+    if (Py_TYPE(o) != PyWalk_Type)
         return PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
     SpWalkEntry *e = sp_walk_next(&((PyWalk *)o)->it);
     if (!e)
@@ -736,32 +755,30 @@ static PyObject *py_walk_next(PyObject *m, PyObject *o) {
  * so the arrays and the names live, in keep, until the walk ends */
 static PyObject *py_walk_prune(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
     (void)m;
-    if (!arity(nargs, 2, "walk_prune") || !Py_IS_TYPE(args[0], &PyWalk_Type))
+    if (!arity(nargs, 2, "walk_prune") || Py_TYPE(args[0]) != PyWalk_Type)
         return PyErr_Occurred() ? NULL : PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
     PyWalk *w = (PyWalk *)args[0];
-    PyObject *seq = PySequence_Fast(args[1], "dirnames must be a sequence");
-    if (!seq)
+    Py_ssize_t n = PySequence_Size(args[1]);
+    if (n < 0)
         return NULL;
-    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
     PyObject *array = PyBytes_FromStringAndSize(NULL, (n > 0 ? n : 1) * (Py_ssize_t)sizeof(char *));
     if (!array || PyList_Append(w->keep, array) < 0) {
         Py_XDECREF(array);
-        Py_DECREF(seq);
         return NULL;
     }
-    char **names = (char **)(void *)PyBytes_AS_STRING(array);
+    char **names = (char **)(void *)PyBytes_AsString(array);
     Py_DECREF(array);
     for (Py_ssize_t i = 0; i < n; i++) {
-        PyObject *encoded = PyUnicode_AsEncodedString(PySequence_Fast_GET_ITEM(seq, i), "utf-8", "surrogatepass");
+        PyObject *name = PySequence_GetItem(args[1], i);
+        PyObject *encoded = name ? PyUnicode_AsEncodedString(name, "utf-8", "surrogatepass") : NULL;
+        Py_XDECREF(name);
         if (!encoded || PyList_Append(w->keep, encoded) < 0) {
             Py_XDECREF(encoded);
-            Py_DECREF(seq);
             return NULL;
         }
-        names[i] = PyBytes_AS_STRING(encoded);
+        names[i] = PyBytes_AsString(encoded);
         Py_DECREF(encoded);
     }
-    Py_DECREF(seq);
     w->it.entry.dirnames = names;
     w->it.entry.dirname_count = (size_t)n;
     Py_RETURN_NONE;
@@ -769,7 +786,7 @@ static PyObject *py_walk_prune(PyObject *m, PyObject *const *args, Py_ssize_t na
 
 static PyObject *py_walk_end(PyObject *m, PyObject *o) {
     (void)m;
-    if (!Py_IS_TYPE(o, &PyWalk_Type))
+    if (Py_TYPE(o) != PyWalk_Type)
         return PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
     sp_walk_end(&((PyWalk *)o)->it);
     return PyLong_FromLong(((PyWalk *)o)->it.error);
@@ -797,7 +814,9 @@ static PyMethodDef methods[] = {
 static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, "_snakepath", NULL, -1, methods, NULL, NULL, NULL, NULL};
 
 PyMODINIT_FUNC PyInit__snakepath(void) {
-    if (PyType_Ready(&PyPath_Type) < 0 || PyType_Ready(&PyWalk_Type) < 0)
+    PyPath_Type = (PyTypeObject *)PyType_FromSpec(&pypath_spec);
+    PyWalk_Type = (PyTypeObject *)PyType_FromSpec(&pywalk_spec);
+    if (!PyPath_Type || !PyWalk_Type)
         return NULL;
     PyObject *mod = PyModule_Create(&module);
     if (!mod)

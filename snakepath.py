@@ -11,25 +11,27 @@ embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these c
 
 import collections
 import errno
+import importlib.machinery
 import importlib.util
 import io
 import os
 import pathlib
 import re
-import subprocess
 import sys
-import sysconfig
-import unittest
-import urllib.request
 import warnings
+# The build and the checks import what only they use (subprocess, sysconfig, unittest, urllib) where they use it, so
+# importing the bindings stays light
 
-# The extension module: test.c built with -DSP_PYTHON for this Python, next to this file
+# The extension module, test.c built with -DSP_PYTHON against CPython's stable ABI (abi3): one build for CPython
+# 3.12 and later, next to this file (where a wheel installs it, and where python snakepath.py --build makes it)
 _lib_dir = os.path.dirname(os.path.abspath(__file__))
-_ext_path = os.path.join(_lib_dir, '_snakepath' + sysconfig.get_config_var('EXT_SUFFIX'))
+_ext_path = os.path.join(_lib_dir, '_snakepath' + ('.pyd' if os.name == 'nt' else '.abi3.so'))
 
 
 def build_extension():
-    """Build the extension module for this Python (nob runs python snakepath.py --build)"""
+    """Build the extension module (nob runs python snakepath.py --build)"""
+    import subprocess
+    import sysconfig
     source = os.path.join(_lib_dir, 'test.c')
     include = sysconfig.get_path('include')
     if os.name == 'nt':
@@ -48,9 +50,11 @@ def build_extension():
 if __name__ == '__main__' and sys.argv[1:2] == ['--build']:
     sys.exit(build_extension())
 
-_spec = importlib.util.spec_from_file_location('_snakepath', _ext_path)
-if not os.path.exists(_ext_path):
-    raise ImportError(f"snakepath's extension module isn't built ({_ext_path}): run python snakepath.py --build")
+_found = [p for p in (os.path.join(_lib_dir, '_snakepath' + suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)
+          if os.path.exists(p)]
+if not _found:
+    raise ImportError(f"snakepath's extension module isn't built in {_lib_dir}: run python snakepath.py --build")
+_spec = importlib.util.spec_from_file_location('_snakepath', _found[0])
 _ext = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ext)
 
@@ -797,6 +801,7 @@ LITERAL_RE = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'")
 
 def preprocessed_library(header: pathlib.Path) -> str:
     """The header with its implementation and fluent API, as the compiler sees it"""
+    import subprocess
     defines = ["SNAKEPATH_IMPLEMENTATION", "SNAKEPATH_FLUENT", "SP_PATH_MAX=4096"]
     if os.name == "nt":
         cmd = ["cl", "/nologo", "/EP", "/TC", *[f"/D{d}" for d in defines], str(header)]
@@ -855,6 +860,7 @@ FRAME_LIMIT = 6  # snakepath frames on the stack from a public function down; a 
 
 def stack_usage(header: pathlib.Path, path_max: int) -> dict[str, int] | None:
     """Each function's own frame in bytes at -O0 (gcc's or clang's -fstack-usage), or None without such a compiler"""
+    import subprocess
     import shutil
     import tempfile
     cc = next((c for c in (os.environ.get("CC"), "gcc", "clang", "cc") if c and shutil.which(c)), None)
@@ -1201,6 +1207,7 @@ for _reason, _tests in EXPECTED_FAILURES.items():
 
 def download_file(url, dest):
     """Download a file."""
+    import urllib.request
     dest.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as r:
         content = r.read()
@@ -1235,6 +1242,7 @@ def _stub_module(name):
 
 def setup_pathlib_patch(testfn=None):
     """Patch pathlib module to use snakepath."""
+    import unittest
     import types
     import tempfile
 
@@ -1401,6 +1409,8 @@ def setup_pathlib_patch(testfn=None):
 
 def run_single_class(class_info):
     """Run a single test class in a subprocess. Returns (class_name, results_dict)."""
+    import subprocess
+    import unittest
     import os
     import tempfile
     import shutil
@@ -1460,6 +1470,7 @@ def run_single_class(class_info):
 
 def run_tests():
     """Run CPython tests against snakepath."""
+    import unittest
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
     import os
