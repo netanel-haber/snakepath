@@ -41,9 +41,10 @@ typedef struct {
     size_t drive;
     int flavor;
     int error;
-    Py_hash_t hash; /* sp_path_hash's, made once (-1 until then) */
-    PyObject *str;  /* str(), made once */
-    char text[1];   /* NUL-terminated */
+    Py_hash_t hash;      /* sp_path_hash's, made once (-1 until then) */
+    PyObject *str;       /* str(), made once */
+    PyObject *terms[6];  /* drive, root, anchor, name, stem, suffix, each made once */
+    char text[1];        /* NUL-terminated */
 } PyPath;
 
 static PyTypeObject *PyPath_Type;
@@ -58,7 +59,10 @@ static void pyobject_free(PyObject *o) {
 }
 
 static void pypath_dealloc(PyObject *o) {
-    Py_XDECREF(((PyPath *)o)->str);
+    PyPath *pp = (PyPath *)o;
+    Py_XDECREF(pp->str);
+    for (size_t i = 0; i < SP_ARRAY_LEN(pp->terms); i++)
+        Py_XDECREF(pp->terms[i]);
     pyobject_free(o);
 }
 
@@ -107,6 +111,8 @@ static PyObject *made(const SpPath *p) {
     o->error = (int)p->error;
     o->hash = -1;
     o->str = NULL;
+    for (size_t i = 0; i < SP_ARRAY_LEN(o->terms); i++)
+        o->terms[i] = NULL;
     return (PyObject *)o;
 }
 
@@ -797,6 +803,414 @@ static PyObject *py_error_str(PyObject *m, PyObject *err) {
     return PyUnicode_FromString(sp_error_str((SpError)num(err)));
 }
 
+/* PurePath's base type: its C path (an SpPath object, never changed, so paths share it) and the protocols and
+ * properties that are one library call each, so that making, joining, printing, comparing and hashing a path and
+ * reading its parts run no Python code. snakepath.py's classes derive from it; bind() hands it what stays in Python:
+ * the error check, the arguments it doesn't take directly, and the classes PurePath() and Path() make. */
+typedef struct {
+    PyObject_HEAD
+    PyObject *sp; /* a PyPath, NULL until __init__ */
+} PyPure;
+
+static PyTypeObject *PyPure_Type;
+static PyObject *bound_check;        /* _check(err, *filenames), which raises */
+static PyObject *bound_init;         /* PurePath._init_slow(self, *args): bytes, os.PathLike and other flavors */
+static PyObject *bound_truediv;      /* _truediv(a, b): every other operand of / */
+static PyTypeObject *bound_from[2];  /* PurePath and Path ... */
+static PyTypeObject *bound_to[2];    /* ... make the host's flavor of each */
+static PyTypeObject *bound_plain[4]; /* the four concrete classes, whose paths have no __dict__ to copy */
+static long bound_plain_flavor[4];   /* and their _flavor */
+static PyObject *str_flavor;
+static PyObject *str_parser;
+static PyObject *str_dict;
+
+static PyObject *pure_sp(PyObject *self) {
+    PyObject *sp = ((PyPure *)self)->sp;
+    if (!sp)
+        PyErr_SetString(PyExc_AttributeError, "_sp");
+    return sp; /* borrowed */
+}
+
+static int raise_check(SpError err, PyObject *filename) {
+    PyObject *r = filename ? PyObject_CallFunction(bound_check, "iO", (int)err, filename)
+                           : PyObject_CallFunction(bound_check, "i", (int)err);
+    Py_XDECREF(r);
+    return -1;
+}
+
+static int class_flavor(PyObject *o, long *flavor) {
+    for (size_t i = 0; i < SP_ARRAY_LEN(bound_plain); i++)
+        if (Py_TYPE(o) == bound_plain[i]) {
+            *flavor = bound_plain_flavor[i];
+            return 1;
+        }
+    PyObject *f = PyObject_GetAttr((PyObject *)Py_TYPE(o), str_flavor);
+    if (!f)
+        return 0;
+    *flavor = PyLong_AsLong(f);
+    Py_DECREF(f);
+    return !PyErr_Occurred();
+}
+
+/* An argument the fast paths take as it is: a str, or a path of the same class flavor (as _load takes one) */
+static int direct_arg(PyObject *arg, long flavor) {
+    long arg_flavor;
+    if (PyUnicode_CheckExact(arg))
+        return 1;
+    if (!PyObject_TypeCheck(arg, PyPure_Type) || !((PyPure *)arg)->sp)
+        return 0;
+    if (!class_flavor(arg, &arg_flavor)) {
+        PyErr_Clear();
+        return 0;
+    }
+    return arg_flavor == flavor;
+}
+
+/* A new path of self's class holding r, with self's __dict__ copied (as _from_sp makes one) */
+static PyObject *derived(PyObject *self, const SpPath *r) {
+    PyTypeObject *type = Py_TYPE(self);
+    PyObject *sp = made(r);
+    allocfunc alloc = (allocfunc)PyType_GetSlot(type, Py_tp_alloc);
+    PyObject *o = sp ? alloc(type, 0) : NULL;
+    if (!o) {
+        Py_XDECREF(sp);
+        return NULL;
+    }
+    ((PyPure *)o)->sp = sp;
+
+    int plain = 0;
+    for (size_t i = 0; i < SP_ARRAY_LEN(bound_plain); i++)
+        plain |= type == bound_plain[i];
+    PyObject *dict = NULL;
+    if (!plain && PyObject_GetOptionalAttr(self, str_dict, &dict) < 0) {
+        Py_DECREF(o);
+        return NULL;
+    }
+    if (dict) {
+        PyObject *new_dict = PyObject_GetAttr(o, str_dict);
+        int ok = new_dict && PyDict_Update(new_dict, dict) == 0;
+        Py_XDECREF(new_dict);
+        Py_DECREF(dict);
+        if (!ok)
+            Py_CLEAR(o);
+    }
+    return o;
+}
+
+/* derived() after r's error check. Each caller declares its result as `SpPath r = sp_...(...)`: gcc builds a call's
+ * result in the variable it initializes, where assigning it to one declared earlier copies SP_PATH_MAX bytes */
+static PyObject *derived_checked(PyObject *self, const SpPath *r, PyObject *filename) {
+    if (r->error != SP_OK) {
+        raise_check(r->error, filename);
+        return NULL;
+    }
+    return derived(self, r);
+}
+
+static void pure_set(PyObject *self, PyObject *sp) {
+    PyObject *old = ((PyPure *)self)->sp;
+    ((PyPure *)self)->sp = sp;
+    Py_XDECREF(old);
+}
+
+static PyObject *pure_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+    (void)args;
+    (void)kwargs;
+    for (size_t i = 0; i < SP_ARRAY_LEN(bound_from); i++)
+        if (type == bound_from[i])
+            type = bound_to[i];
+    allocfunc alloc = (allocfunc)PyType_GetSlot(type, Py_tp_alloc);
+    return alloc(type, 0);
+}
+
+static int pure_init(PyObject *self, PyObject *args, PyObject *kwargs) {
+    if (kwargs && PyDict_Size(kwargs) > 0) {
+        PyErr_SetString(PyExc_TypeError, "PurePath() takes no keyword arguments");
+        return -1;
+    }
+    long flavor;
+    if (!class_flavor(self, &flavor))
+        return -1;
+    Py_ssize_t n = PyTuple_Size(args);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (!direct_arg(PyTuple_GetItem(args, i), flavor)) {
+            PyObject *call = PyTuple_New(n + 1);
+            if (!call)
+                return -1;
+            PyTuple_SetItem(call, 0, Py_NewRef(self));
+            for (Py_ssize_t k = 0; k < n; k++)
+                PyTuple_SetItem(call, k + 1, Py_NewRef(PyTuple_GetItem(args, k)));
+            PyObject *r = PyObject_Call(bound_init, call, NULL);
+            Py_DECREF(call);
+            Py_XDECREF(r);
+            return r ? 0 : -1;
+        }
+    }
+
+    /* One argument (or none): a path of this flavor is shared, a str made into one */
+    PyObject *first = n > 0 ? PyTuple_GetItem(args, 0) : NULL;
+    if (n == 1 && !PyUnicode_CheckExact(first)) {
+        pure_set(self, Py_NewRef(((PyPure *)first)->sp));
+        return 0;
+    }
+    if (n <= 1) {
+        Py_ssize_t len = 0;
+        PyObject *keep = NULL;
+        const char *s = first ? utf8(first, &len, &keep) : "";
+        if (!s)
+            return -1;
+        SpPath p = sp_path_from_n(s, (size_t)len, (SpFlavor)flavor);
+        Py_XDECREF(keep);
+        if (p.error != SP_OK)
+            return raise_check(p.error, first);
+        PyObject *sp = made(&p);
+        if (!sp)
+            return -1;
+        pure_set(self, sp);
+        return 0;
+    }
+
+    SpPath p;
+    if (!PyUnicode_CheckExact(first)) {
+        load(((PyPure *)first)->sp, &p);
+    } else {
+        Py_ssize_t len = 0;
+        PyObject *keep = NULL;
+        const char *s = utf8(first, &len, &keep);
+        if (!s)
+            return -1;
+        p = sp_path_from_n(s, (size_t)len, (SpFlavor)flavor);
+        Py_XDECREF(keep);
+    }
+    if (p.error != SP_OK)
+        return raise_check(p.error, first);
+
+    for (Py_ssize_t i = 1; i < n; i++) {
+        PyObject *arg = PyTuple_GetItem(args, i);
+        SpPath r;
+        if (PyUnicode_CheckExact(arg)) {
+            Py_ssize_t len;
+            PyObject *keep;
+            const char *s = utf8(arg, &len, &keep);
+            if (!s)
+                return -1;
+            r = sp_join_n(&p, s, (size_t)len);
+            Py_XDECREF(keep);
+        } else {
+            PyPath *other = (PyPath *)((PyPure *)arg)->sp;
+            r = sp_join_n(&p, other->text, other->len);
+        }
+        if (r.error != SP_OK)
+            return raise_check(r.error, arg);
+        p = r;
+    }
+
+    PyObject *sp = made(&p);
+    if (!sp)
+        return -1;
+    pure_set(self, sp);
+    return 0;
+}
+
+static void pure_dealloc(PyObject *o) {
+    Py_CLEAR(((PyPure *)o)->sp);
+    pyobject_free(o);
+}
+
+static PyObject *pure_str(PyObject *self) {
+    PyObject *sp = pure_sp(self);
+    return sp ? py_str(NULL, sp) : NULL;
+}
+
+static PyObject *pure_fspath(PyObject *self, PyObject *unused) {
+    (void)unused;
+    return pure_str(self);
+}
+
+static Py_hash_t pure_hash(PyObject *self) {
+    PyObject *sp = pure_sp(self);
+    if (!sp)
+        return -1;
+    PyPath *pp = (PyPath *)sp;
+    if (pp->hash == -1) {
+        SpPath p;
+        load(sp, &p);
+        pp->hash = (Py_hash_t)sp_path_hash(&p);
+        pp->hash = pp->hash == -1 ? -2 : pp->hash;
+    }
+    return pp->hash;
+}
+
+/* == as sp_path_eq (any two paths); <, <=, >, >= as sp_path_cmp, for paths of the same parser only */
+static PyObject *pure_richcompare(PyObject *a, PyObject *b, int op) {
+    if (!PyObject_TypeCheck(a, PyPure_Type) || !PyObject_TypeCheck(b, PyPure_Type))
+        Py_RETURN_NOTIMPLEMENTED;
+    PyObject *sa = pure_sp(a);
+    PyObject *sb = sa ? pure_sp(b) : NULL;
+    if (!sb)
+        return NULL;
+
+    SpPath x;
+    SpPath y;
+    load(sa, &x);
+    load(sb, &y);
+    if (op == Py_EQ || op == Py_NE) {
+        int eq = sa == sb || sp_path_eq(&x, &y);
+        return PyBool_FromLong(op == Py_EQ ? eq : !eq);
+    }
+
+    PyObject *pa = PyObject_GetAttr((PyObject *)Py_TYPE(a), str_parser);
+    PyObject *pb = pa ? PyObject_GetAttr((PyObject *)Py_TYPE(b), str_parser) : NULL;
+    Py_XDECREF(pa);
+    Py_XDECREF(pb);
+    if (!pb)
+        return NULL;
+    if (pa != pb)
+        Py_RETURN_NOTIMPLEMENTED;
+    int c = sp_path_cmp(&x, &y);
+    int r = op == Py_LT ? c < 0 : op == Py_LE ? c <= 0 : op == Py_GT ? c > 0 : c >= 0;
+    return PyBool_FromLong(r);
+}
+
+/* path / str and path / path of the same flavor here; everything else (the reflected operand included) in _truediv */
+static PyObject *pure_truediv(PyObject *a, PyObject *b) {
+    long flavor;
+    if (!PyObject_TypeCheck(a, PyPure_Type) || !pure_sp(a))
+        return PyErr_Occurred() ? NULL : PyObject_CallFunctionObjArgs(bound_truediv, a, b, NULL);
+    if (!class_flavor(a, &flavor))
+        return NULL;
+    if (!direct_arg(b, flavor))
+        return PyObject_CallFunctionObjArgs(bound_truediv, a, b, NULL);
+
+    SpPath p;
+    load(((PyPure *)a)->sp, &p);
+    if (!PyUnicode_CheckExact(b)) {
+        PyPath *other = (PyPath *)((PyPure *)b)->sp;
+        SpPath r = sp_join_n(&p, other->text, other->len);
+        return derived_checked(a, &r, b);
+    }
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = utf8(b, &len, &keep);
+    if (!s)
+        return NULL;
+    SpPath r = sp_join_n(&p, s, (size_t)len);
+    Py_XDECREF(keep);
+    return derived_checked(a, &r, b);
+}
+
+/* drive, root, anchor, name, stem, suffix: py_term's 0 to 5, each made once per path */
+static PyObject *pure_term(PyObject *self, void *which) {
+    PyObject *sp = pure_sp(self);
+    if (!sp)
+        return NULL;
+    PyPath *pp = (PyPath *)sp;
+    intptr_t i = (intptr_t)which;
+    if (!pp->terms[i]) {
+        SpPath p;
+        load(sp, &p);
+        SpTerm (*const terms[])(const SpPath *) = {sp_drive, sp_root, sp_anchor, sp_name, sp_stem, sp_suffix};
+        SpTerm t = terms[i](&p);
+        pp->terms[i] = text(t.buf, t.len);
+    }
+    return Py_XNewRef(pp->terms[i]);
+}
+
+static PyObject *pure_parent(PyObject *self, void *unused) {
+    (void)unused;
+    PyObject *sp = pure_sp(self);
+    if (!sp)
+        return NULL;
+    SpPath p;
+    load(sp, &p);
+    SpPath r = sp_parent(&p);
+    return derived_checked(self, &r, NULL);
+}
+
+static PyMemberDef pure_members[] = {
+    {"_sp", Py_T_OBJECT_EX, offsetof(PyPure, sp), 0, NULL},
+    {NULL, 0, 0, 0, NULL},
+};
+
+#define TERM(name, which) {name, pure_term, NULL, NULL, (void *)(intptr_t)(which)}
+static PyGetSetDef pure_getset[] = {
+    TERM("drive", 0), TERM("root", 1), TERM("anchor", 2), TERM("name", 3), TERM("stem", 4), TERM("suffix", 5),
+    {"parent", pure_parent, NULL, NULL, NULL},
+    {NULL, NULL, NULL, NULL, NULL},
+};
+
+static PyMethodDef pure_methods[] = {
+    {"__fspath__", (PyCFunction)(void (*)(void))pure_fspath, METH_NOARGS, NULL},
+    {NULL, NULL, 0, NULL},
+};
+
+static PyType_Slot pure_slots[] = {
+    {Py_tp_new, (void *)pure_new},
+    {Py_tp_init, (void *)pure_init},
+    {Py_tp_dealloc, (void *)pure_dealloc},
+    {Py_tp_str, (void *)pure_str},
+    {Py_tp_hash, (void *)pure_hash},
+    {Py_tp_richcompare, (void *)pure_richcompare},
+    {Py_nb_true_divide, (void *)pure_truediv},
+    {Py_tp_members, (void *)pure_members},
+    {Py_tp_getset, (void *)pure_getset},
+    {Py_tp_methods, (void *)pure_methods},
+    {0, NULL},
+};
+
+static PyType_Spec pure_spec = {"_snakepath.PurePathBase", (int)sizeof(PyPure), 0,
+                                Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, pure_slots};
+
+/* base(docs): the base type, made once, its properties documented by docs ({name: docstring}, pathlib's) */
+static PyObject *py_base(PyObject *m, PyObject *docs) {
+    static PyObject *kept_docs;
+    if (PyPure_Type)
+        return Py_NewRef((PyObject *)PyPure_Type);
+    if (!PyDict_Check(docs))
+        return PyErr_Format(PyExc_TypeError, "base: expected a dict of docstrings");
+
+    kept_docs = Py_NewRef(docs);
+    for (PyGetSetDef *g = pure_getset; g->name; g++) {
+        PyObject *doc = PyDict_GetItemString(kept_docs, g->name);
+        g->doc = doc && PyUnicode_Check(doc) ? PyUnicode_AsUTF8AndSize(doc, NULL) : NULL;
+    }
+    PyPure_Type = (PyTypeObject *)PyType_FromSpec(&pure_spec);
+    if (!PyPure_Type || PyModule_AddObjectRef(m, "PurePathBase", (PyObject *)PyPure_Type) < 0)
+        return NULL;
+    return Py_NewRef((PyObject *)PyPure_Type);
+}
+
+/* bind(PurePath, host pure class, Path, host class, the four concrete classes, _check, _init_slow, _truediv) */
+static PyObject *py_bind(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    if (!arity(nargs, 8, "bind"))
+        return NULL;
+    for (Py_ssize_t i = 0; i < 4; i++)
+        if (!PyType_Check(args[i]))
+            return PyErr_Format(PyExc_TypeError, "bind: argument %zd is not a class", i);
+    PyObject *plain = args[4];
+    if (!PyTuple_Check(plain) || PyTuple_Size(plain) != (Py_ssize_t)SP_ARRAY_LEN(bound_plain))
+        return PyErr_Format(PyExc_TypeError, "bind: expected the four concrete classes");
+
+    bound_from[0] = (PyTypeObject *)Py_NewRef(args[0]);
+    bound_to[0] = (PyTypeObject *)Py_NewRef(args[1]);
+    bound_from[1] = (PyTypeObject *)Py_NewRef(args[2]);
+    bound_to[1] = (PyTypeObject *)Py_NewRef(args[3]);
+    for (size_t i = 0; i < SP_ARRAY_LEN(bound_plain); i++) {
+        PyObject *cls = PyTuple_GetItem(plain, (Py_ssize_t)i);
+        PyObject *f = PyObject_GetAttr(cls, str_flavor);
+        bound_plain_flavor[i] = f ? PyLong_AsLong(f) : -1;
+        Py_XDECREF(f);
+        if (PyErr_Occurred())
+            return NULL;
+        bound_plain[i] = (PyTypeObject *)Py_NewRef(cls);
+    }
+    bound_check = Py_NewRef(args[5]);
+    bound_init = Py_NewRef(args[6]);
+    bound_truediv = Py_NewRef(args[7]);
+    Py_RETURN_NONE;
+}
+
 #define FAST(name) {#name, (PyCFunction)(void (*)(void))py_##name, METH_FASTCALL, NULL}
 #define ONE(name) {#name, (PyCFunction)(void (*)(void))py_##name, METH_O, NULL}
 static PyMethodDef methods[] = {
@@ -807,7 +1221,7 @@ static PyMethodDef methods[] = {
     FAST(match),      FAST(is_),          FAST(stat),        FAST(stat_eq),    FAST(mkdir),      FAST(touch),
     FAST(remove),     FAST(chmod),       FAST(link_to),     FAST(read_file),  FAST(write_file), FAST(info),
     ONE(iterdir),     FAST(glob),        FAST(walk),        ONE(walk_next),   FAST(walk_prune), ONE(walk_end),
-    ONE(error_str),   {"info_new", (PyCFunction)(void (*)(void))py_info_new, METH_NOARGS, NULL},
+    ONE(error_str),   FAST(bind),        ONE(base),        {"info_new", (PyCFunction)(void (*)(void))py_info_new, METH_NOARGS, NULL},
     {NULL, NULL, 0, NULL},
 };
 
@@ -816,7 +1230,10 @@ static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, "_snakepath", NULL, -
 PyMODINIT_FUNC PyInit__snakepath(void) {
     PyPath_Type = (PyTypeObject *)PyType_FromSpec(&pypath_spec);
     PyWalk_Type = (PyTypeObject *)PyType_FromSpec(&pywalk_spec);
-    if (!PyPath_Type || !PyWalk_Type)
+    str_flavor = PyUnicode_InternFromString("_flavor");
+    str_parser = PyUnicode_InternFromString("parser");
+    str_dict = PyUnicode_InternFromString("__dict__");
+    if (!PyPath_Type || !PyWalk_Type || !str_flavor || !str_parser || !str_dict)
         return NULL;
     PyObject *mod = PyModule_Create(&module);
     if (!mod)

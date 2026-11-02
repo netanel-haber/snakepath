@@ -137,34 +137,6 @@ def _check(err, *filenames):
         raise _error(err, *filenames)
 
 
-# ============ Property descriptors ============
-
-_TERMS = {'drive': 0, 'root': 1, 'anchor': 2, 'name': 3, 'stem': 4, 'suffix': 5}
-
-
-class _TermProp:
-    # Descriptor for SpTerm properties (drive, root, anchor, name, stem, suffix), documented as pathlib's
-    __slots__ = ('_which', '__doc__')
-    def __init__(self, name):
-        self._which = _TERMS[name]
-        self.__doc__ = None
-    def __get__(self, obj, objtype=None):
-        if obj is None:
-            return self
-        return _ext.term(obj._sp, self._which)
-
-
-class _PathProp:
-    # Descriptor for path-returning properties (parent), documented as pathlib's
-    __slots__ = ('_which', '__doc__')
-    def __init__(self, name):
-        self._which = {'parent': 0}[name]
-        self.__doc__ = None
-    def __get__(self, obj, objtype=None):
-        if obj is None: return self
-        return obj._from_sp(_ext.unary(obj._sp, self._which))
-
-
 def _is_method(name, file_type, follow_symlinks):
     """pathlib's is_* predicate as sp_is(file_type) with a fixed follow_symlinks"""
     def method(self):
@@ -267,35 +239,27 @@ class _PathParents:
 
 # ============ PurePath ============
 
-class PurePath:
+# The C base of PurePath, its properties documented as pathlib's
+_base = _ext.base({name: getattr(pathlib.PurePath, name).__doc__
+                   for name in ('drive', 'root', 'anchor', 'name', 'stem', 'suffix', 'parent')})
+
+
+class PurePath(_base):
     """Pure path object - no filesystem access."""
 
-    __slots__ = ('_sp',)
+    # The C base holds _sp and makes, joins, prints, compares and hashes paths, and gives drive, root, anchor, name, stem,
+    # suffix and parent; PurePath() and Path() make the host's flavor (bind below)
+    __slots__ = ()
     _flavor = SP_FLAVOR_NATIVE
     parser = __import__('posixpath') if os.name != 'nt' else __import__('ntpath')
-
-    # String-view properties via descriptors
-    drive = _TermProp('drive')
-    root = _TermProp('root')
-    anchor = _TermProp('anchor')
-    name = _TermProp('name')
-    stem = _TermProp('stem')
-    suffix = _TermProp('suffix')
-
-    # Path-returning properties
-    parent = _PathProp('parent')
 
     @property
     def _flavour(self):
         """British spelling alias for CPython tests."""
         return self.parser
 
-    def __new__(cls, *args, **kwargs):
-        if cls is PurePath:
-            cls = PurePosixPath if os.name != 'nt' else PureWindowsPath
-        return object.__new__(cls)
-
-    def __init__(self, *args):
+    def _init_slow(self, *args):
+        """The arguments the C base doesn't take directly: bytes, os.PathLike objects and paths of another flavor"""
         for arg in args:
             if isinstance(arg, bytes):
                 raise TypeError(_BYTES_ERROR)
@@ -346,58 +310,11 @@ class PurePath:
             result.__dict__.update(self.__dict__)
         return result
 
-    def __str__(self):
-        return _ext.str(self._sp)
-
     def __repr__(self):
         return f"{self.__class__.__name__}({self.as_posix()!r})"
 
-    def __fspath__(self):
-        return str(self)
-
     def __bytes__(self):
         return str(self).encode('utf-8')
-
-    def __eq__(self, other):
-        if not isinstance(other, PurePath):
-            return NotImplemented
-        return _ext.binary(self._sp, other._sp, 0)
-
-    def __hash__(self):
-        return _ext.hash(self._sp)
-
-    def _cmp(self, other):
-        if not isinstance(other, PurePath) or self.parser is not other.parser:
-            return NotImplemented
-        return _ext.binary(self._sp, other._sp, 1)
-
-    def __lt__(self, other):
-        c = self._cmp(other)
-        return c if c is NotImplemented else c < 0
-
-    def __le__(self, other):
-        c = self._cmp(other)
-        return c if c is NotImplemented else c <= 0
-
-    def __gt__(self, other):
-        c = self._cmp(other)
-        return c if c is NotImplemented else c > 0
-
-    def __ge__(self, other):
-        c = self._cmp(other)
-        return c if c is NotImplemented else c >= 0
-
-    def __truediv__(self, other):
-        try:
-            return self.joinpath(other)
-        except TypeError:
-            return NotImplemented
-
-    def __rtruediv__(self, other):
-        try:
-            return self.with_segments(other, self)
-        except TypeError:
-            return NotImplemented
 
     @property
     def suffixes(self):
@@ -509,11 +426,6 @@ class Path(PurePath):
         except AttributeError:
             self._info = _PathInfo(self)
             return self._info
-
-    def __new__(cls, *args, **kwargs):
-        if cls is Path:
-            cls = PosixPath if os.name != 'nt' else WindowsPath
-        return object.__new__(cls)
 
     @classmethod
     def _made(cls, make, *args):
@@ -777,6 +689,19 @@ class PosixPath(Path, PurePosixPath):
 
 class WindowsPath(Path, PureWindowsPath):
     __slots__ = ()
+
+
+def _truediv(a, b):
+    """The operands of / the C base doesn't join itself, as pathlib's __truediv__ and __rtruediv__ take them"""
+    try:
+        return a.joinpath(b) if isinstance(a, PurePath) else b.with_segments(a, b)
+    except TypeError:
+        return NotImplemented
+
+
+_ext.bind(PurePath, PurePosixPath if os.name != 'nt' else PureWindowsPath, Path,
+          PosixPath if os.name != 'nt' else WindowsPath, (PurePosixPath, PureWindowsPath, PosixPath, WindowsPath),
+          _check, PurePath._init_slow, _truediv)
 
 
 # pathlib's protocols (pathlib.types, Python 3.14 on) and its documentation of each method, from the host's pathlib
