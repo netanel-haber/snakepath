@@ -1330,11 +1330,15 @@ def check_fs(limit=20):
             tree = pathlib.Path(root, f"tree-{side}")
             (tree / "a" / "b").mkdir(parents=True)
             (tree / "a" / "b" / "leaf").write_bytes(b"x")
+            (tree / "a" / "e" / "f").mkdir(parents=True)
+            if hasattr(os, "mkfifo"):
+                os.mkfifo(tree / "a" / "b" / "fifo")
             try:
-                (tree / "a" / "out").symlink_to(pathlib.Path(root, "d"), target_is_directory=True)
+                for link, target in [("out", "d"), ("b/out", "d"), ("flink", "f.txt"), ("dangling", "missing")]:
+                    (tree / "a" / link).symlink_to(pathlib.Path(root, target), target_is_directory=target == "d")
             except OSError:
                 pass  # Windows without the privilege to make symlinks
-        for step in ["a/b/leaf", "a", "", ""]:
+        for step in ["a/b/leaf", "a/out", "a/missing", "a", "", ""]:
             compare(f"tree/{step}._delete()", lambda: (Path(root, "tree-ours", step)._delete(), tree_snapshot("ours")),
                     lambda: (pathlib.Path(root, "tree-real", step)._delete(), tree_snapshot("real")))
         Path(root, "twin-ours").chmod(0o640)

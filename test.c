@@ -630,6 +630,7 @@ static size_t count_parents(const SpPath *p) {
 #define test_rmdir _rmdir
 #define test_getpid _getpid
 #else
+#include <sys/wait.h>
 #include <unistd.h>
 #define test_rmdir rmdir
 #define test_getpid getpid
@@ -2570,6 +2571,70 @@ int main(void) {
         ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
         ASSERT(!sp_is(&outside_dir, SP_ANY, false));
     }
+#ifndef SP_WINDOWS
+    {
+        /* CVE-2022-21658's race: while the tree is deleted, another process keeps swapping a directory in it for a
+         * link to one outside. The delete must never reach through the link (CPython's fd-based rmtree) */
+        char tree_path[128];
+        char outside_path[128];
+        snprintf(tree_path, sizeof(tree_path), "./test_delete_race_%ld", pid);
+        snprintf(outside_path, sizeof(outside_path), "./test_delete_race_outside_%ld", pid);
+        SpPath tree = sp_path_f(tree_path, SP_FLAVOR_NATIVE);
+        SpPath sub = sp_join_one(&tree, "sub");
+        SpPath held = sp_join_one(&tree, "held");
+        SpPath stop = sp_join_one(&tree, "stop");
+        SpPath outside_dir = sp_path_f(outside_path, SP_FLAVOR_NATIVE);
+        SpPath outside_abs = sp_absolute(&outside_dir);
+        SpPath kept = sp_join_one(&outside_dir, "keep");
+        ASSERT(sp_mkdir(&outside_dir, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&kept, "y", 1).error == SP_OK);
+        ASSERT(sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+
+        pid_t attacker = fork();
+        ASSERT(attacker >= 0);
+        if (attacker == 0) {
+            while (!sp_is(&stop, SP_ANY, false)) {
+                SpPath moved = sp_rename(&sub, &held, false);
+                if (moved.error != SP_OK)
+                    continue;
+                SpError linked = sp_link_to(&sub, &outside_abs, link_opts(false, true));
+                SpError unlinked = linked == SP_OK ? sp_remove(&sub, remove_opts(false, true)) : SP_OK;
+                SpPath back = sp_rename(&held, &sub, false);
+                if (unlinked != SP_OK || back.error != SP_OK)
+                    continue;
+            }
+            _exit(0);
+        }
+
+        bool reached_outside = false;
+        for (int round = 0; round < 1000 && !reached_outside; round++) {
+            if (sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) != SP_OK ||
+                sp_mkdir(&sub, 0755, mkdir_opts(false, true, SP_MODE_DIR)) != SP_OK)
+                continue;
+            for (int i = 0; i < 20; i++) {
+                char name[16];
+                snprintf(name, sizeof(name), i == 0 ? "keep" : "f%d", i);
+                SpPath file = sp_join_one(&sub, name);
+                SpIOResult wrote = sp_write_file(&file, "x", 1);
+                if (wrote.error != SP_OK)
+                    break;
+            }
+            SpError removed = sp_remove(&tree, recursive_opts(true)); /* may fail on a swapped link, never follow it */
+            (void)removed;
+            reached_outside = !sp_is(&kept, SP_FILE, true);
+        }
+
+        ASSERT(sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&stop, "", 0).error == SP_OK);
+        int status = 0;
+        ASSERT(waitpid(attacker, &status, 0) == attacker);
+        ASSERT(!reached_outside);
+        if (sp_is(&sub, SP_SYMLINK, false))
+            ASSERT(sp_remove(&sub, remove_opts(false, false)) == SP_OK);
+        ASSERT(sp_remove(&tree, recursive_opts(false)) == SP_OK);
+        ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
+    }
+#endif
     printf("  recursive remove tests OK\n");
 
     test_errors(pid);

@@ -563,6 +563,7 @@ typedef HANDLE SpPrivFile;
 #include <pwd.h>    /* For getpwuid, getpwnam */
 #include <grp.h>    /* For getgrgid */
 #ifdef __linux__
+#include <sys/ioctl.h>
 #include <sys/sendfile.h>
 #endif
 typedef char SpPrivChar;
@@ -580,6 +581,35 @@ extern int chmod(const char *path, mode_t mode);
 extern int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
 #endif
 extern int gethostname(char *name, size_t len);
+extern int openat(int dir_fd, const char *path, int flags, ...);
+extern int unlinkat(int dir_fd, const char *path, int flags);
+extern int fstatat(int dir_fd, const char *path, struct stat *buf, int flags);
+extern DIR *fdopendir(int fd);
+extern int dirfd(DIR *dir);
+#endif
+
+/* POSIX 2008's open flags and *at constants, which glibc's strict C modes hide: there its internal names for the
+ * flags, which differ by architecture, and Linux's values, the same on all of them, for the rest */
+#if defined(O_NOFOLLOW) && defined(O_DIRECTORY) && defined(O_CLOEXEC) && defined(AT_FDCWD)
+enum {
+    SP_PRIV_O_NOFOLLOW = O_NOFOLLOW,
+    SP_PRIV_O_DIRECTORY = O_DIRECTORY,
+    SP_PRIV_O_CLOEXEC = O_CLOEXEC,
+    SP_PRIV_AT_FDCWD = AT_FDCWD,
+    SP_PRIV_AT_REMOVEDIR = AT_REMOVEDIR,
+    SP_PRIV_AT_SYMLINK_NOFOLLOW = AT_SYMLINK_NOFOLLOW
+};
+#elif defined(__linux__) && defined(__O_NOFOLLOW) && defined(__O_DIRECTORY) && defined(__O_CLOEXEC)
+enum {
+    SP_PRIV_O_NOFOLLOW = __O_NOFOLLOW,
+    SP_PRIV_O_DIRECTORY = __O_DIRECTORY,
+    SP_PRIV_O_CLOEXEC = __O_CLOEXEC,
+    SP_PRIV_AT_FDCWD = -100,
+    SP_PRIV_AT_REMOVEDIR = 0x200,
+    SP_PRIV_AT_SYMLINK_NOFOLLOW = 0x100
+};
+#else
+#error "snakepath needs POSIX 2008's O_NOFOLLOW, O_DIRECTORY, O_CLOEXEC and the *at functions (to remove trees safely)"
 #endif
 #endif
 
@@ -2628,7 +2658,8 @@ SpError sp_touch(const SpPath *p, unsigned int mode, bool exist_ok) {
     if (exist_ok && utime(native.path, SP_PRIV_NULL) == 0)
         return SP_OK;
 
-    int fd = open(native.path, O_CREAT | O_WRONLY | (exist_ok ? 0 : O_EXCL), SP_PRIV_CAST(mode_t, mode));
+    int fd =
+        open(native.path, O_CREAT | O_WRONLY | SP_PRIV_O_CLOEXEC | (exist_ok ? 0 : O_EXCL), SP_PRIV_CAST(mode_t, mode));
     return fd >= 0 && close(fd) == 0 ? SP_OK : sp_priv_last_error();
 #endif
 }
@@ -2711,7 +2742,7 @@ static SpError sp_priv_open(const SpPath *p, bool write, SpPrivFile *f) {
                      write ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     return *f != INVALID_HANDLE_VALUE ? SP_OK : sp_priv_last_error();
 #else
-    *f = open(native.path, write ? O_WRONLY | O_CREAT | O_TRUNC : O_RDONLY, 0666);
+    *f = open(native.path, (write ? O_WRONLY | O_CREAT | O_TRUNC : O_RDONLY) | SP_PRIV_O_CLOEXEC, 0666); /* PEP 446 */
     return *f >= 0 ? SP_OK : sp_priv_last_error();
 #endif
 }
@@ -2828,12 +2859,22 @@ static void sp_priv_readdir_close(void **handle) {
     *handle = SP_PRIV_NULL;
 }
 
+/* A directory to list through one already open: its handle, the length of its text in the path, and whether a link at
+ * the end of the rest may be followed (POSIX's openat, which saves looking the whole path up again and can't be sent
+ * elsewhere by a link swapped into it; Windows lists by path) */
+typedef struct {
+    void *handle;
+    size_t len;
+    bool nofollow;
+} SpPrivDirAt;
+
 /* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
  * sp_priv_join_child builds it), info what the listing says of its type (as os.scandir's DirEntry: the link itself,
  * and following it only when it isn't a symlink), and the name length is returned. At the end it returns 0, and out is
  * an empty path whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry
  * too long to join, which ends the listing). */
-static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out, SpPathInfo *info) {
+static size_t sp_priv_readdir_next(void **handle, const SpPrivDirAt *through, const SpPath *dir, SpPath *out,
+                                   SpPathInfo *info) {
     char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
     size_t at = dir->len + (last != '/' && last != sep && !(sep == '\\' && last == ':') ? 1 : 0);
@@ -2848,6 +2889,9 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
     out->error = SP_OK;
     memcpy(out->buf, dir->buf, dir->len);
     out->buf[dir->len] = sep;
+#ifdef SP_WINDOWS
+    (void)through;
+#endif
     for (;;) {
 #ifdef SP_WINDOWS
         WIN32_FIND_DATAW fd;
@@ -2891,7 +2935,22 @@ static size_t sp_priv_readdir_next(void **handle, const SpPath *dir, SpPath *out
 #else
         if (!*handle) {
             end = sp_priv_native(dir, &native);
-            if (end == SP_OK && !(*handle = opendir(native.path)))
+            if (end == SP_OK && through && through->handle) {
+                const char *rest = dir->buf + through->len;
+                while (*rest == '/')
+                    rest++;
+                int flags =
+                    O_RDONLY | SP_PRIV_O_DIRECTORY | SP_PRIV_O_CLOEXEC | (through->nofollow ? SP_PRIV_O_NOFOLLOW : 0);
+                int fd = openat(dirfd(SP_PRIV_CAST(DIR *, through->handle)), *rest ? rest : ".", flags);
+                *handle = fd >= 0 ? fdopendir(fd) : SP_PRIV_NULL;
+                if (fd >= 0 && !*handle) {
+                    end = sp_priv_last_error();
+                    close(fd);
+                }
+            } else if (end == SP_OK) {
+                *handle = opendir(native.path);
+            }
+            if (end == SP_OK && !*handle)
                 end = sp_priv_last_error();
             if (end != SP_OK)
                 break;
@@ -2979,15 +3038,36 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
 /* The bytes of in, written to out */
 static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
 #ifdef __linux__
-    /* In the kernel, as CPython's copy does with sendfile (copy_file_range, which it tries first, is declared only for
-     * _GNU_SOURCE). A file sendfile can't take, before anything is sent, is read and written instead */
+    /* As CPython's copy: a copy-on-write clone where the file system makes one (FICLONE, from linux/fs.h, which clashes
+     * with sys/mount.h), then copy_file_range where the headers declare it (glibc 2.27, for _GNU_SOURCE), then
+     * sendfile, each after the one before fails as CPython lets it, before anything is copied. A first 0 from
+     * copy_file_range moves on too (older kernels copied nothing of a procfs file), and a file sendfile can't take is
+     * read and written */
+    if (ioctl(out, _IOW(0x94, 9, int), in) == 0)
+        return SP_OK;
+    if (errno != EBADF && errno != EOPNOTSUPP && errno != ETXTBSY && errno != EXDEV)
+        return sp_priv_last_error();
+#if defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)
+    for (bool sent_any = false;;) {
+        ssize_t sent = copy_file_range(in, SP_PRIV_NULL, out, SP_PRIV_NULL, 0x40000000, 0);
+        if (sent == 0 && sent_any)
+            return SP_OK;
+        if (sent < 0 && errno == EINTR)
+            continue;
+        if (sent < 0 && (sent_any || (errno != ETXTBSY && errno != EXDEV)))
+            return sp_priv_last_error();
+        if (sent <= 0)
+            break;
+        sent_any = true;
+    }
+#endif
     for (bool sent_any = false;;) {
         ssize_t sent = sendfile(out, in, SP_PRIV_NULL, 0x40000000);
         if (sent == 0)
             return SP_OK;
         if (sent < 0 && errno == EINTR)
             continue;
-        if (sent < 0 && (sent_any || (errno != EINVAL && errno != ENOSYS)))
+        if (sent < 0 && (sent_any || (errno != ENOTSOCK && errno != EINVAL && errno != ENOSYS)))
             return sp_priv_last_error();
         if (sent < 0)
             break;
@@ -3006,8 +3086,10 @@ static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
 }
 #endif
 
-/* CPython's Path._copy_from: recursively copy src to dst (extended in place for children, then restored) */
-static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_symlinks, bool preserve_metadata) {
+/* CPython's Path._copy_from: recursively copy src to dst (extended in place for children, then restored). A child
+ * directory is listed through its parent's handle (at), and not through a link it didn't stat as one */
+static SpError sp_priv_copy_tree(const SpPath *src, const SpPrivDirAt *at, SpPath *dst, bool follow_symlinks,
+                                 bool preserve_metadata) {
     SpPrivNative from;
     SpPrivNative to;
     SpError err = sp_priv_native(src, &from);
@@ -3030,15 +3112,20 @@ static SpError sp_priv_copy_tree(const SpPath *src, SpPath *dst, bool follow_sym
         SpPath child;
         SpPathInfo listed; /* unused: each child is stat()ed as a source */
         SpMkdirOptions plain = SP_PRIV_ZERO;
-        size_t n = sp_priv_readdir_next(&handle, src, &child, &listed);
+        size_t n = sp_priv_readdir_next(&handle, at, src, &child, &listed);
         err = n == 0 ? child.error : SP_OK;
         if (err == SP_OK)
             err = sp_mkdir(dst, SP_MODE_DIR, plain);
 
-        for (size_t len = dst->len; err == SP_OK && n > 0; n = sp_priv_readdir_next(&handle, src, &child, &listed)) {
+        SpPrivDirAt parent;
+        parent.len = src->len;
+        parent.nofollow = !follow_symlinks;
+        for (size_t len = dst->len; err == SP_OK && n > 0;
+             n = sp_priv_readdir_next(&handle, at, src, &child, &listed)) {
+            parent.handle = handle;
             err = sp_priv_join_child(dst, child.buf + child.len - n, n);
             if (err == SP_OK)
-                err = sp_priv_copy_tree(&child, dst, follow_symlinks, preserve_metadata);
+                err = sp_priv_copy_tree(&child, &parent, dst, follow_symlinks, preserve_metadata);
             dst->len = len;
             dst->buf[len] = '\0';
         }
@@ -3096,34 +3183,136 @@ SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
 
     SpPath tree = dst; /* extended in place for children as they are copied */
     if (err == SP_OK)
-        err = sp_priv_copy_tree(p, &tree, options.follow_symlinks, options.preserve_metadata);
+        err = sp_priv_copy_tree(p, SP_PRIV_NULL, &tree, options.follow_symlinks, options.preserve_metadata);
     return err == SP_OK ? dst : sp_priv_error_path(target->flavor, err);
 }
 
-/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed recursively. info is p's: a child's
- * is what its listing said, so a tree's files and directories are removed without a stat each */
-static SpError sp_priv_delete(const SpPath *p, SpPathInfo *info) {
-    bool tree = !sp_info(p, info, SP_SYMLINK, false) && sp_info(p, info, SP_DIR, true);
 #ifdef SP_WINDOWS
-    tree = tree && sp_stat(p, false).sp_reparse_tag != SP_PRIV_REPARSE_TAG_MOUNT_POINT;
-#endif
-    if (!tree)
-        return sp_priv_remove_impl(p, false);
+/* shutil.rmtree, made safe from links swapped in while it runs (CVE-2022-21658), as Rust's remove_dir_all is: each
+ * directory is held open from the check that it is no link to its removal through that handle, and the handle doesn't
+ * share delete access, so nothing can rename it or put a link in its place while its children go. A link or junction
+ * is removed itself, and below the top what is already gone is skipped, as CPython skips it */
+static SpError sp_priv_rmtree(const SpPath *p, bool top) {
+    SpPrivNative native;
+    SpError err = sp_priv_native(p, &native);
+    if (err != SP_OK)
+        return err;
 
-    void *handle = SP_PRIV_NULL;
+    DWORD access = DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES;
+    DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+    HANDLE h = CreateFileW(native.path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, flags, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        err = sp_priv_last_error();
+        return err == SP_ERR_NOT_FOUND && !top ? SP_OK : err;
+    }
+    FILE_ATTRIBUTE_TAG_INFO tag;
+    if (!GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)))
+        err = sp_priv_last_error();
+    else if ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        CloseHandle(h);
+        err = sp_priv_remove_impl(p, false);
+        return err == SP_ERR_NOT_FOUND && !top ? SP_OK : err;
+    }
+
+    void *listing = SP_PRIV_NULL;
     SpPath child;
-    SpPathInfo child_info;
-    SpError err = SP_OK;
+    SpPathInfo info;
     while (err == SP_OK) {
-        if (sp_priv_readdir_next(&handle, p, &child, &child_info) == 0) {
+        if (sp_priv_readdir_next(&listing, SP_PRIV_NULL, p, &child, &info) == 0) {
             err = child.error; /* why the listing ended */
             break;
         }
-        err = sp_priv_delete(&child, &child_info);
+        if (sp_info(&child, &info, SP_DIR, false))
+            err = sp_priv_rmtree(&child, false);
+        else if ((err = sp_priv_remove_impl(&child, false)) == SP_ERR_NOT_FOUND)
+            err = SP_OK;
     }
-    sp_priv_readdir_close(&handle);
+    sp_priv_readdir_close(&listing);
 
-    return err != SP_OK ? err : sp_priv_remove_impl(p, true);
+    FILE_DISPOSITION_INFO gone = {TRUE};
+    if (err == SP_OK && !SetFileInformationByHandle(h, FileDispositionInfo, &gone, sizeof(gone)))
+        err = sp_priv_last_error();
+    CloseHandle(h);
+    return err;
+}
+#else
+/* CPython's rmtree on name in dir_fd (_rmtree_safe_fd), safe from links swapped in while it runs (CVE-2022-21658):
+ * every step is relative to a directory already open, never through a link (O_NOFOLLOW), and a directory is entered
+ * only when what opened is what lstat saw there. Below the top what is already gone is skipped, as CPython skips it;
+ * the listing is read again when a pass leaves the directory not empty (a file system may miss entries removed while
+ * it is read), since CPython's list of it would need memory */
+static SpError sp_priv_rmtree_at(int dir_fd, const char *name, bool top) {
+    struct stat seen;
+    struct stat opened;
+    int flags = O_RDONLY | O_NONBLOCK | SP_PRIV_O_DIRECTORY | SP_PRIV_O_NOFOLLOW | SP_PRIV_O_CLOEXEC;
+    int fd = fstatat(dir_fd, name, &seen, SP_PRIV_AT_SYMLINK_NOFOLLOW) == 0 ? openat(dir_fd, name, flags) : -1;
+    SpError err = fd >= 0 ? SP_OK : sp_priv_last_error();
+    if (err == SP_OK && (fstat(fd, &opened) != 0 || opened.st_dev != seen.st_dev || opened.st_ino != seen.st_ino))
+        err = SP_ERR_IO; /* CPython's "Cannot call rmtree on a symbolic link": not the directory lstat saw */
+    DIR *listing = err == SP_OK ? fdopendir(fd) : SP_PRIV_NULL;
+    if (err == SP_OK && !listing)
+        err = sp_priv_last_error();
+    if (err != SP_OK) {
+        if (fd >= 0)
+            close(fd);
+        return err == SP_ERR_NOT_FOUND && !top ? SP_OK : err;
+    }
+
+    /* A second pass only for a directory left not empty by a first that removed something */
+    for (int pass = 0;; pass++) {
+        bool removed = false;
+        struct dirent *de;
+        errno = 0;
+        while (err == SP_OK && (de = readdir(listing)) != SP_PRIV_NULL) {
+            const char *n = de->d_name;
+            if (n[0] == '.' && (n[1] == '\0' || (n[1] == '.' && n[2] == '\0')))
+                continue;
+
+            /* The listing's type, as os.scandir's is_dir(follow_symlinks=False); DT_UNKNOWN, 0, asks lstat */
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(DT_UNKNOWN)
+            unsigned int mode = SP_PRIV_CAST(unsigned int, de->d_type) << 12;
+#else
+            unsigned int mode = 0;
+#endif
+            struct stat st;
+            if (mode == 0 && fstatat(fd, n, &st, SP_PRIV_AT_SYMLINK_NOFOLLOW) == 0)
+                mode = SP_PRIV_CAST(unsigned int, st.st_mode) & SP_PRIV_IFMT;
+            if (mode == SP_PRIV_IFDIR)
+                err = sp_priv_rmtree_at(fd, n, false);
+            else if (unlinkat(fd, n, 0) != 0 && errno != ENOENT)
+                err = sp_priv_last_error();
+            removed = true;
+            errno = 0;
+        }
+        if (err == SP_OK && errno != 0)
+            err = sp_priv_last_error(); /* why the listing ended */
+        if (err != SP_OK || unlinkat(dir_fd, name, SP_PRIV_AT_REMOVEDIR) == 0)
+            break;
+
+        if (pass == 0 && removed && (errno == ENOTEMPTY || errno == EEXIST)) {
+            rewinddir(listing);
+            continue;
+        }
+        err = errno == ENOENT && !top ? SP_OK : sp_priv_last_error();
+        break;
+    }
+    closedir(listing);
+    return err;
+}
+#endif
+
+/* CPython's Path._delete: symlinks and junctions are unlinked, directories removed with shutil.rmtree. info is p's */
+static SpError sp_priv_delete(const SpPath *p, SpPathInfo *info) {
+    if (sp_info(p, info, SP_SYMLINK, false) || !sp_info(p, info, SP_DIR, true))
+        return sp_priv_remove_impl(p, false);
+
+#ifdef SP_WINDOWS
+    return sp_priv_rmtree(p, true);
+#else
+    SpPrivNative native;
+    SpError err = sp_priv_native(p, &native);
+    return err != SP_OK ? err : sp_priv_rmtree_at(SP_PRIV_AT_FDCWD, native.path, true);
+#endif
 }
 
 SpError sp_remove(const SpPath *p, SpRemoveOptions options) {
@@ -3166,8 +3355,9 @@ SpPath sp_move(const SpPath *p, const SpPath *target, bool into) {
     /* Across filesystems: copy, keeping symlinks and metadata, then delete */
     if (err == SP_ERR_CROSS_DEVICE) {
         SpPath tree = dst;
-        err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1) ? SP_ERR_SAME_FILE
-                                                                        : sp_priv_copy_tree(p, &tree, false, true);
+        err = sp_priv_relative_len(&dst, p) != SP_PRIV_CAST(size_t, -1)
+                  ? SP_ERR_SAME_FILE
+                  : sp_priv_copy_tree(p, SP_PRIV_NULL, &tree, false, true);
         SpPathInfo info = SP_PRIV_ZERO;
         if (err == SP_OK)
             err = sp_priv_delete(p, &info);
@@ -3320,10 +3510,20 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
 
         path->len = it->priv_.stack[it->depth].path_len;
         path->buf[path->len] = '\0';
+        /* Listed through the frame below's directory, which this one's is in; a walk not following links, which pushed
+         * this frame for a subdirectory it didn't stat as a link, doesn't follow one at its end */
+        SpPrivDirAt below = SP_PRIV_ZERO;
+        if (it->depth > 0) {
+            below.handle = it->priv_.stack[it->depth - 1].handle;
+            below.len = it->priv_.stack[it->depth - 1].path_len;
+            below.nofollow = walk && !it->priv_.recurse_symlinks && it->priv_.stack[it->depth - 1].from == from &&
+                             it->priv_.stack[it->depth - 1].to == to;
+        }
+
         /* Like pathlib, a directory that can't be listed has no matches; an entry too long for a path is an error */
         SpPath entry;
         SpPathInfo info;
-        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, path, &entry, &info);
+        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, &below, path, &entry, &info);
         if (n == 0 && entry.error == SP_ERR_TOO_LONG)
             it->error = SP_ERR_TOO_LONG;
         if (n == 0) {
@@ -3523,7 +3723,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (it->error != SP_OK || it->priv_.done)
         return false;
-    size_t n = sp_priv_readdir_next(&it->priv_.handle, &it->dir, out, &it->info);
+    size_t n = sp_priv_readdir_next(&it->priv_.handle, SP_PRIV_NULL, &it->dir, out, &it->info);
     if (n > 0) {
         it->name = SP_PRIV_STR(out->buf + out->len - n, n);
         return true;
@@ -3579,7 +3779,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     void *handle = SP_PRIV_NULL;
     SpPath child;
     SpPathInfo info;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, &e->dirpath, &child, &info)) > 0; count++) {
+    for (size_t n; (n = sp_priv_readdir_next(&handle, SP_PRIV_NULL, &e->dirpath, &child, &info)) > 0; count++) {
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
