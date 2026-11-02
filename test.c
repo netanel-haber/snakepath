@@ -1,6 +1,10 @@
 /* test.c - Rigorous pathlib tests for snakepath.h (plus the fluent API with -DSNAKEPATH_FLUENT).
- * With -DSP_FFI -shared it builds the library the Python bindings (snakepath.py) load instead, and with -DSP_DIFF
+ * With -DSP_PYTHON it builds the Python bindings' extension module (_snakepath, which snakepath.py imports) instead, and with -DSP_DIFF
  * the driver ./nob diff compares two versions of the header with. */
+#ifdef SP_PYTHON
+#define PY_SSIZE_T_CLEAN
+#include <Python.h> /* before any system header, as Python requires */
+#endif
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS  /* Disable fopen deprecation warning on MSVC */
 #endif
@@ -11,7 +15,7 @@
 #define SP_PATH_MAX SP_PATH_MAX_LINUX
 #endif
 #endif
-#ifndef SP_FFI
+#ifndef SP_PYTHON
 #define SP_GLOB_MAX_DEPTH 16 /* a glob past it needs a tree this deep, which Windows paths must be short enough for */
 #endif
 #define SNAKEPATH_IMPLEMENTATION
@@ -21,198 +25,803 @@
 #include "snakepath.h"
 #endif
 
-#ifdef SP_FFI
+#ifdef SP_PYTHON
 
-#ifdef _WIN32
-#define SP_EXPORT __declspec(dllexport)
-#else
-#define SP_EXPORT __attribute__((visibility("default")))
-#endif
+/* The Python bindings' extension module, _snakepath: one function per library function snakepath.py calls, taking
+ * and returning Python objects. A path is an immutable SpPath object holding exactly its text, plus its anchor, drive,
+ * flavor and error (an error path is empty), rebuilt as an SpPath on the stack for each call. */
+#include <stddef.h>
 
-/* One wrapper per library function the Python bindings (snakepath.py) call, results through pointers */
+typedef struct {
+    PyObject_VAR_HEAD /* ob_size: the text's length */
+    size_t anchor;
+    size_t drive;
+    int flavor;
+    int error;
+    Py_hash_t hash; /* sp_path_hash's, made once (-1 until then) */
+    PyObject *str;  /* str(), made once */
+    char text[1];   /* NUL-terminated */
+} PyPath;
 
-#define WRAP_CONST(name) \
-    SP_EXPORT int sp_const_##name(void) { return name; }
+static PyTypeObject PyPath_Type;
 
-#define WRAP_TERM(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpTerm *out) { *out = sp_##fn(p); }
+static void pypath_dealloc(PyObject *o) {
+    Py_XDECREF(((PyPath *)o)->str);
+    Py_TYPE(o)->tp_free(o);
+}
 
-#define WRAP_PATH_UNARY(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, SpPath *out) { *out = sp_##fn(p); }
+static PyMemberDef pypath_members[] = {
+    {"error", Py_T_INT, offsetof(PyPath, error), Py_READONLY, NULL},
+    {"flavor", Py_T_INT, offsetof(PyPath, flavor), Py_READONLY, NULL},
+    {NULL, 0, 0, 0, NULL},
+};
 
-#define WRAP_PATH_CSTR(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const char *s, SpPath *out) { *out = sp_##fn(p, s); }
+static PyTypeObject PyPath_Type = {
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_snakepath.SpPath",
+    .tp_basicsize = offsetof(PyPath, text) + 1,
+    .tp_itemsize = 1,
+    .tp_dealloc = pypath_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_members = pypath_members,
+};
 
-#define WRAP_PATH_BINARY(fn) \
-    SP_EXPORT void sp_##fn##_wrap(const SpPath *p, const SpPath *other, SpPath *out) { *out = sp_##fn(p, other); }
+/* The C path of a Python one, and back */
+static int load(PyObject *o, SpPath *p) {
+    if (!Py_IS_TYPE(o, &PyPath_Type)) {
+        PyErr_SetString(PyExc_TypeError, "expected a _snakepath.SpPath");
+        return 0;
+    }
+    PyPath *pp = (PyPath *)o;
+    size_t len = (size_t)Py_SIZE(pp);
+    memcpy(p->buf, pp->text, len + 1);
+    p->len = len;
+    p->anchor = pp->anchor;
+    p->drive = pp->drive;
+    p->flavor = (SpFlavor)pp->flavor;
+    p->error = (SpError)pp->error;
+    return 1;
+}
 
-#define WRAP_BOOL_UNARY(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *p) { return sp_##fn(p) ? 1 : 0; }
+static PyObject *made(const SpPath *p) {
+    PyPath *o = PyObject_NewVar(PyPath, &PyPath_Type, (Py_ssize_t)p->len + 1);
+    if (!o)
+        return NULL;
+    Py_SET_SIZE(o, (Py_ssize_t)p->len);
+    memcpy(o->text, p->buf, p->len);
+    o->text[p->len] = '\0';
+    o->anchor = p->anchor;
+    o->drive = p->drive;
+    o->flavor = (int)p->flavor;
+    o->error = (int)p->error;
+    o->hash = -1;
+    o->str = NULL;
+    return (PyObject *)o;
+}
 
-#define WRAP_BOOL_FOLLOW(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *p, int follow_symlinks) { return sp_##fn(p, follow_symlinks != 0) ? 1 : 0; }
+/* A str argument's UTF-8 (lone surrogates passed through, as WTF-8); *keep holds what owns the bytes, if anything */
+static const char *utf8(PyObject *s, Py_ssize_t *len, PyObject **keep) {
+    *keep = NULL;
+    if (!PyUnicode_Check(s)) {
+        PyErr_Format(PyExc_TypeError, "expected str, not %s", Py_TYPE(s)->tp_name);
+        return NULL;
+    }
+    const char *u = PyUnicode_AsUTF8AndSize(s, len);
+    if (u)
+        return u;
+    PyErr_Clear();
+    *keep = PyUnicode_AsEncodedString(s, "utf-8", "surrogatepass");
+    if (!*keep)
+        return NULL;
+    *len = PyBytes_GET_SIZE(*keep);
+    return PyBytes_AS_STRING(*keep);
+}
 
-#define WRAP_BOOL_BINARY(fn) \
-    SP_EXPORT int sp_##fn##_wrap(const SpPath *a, const SpPath *b) { return sp_##fn(a, b) ? 1 : 0; }
+static PyObject *text(const char *s, size_t len) { return PyUnicode_DecodeUTF8(s, (Py_ssize_t)len, "surrogatepass"); }
 
-/* Constants */
-#define WRAP_ERROR(name, message) WRAP_CONST(name)
-SP_ERRORS(WRAP_ERROR)
-WRAP_CONST(SP_ANY)
-WRAP_CONST(SP_FILE)
-WRAP_CONST(SP_DIR)
-WRAP_CONST(SP_SYMLINK)
-WRAP_CONST(SP_BLOCK_DEVICE)
-WRAP_CONST(SP_CHAR_DEVICE)
-WRAP_CONST(SP_FIFO)
-WRAP_CONST(SP_SOCKET)
-WRAP_CONST(SP_MOUNT)
-WRAP_CONST(SP_JUNCTION)
-WRAP_CONST(SP_CASE_DEFAULT)
-WRAP_CONST(SP_CASE_SENSITIVE)
-WRAP_CONST(SP_CASE_INSENSITIVE)
-WRAP_CONST(SP_PATH_MAX)
-WRAP_CONST(SP_MAX_SUFFIXES)
-SP_EXPORT const char *sp_error_str_wrap(int error) { return sp_error_str((SpError)error); }
+static int arity(Py_ssize_t nargs, Py_ssize_t want, const char *name) {
+    if (nargs == want)
+        return 1;
+    PyErr_Format(PyExc_TypeError, "%s takes %zd arguments", name, want);
+    return 0;
+}
 
-/* Struct sizes, for the opaque ones */
-SP_EXPORT size_t sp_sizeof_parts_iter(void) { return sizeof(SpPartsIter); }
-SP_EXPORT size_t sp_sizeof_parents_iter(void) { return sizeof(SpParentsIter); }
-SP_EXPORT size_t sp_sizeof_glob_iter(void) { return sizeof(SpGlobIter); }
-SP_EXPORT size_t sp_sizeof_iterdir_iter(void) { return sizeof(SpIterdirIter); }
-SP_EXPORT size_t sp_sizeof_path_info(void) { return sizeof(SpPathInfo); }
-SP_EXPORT size_t sp_sizeof_walk_iter(void) { return sizeof(SpWalkIter); }
+static int flag(PyObject *o) { return PyObject_IsTrue(o); }
+static long num(PyObject *o) { return PyLong_AsLong(o); }
 
 /* Making and converting paths */
-SP_EXPORT void sp_path_new_len_wrap(const char *s, size_t len, int flavor, SpPath *out) {
-    *out = sp_path_from_n(s, len, (SpFlavor)flavor);
-}
-SP_EXPORT void sp_path_convert_wrap(const char *s, int src_flavor, int dest_flavor, SpPath *out) {
-    *out = sp_path_convert(s, (SpFlavor)src_flavor, (SpFlavor)dest_flavor);
-}
-SP_EXPORT void sp_path_copy_wrap(const SpPath *p, SpPath *out) { *out = *p; }
-SP_EXPORT const char *sp_str_wrap(const SpPath *p) { return sp_str(p); }
-SP_EXPORT void sp_cwd_wrap(int flavor, SpPath *out) { *out = sp_cwd((SpFlavor)flavor); }
-SP_EXPORT void sp_home_wrap(int flavor, SpPath *out) { *out = sp_home((SpFlavor)flavor); }
-SP_EXPORT void sp_from_uri_wrap(const char *uri, int flavor, SpPath *out) { *out = sp_from_uri(uri, (SpFlavor)flavor); }
-
-/* Path -> text */
-WRAP_TERM(drive)
-WRAP_TERM(root)
-WRAP_TERM(anchor)
-WRAP_TERM(name)
-WRAP_TERM(stem)
-WRAP_TERM(suffix)
-WRAP_TERM(as_posix)
-SP_EXPORT void sp_suffixes_wrap(const SpPath *p, SpSuffixes *out) { *out = sp_suffixes(p); }
-SP_EXPORT int sp_as_uri_wrap(const SpPath *p, char *buf, size_t buf_size) { return sp_as_uri(p, buf, buf_size); }
-SP_EXPORT void sp_owner_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_owner(p, follow_symlinks != 0); }
-SP_EXPORT void sp_group_wrap(const SpPath *p, int follow_symlinks, SpTerm *out) { *out = sp_group(p, follow_symlinks != 0); }
-
-/* Path -> path */
-WRAP_PATH_UNARY(parent)
-WRAP_PATH_UNARY(absolute)
-WRAP_PATH_UNARY(expanduser)
-WRAP_PATH_UNARY(readlink)
-WRAP_PATH_CSTR(with_name)
-WRAP_PATH_CSTR(with_stem)
-WRAP_PATH_CSTR(with_suffix)
-SP_EXPORT void sp_rename_wrap(const SpPath *p, const SpPath *target, int replace, SpPath *out) {
-    *out = sp_rename(p, target, replace != 0);
-}
-SP_EXPORT void sp_move_wrap(const SpPath *p, const SpPath *target, int into, SpPath *out) {
-    *out = sp_move(p, target, into != 0);
-}
-SP_EXPORT void sp_join_one_len_wrap(const SpPath *p, const char *s, size_t len, SpPath *out) {
-    *out = sp_join_n(p, s, len);
-}
-SP_EXPORT void sp_with_segments_wrap(const SpPath *p, const char **parts, size_t parts_count, SpPath *out) {
-    *out = sp_with_segments(p, parts, parts_count);
-}
-SP_EXPORT void sp_relative_to_wrap(const SpPath *p, const SpPath *other, int walk_up, SpPath *out) {
-    *out = sp_relative_to(p, other, walk_up != 0);
-}
-SP_EXPORT void sp_resolve_wrap(const SpPath *p, int strict, SpPath *out) { *out = sp_resolve(p, strict != 0); }
-SP_EXPORT void sp_copy_wrap(const SpPath *p, const SpPath *target, int follow_symlinks, int preserve_metadata,
-                            int into, SpPath *out) {
-    SpCopyOptions options = {follow_symlinks != 0, preserve_metadata != 0, into != 0};
-    *out = sp_copy(p, target, options);
+static PyObject *py_path(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = arity(nargs, 2, "path") ? utf8(args[0], &len, &keep) : NULL;
+    if (!s)
+        return NULL;
+    SpPath p = sp_path_from_n(s, (size_t)len, (SpFlavor)num(args[1]));
+    Py_XDECREF(keep);
+    return made(&p);
 }
 
-/* Parts and parents */
-SP_EXPORT void sp_parts_iter_begin_wrap(const SpPath *p, SpPartsIter *out) { *out = sp_parts_begin(p); }
-SP_EXPORT int sp_parts_iter_next_wrap(SpPartsIter *it, SpStr *out) { return sp_parts_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_parents_iter_begin_wrap(const SpPath *p, SpParentsIter *out) { *out = sp_parents_begin(p); }
-SP_EXPORT int sp_parents_iter_next_wrap(SpParentsIter *it, SpPath *out) { return sp_parents_next(it, out) ? 1 : 0; }
+static PyObject *py_convert(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = arity(nargs, 3, "convert") ? utf8(args[0], &len, &keep) : NULL;
+    if (!s)
+        return NULL;
+    SpPath p = sp_path_convert(s, (SpFlavor)num(args[1]), (SpFlavor)num(args[2]));
+    Py_XDECREF(keep);
+    return made(&p);
+}
+
+static PyObject *py_str(PyObject *m, PyObject *o) {
+    (void)m;
+    if (!Py_IS_TYPE(o, &PyPath_Type))
+        return PyErr_Format(PyExc_TypeError, "expected a _snakepath.SpPath");
+    PyPath *pp = (PyPath *)o;
+    if (!pp->str)
+        pp->str = Py_SIZE(pp) == 0 ? PyUnicode_FromString(".") : text(pp->text, (size_t)Py_SIZE(pp));
+    return Py_XNewRef(pp->str);
+}
+
+static PyObject *py_cwd(PyObject *m, PyObject *flavor) {
+    (void)m;
+    SpPath p = sp_cwd((SpFlavor)num(flavor));
+    return made(&p);
+}
+
+static PyObject *py_home(PyObject *m, PyObject *flavor) {
+    (void)m;
+    SpPath p = sp_home((SpFlavor)num(flavor));
+    return made(&p);
+}
+
+static PyObject *py_from_uri(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = arity(nargs, 2, "from_uri") ? utf8(args[0], &len, &keep) : NULL;
+    if (!s)
+        return NULL;
+    SpPath p = sp_from_uri(s, (SpFlavor)num(args[1]));
+    Py_XDECREF(keep);
+    return made(&p);
+}
+
+/* Path -> text: drive, root, anchor, name, stem, suffix, as_posix (0 to 6) */
+static PyObject *py_term(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "term") || !load(args[0], &p))
+        return NULL;
+    SpTerm (*const terms[])(const SpPath *) = {sp_drive, sp_root, sp_anchor, sp_name, sp_stem, sp_suffix, sp_as_posix};
+    long which = num(args[1]);
+    if (which < 0 || which >= (long)SP_ARRAY_LEN(terms))
+        return PyErr_Format(PyExc_ValueError, "no term %ld", which);
+    SpTerm t = terms[which](&p);
+    return text(t.buf, t.len);
+}
+
+static PyObject *py_suffixes(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    SpSuffixes s = sp_suffixes(&p);
+    PyObject *list = PyList_New(0);
+    for (size_t i = 0; list && i < s.count; i++) {
+        PyObject *item = text(s.items[i].data, s.items[i].len);
+        if (!item || PyList_Append(list, item) < 0)
+            Py_CLEAR(list);
+        Py_XDECREF(item);
+    }
+    return list ? Py_BuildValue("(Ni)", list, (int)s.error) : NULL;
+}
+
+static PyObject *py_as_uri(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    char buf[SP_PATH_MAX * 3 + 8]; /* every byte percent-encoded, after "file:///" */
+    SpError err = sp_as_uri(&p, buf, sizeof(buf));
+    return Py_BuildValue("(Ni)", err == SP_OK ? PyUnicode_FromString(buf) : Py_NewRef(Py_None), (int)err);
+}
+
+static PyObject *py_id_name(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 3, "id_name") || !load(args[0], &p))
+        return NULL;
+    SpTerm t = flag(args[2]) ? sp_group(&p, flag(args[1])) : sp_owner(&p, flag(args[1]));
+    return Py_BuildValue("(Ni)", text(t.buf, t.len), (int)t.error);
+}
+
+/* Path -> path: parent, absolute, expanduser, readlink (0 to 3) */
+static PyObject *py_unary(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "unary") || !load(args[0], &p))
+        return NULL;
+    SpPath (*const fns[])(const SpPath *) = {sp_parent, sp_absolute, sp_expanduser, sp_readlink};
+    long which = num(args[1]);
+    if (which < 0 || which >= (long)SP_ARRAY_LEN(fns))
+        return PyErr_Format(PyExc_ValueError, "no function %ld", which);
+    SpPath r = fns[which](&p);
+    return made(&r);
+}
+
+/* with_name, with_stem, with_suffix (0 to 2) */
+static PyObject *py_with_(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = arity(nargs, 3, "with_") && load(args[0], &p) ? utf8(args[2], &len, &keep) : NULL;
+    if (!s)
+        return NULL;
+    SpPath (*const fns[])(const SpPath *, const char *) = {sp_with_name, sp_with_stem, sp_with_suffix};
+    long which = num(args[1]);
+    SpPath r = fns[which < 0 || which > 2 ? 0 : which](&p, s);
+    Py_XDECREF(keep);
+    return made(&r);
+}
+
+static PyObject *py_join(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *s = arity(nargs, 2, "join") && load(args[0], &p) ? utf8(args[1], &len, &keep) : NULL;
+    if (!s)
+        return NULL;
+    SpPath r = sp_join_n(&p, s, (size_t)len);
+    Py_XDECREF(keep);
+    return made(&r);
+}
+
+static PyObject *py_join_path(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "join_path") || !load(args[0], &p) || !Py_IS_TYPE(args[1], &PyPath_Type))
+        return PyErr_Occurred() ? NULL : PyErr_Format(PyExc_TypeError, "expected a _snakepath.SpPath");
+    PyPath *other = (PyPath *)args[1];
+    SpPath r = sp_join_n(&p, other->text, (size_t)Py_SIZE(other));
+    return made(&r);
+}
+
+static PyObject *py_with_segments(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "with_segments") || !load(args[0], &p))
+        return NULL;
+    PyObject *seq = PySequence_Fast(args[1], "segments must be a sequence");
+    if (!seq)
+        return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    const char **parts = PyMem_Calloc((size_t)(n > 0 ? n : 1), sizeof(char *));
+    PyObject **keeps = PyMem_Calloc((size_t)(n > 0 ? n : 1), sizeof(PyObject *));
+    PyObject *result = NULL;
+    Py_ssize_t i = 0;
+    for (; parts && keeps && i < n; i++) {
+        Py_ssize_t len;
+        if (!(parts[i] = utf8(PySequence_Fast_GET_ITEM(seq, i), &len, &keeps[i])))
+            break;
+    }
+    if (parts && keeps && i == n) {
+        SpPath r = sp_with_segments(&p, parts, (size_t)n);
+        result = made(&r);
+    } else if (!PyErr_Occurred()) {
+        PyErr_NoMemory();
+    }
+    for (Py_ssize_t k = 0; keeps && k < i; k++)
+        Py_XDECREF(keeps[k]);
+    PyMem_Free(parts);
+    PyMem_Free(keeps);
+    Py_DECREF(seq);
+    return result;
+}
+
+static PyObject *py_relative_to(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    SpPath other;
+    if (!arity(nargs, 3, "relative_to") || !load(args[0], &p) || !load(args[1], &other))
+        return NULL;
+    SpPath r = sp_relative_to(&p, &other, flag(args[2]));
+    return made(&r);
+}
+
+static PyObject *py_resolve(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "resolve") || !load(args[0], &p))
+        return NULL;
+    SpPath r;
+    int strict = flag(args[1]);
+    Py_BEGIN_ALLOW_THREADS
+    r = sp_resolve(&p, strict);
+    Py_END_ALLOW_THREADS
+    return made(&r);
+}
+
+static PyObject *py_copy(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    SpPath target;
+    if (!arity(nargs, 5, "copy") || !load(args[0], &p) || !load(args[1], &target))
+        return NULL;
+    SpCopyOptions options = {flag(args[2]), flag(args[3]), flag(args[4])};
+    SpPath r;
+    Py_BEGIN_ALLOW_THREADS
+    r = sp_copy(&p, &target, options);
+    Py_END_ALLOW_THREADS
+    return made(&r);
+}
+
+/* rename (with replace) and move (with into) */
+static PyObject *py_rename(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    SpPath target;
+    if (!arity(nargs, 4, "rename") || !load(args[0], &p) || !load(args[1], &target))
+        return NULL;
+    SpPath r = flag(args[3]) ? sp_move(&p, &target, flag(args[2])) : sp_rename(&p, &target, flag(args[2]));
+    return made(&r);
+}
+
+/* Parts and parents, all at once */
+static PyObject *py_parts(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    PyObject *list = PyList_New(0);
+    SpPartsIter it = sp_parts_begin(&p);
+    for (SpStr part; list && sp_parts_next(&it, &part);) {
+        PyObject *item = text(part.data, part.len);
+        if (!item || PyList_Append(list, item) < 0)
+            Py_CLEAR(list);
+        Py_XDECREF(item);
+    }
+    PyObject *tuple = list ? PyList_AsTuple(list) : NULL;
+    Py_XDECREF(list);
+    return tuple;
+}
+
+static PyObject *py_parents(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    PyObject *list = PyList_New(0);
+    SpParentsIter it = sp_parents_begin(&p);
+    for (SpPath parent; list && sp_parents_next(&it, &parent);) {
+        PyObject *item = made(&parent);
+        if (!item || PyList_Append(list, item) < 0)
+            Py_CLEAR(list);
+        Py_XDECREF(item);
+    }
+    PyObject *tuple = list ? PyList_AsTuple(list) : NULL;
+    Py_XDECREF(list);
+    return tuple;
+}
 
 /* Comparisons and matching */
-WRAP_BOOL_UNARY(is_absolute)
-WRAP_BOOL_BINARY(path_eq)
-WRAP_BOOL_BINARY(is_relative_to)
-SP_EXPORT int sp_path_cmp_wrap(const SpPath *a, const SpPath *b) { return sp_path_cmp(a, b); }
-SP_EXPORT unsigned long sp_path_hash_wrap(const SpPath *p) { return sp_path_hash(p); }
-SP_EXPORT int sp_match_wrap(const SpPath *p, const char *pattern, int full, int cs) {
-    SpMatchOptions options = {full != 0, (SpCaseSensitivity)cs};
-    return sp_match(p, pattern, options) ? 1 : 0;
+static PyObject *py_is_absolute(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    return load(o, &p) ? PyBool_FromLong(sp_is_absolute(&p)) : NULL;
+}
+
+/* eq, cmp, is_relative_to, samefile (0 to 3) */
+static PyObject *py_binary(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath a;
+    SpPath b;
+    if (!arity(nargs, 3, "binary") || !load(args[0], &a) || !load(args[1], &b))
+        return NULL;
+    switch (num(args[2])) {
+    case 0:
+        return PyBool_FromLong(sp_path_eq(&a, &b));
+    case 1:
+        return PyLong_FromLong(sp_path_cmp(&a, &b));
+    case 2:
+        return PyBool_FromLong(sp_is_relative_to(&a, &b));
+    default:
+        return PyBool_FromLong(sp_samefile(&a, &b));
+    }
+}
+
+static PyObject *py_hash(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    PyPath *pp = (PyPath *)o;
+    if (pp->hash == -1) {
+        pp->hash = (Py_hash_t)sp_path_hash(&p);
+        pp->hash = pp->hash == -1 ? -2 : pp->hash;
+    }
+    return PyLong_FromSsize_t(pp->hash);
+}
+
+static PyObject *py_match(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *pattern = arity(nargs, 4, "match") && load(args[0], &p) ? utf8(args[1], &len, &keep) : NULL;
+    if (!pattern)
+        return NULL;
+    SpMatchOptions options = {flag(args[2]), (SpCaseSensitivity)num(args[3])};
+    bool hit = sp_match(&p, pattern, options);
+    Py_XDECREF(keep);
+    return PyBool_FromLong(hit);
 }
 
 /* The file system */
-SP_EXPORT int sp_is_wrap(const SpPath *p, int type, int follow_symlinks) {
-    return sp_is(p, (SpFileType)type, follow_symlinks != 0) ? 1 : 0;
-}
-WRAP_BOOL_BINARY(samefile)
-SP_EXPORT void sp_stat_wrap(const SpPath *p, int follow_symlinks, SpStatResult *out) {
-    *out = sp_stat(p, follow_symlinks != 0);
-}
-SP_EXPORT int sp_stat_eq_wrap(const SpStatResult *a, const SpStatResult *b) { return sp_stat_eq(a, b) ? 1 : 0; }
-SP_EXPORT int sp_mkdir_wrap(const SpPath *p, unsigned int mode, int parents, int exist_ok, unsigned int parent_mode) {
-    SpMkdirOptions options = {parents != 0, exist_ok != 0, parent_mode};
-    return sp_mkdir(p, mode, options);
-}
-SP_EXPORT int sp_touch_wrap(const SpPath *p, unsigned int mode, int exist_ok) { return sp_touch(p, mode, exist_ok != 0); }
-SP_EXPORT int sp_remove_wrap(const SpPath *p, int dir, int missing_ok, int recursive) {
-    SpRemoveOptions options = {dir != 0, missing_ok != 0, recursive != 0};
-    return sp_remove(p, options);
-}
-SP_EXPORT int sp_info_wrap(const SpPath *p, SpPathInfo *info, int type, int follow_symlinks) {
-    return sp_info(p, info, (SpFileType)type, follow_symlinks != 0) ? 1 : 0;
-}
-SP_EXPORT int sp_chmod_wrap(const SpPath *p, unsigned int mode, int follow_symlinks) {
-    return sp_chmod(p, mode, follow_symlinks != 0);
-}
-SP_EXPORT int sp_link_to_wrap(const SpPath *p, const SpPath *target, int hard, int target_is_directory) {
-    SpLinkOptions options = {hard != 0, target_is_directory != 0};
-    return sp_link_to(p, target, options);
-}
-SP_EXPORT void sp_read_file_wrap(const SpPath *p, char *buf, size_t buf_size, SpIOResult *out) {
-    *out = sp_read_file(p, buf, buf_size);
-}
-SP_EXPORT void sp_write_file_wrap(const SpPath *p, const char *data, size_t data_len, SpIOResult *out) {
-    *out = sp_write_file(p, data, data_len);
+static PyObject *py_is_(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 3, "is_") || !load(args[0], &p))
+        return NULL;
+    return PyBool_FromLong(sp_is(&p, (SpFileType)num(args[1]), flag(args[2])));
 }
 
-/* Iterators */
-SP_EXPORT void sp_iterdir_begin_wrap(const SpPath *p, SpIterdirIter *out) { *out = sp_iterdir_begin(p); }
-SP_EXPORT int sp_iterdir_next_wrap(SpIterdirIter *it, SpPath *out) { return sp_iterdir_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_iterdir_end_wrap(SpIterdirIter *it) { sp_iterdir_end(it); }
-SP_EXPORT int sp_iterdir_error_wrap(const SpIterdirIter *it) { return it->error; }
-SP_EXPORT void sp_iterdir_info_wrap(const SpIterdirIter *it, SpPathInfo *out) { *out = it->info; }
-SP_EXPORT void sp_glob_begin_wrap(const SpPath *p, const char *pattern, int recursive, int recurse_symlinks, int cs,
-                                  SpGlobIter *out) {
-    SpGlobOptions options = {recursive != 0, recurse_symlinks != 0, (SpCaseSensitivity)cs};
-    *out = sp_glob_begin(p, pattern, options);
+static PyObject *stat_tuple(const SpStatResult *s) {
+    return Py_BuildValue("(IKKKIILdddLLLIi)", s->sp_mode, s->sp_ino, s->sp_dev, s->sp_nlink, s->sp_uid, s->sp_gid,
+                         s->sp_size, s->sp_atime, s->sp_mtime, s->sp_ctime, s->sp_atime_ns, s->sp_mtime_ns,
+                         s->sp_ctime_ns, s->sp_reparse_tag, (int)s->error);
 }
-SP_EXPORT int sp_glob_next_wrap(SpGlobIter *it, SpPath *out) { return sp_glob_next(it, out) ? 1 : 0; }
-SP_EXPORT void sp_glob_end_wrap(SpGlobIter *it) { sp_glob_end(it); }
-SP_EXPORT int sp_glob_error_wrap(const SpGlobIter *it) { return it->error; }
-SP_EXPORT void sp_walk_begin_wrap(const SpPath *top, int bottom_up, int follow_symlinks, void *buf, size_t buf_size,
-                                  SpWalkIter *out) {
-    SpWalkOptions options = {bottom_up != 0, follow_symlinks != 0};
-    *out = sp_walk_begin(top, options, buf, buf_size);
+
+static int stat_from(PyObject *t, SpStatResult *s) {
+    memset(s, 0, sizeof(*s));
+    int error = 0;
+    if (!PyArg_ParseTuple(t, "IKKKIILdddLLLIi", &s->sp_mode, &s->sp_ino, &s->sp_dev, &s->sp_nlink, &s->sp_uid,
+                          &s->sp_gid, &s->sp_size, &s->sp_atime, &s->sp_mtime, &s->sp_ctime, &s->sp_atime_ns,
+                          &s->sp_mtime_ns, &s->sp_ctime_ns, &s->sp_reparse_tag, &error))
+        return 0;
+    s->error = (SpError)error;
+    return 1;
 }
-SP_EXPORT SpWalkEntry *sp_walk_next_wrap(SpWalkIter *it) { return sp_walk_next(it); }
-SP_EXPORT void sp_walk_end_wrap(SpWalkIter *it) { sp_walk_end(it); }
-SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
+
+static PyObject *py_stat(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "stat") || !load(args[0], &p))
+        return NULL;
+    SpStatResult s = sp_stat(&p, flag(args[1]));
+    return stat_tuple(&s);
+}
+
+static PyObject *py_stat_eq(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpStatResult a;
+    SpStatResult b;
+    if (!arity(nargs, 2, "stat_eq") || !stat_from(args[0], &a) || !stat_from(args[1], &b))
+        return NULL;
+    return PyBool_FromLong(sp_stat_eq(&a, &b));
+}
+
+static PyObject *py_mkdir(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 5, "mkdir") || !load(args[0], &p))
+        return NULL;
+    SpMkdirOptions options = {flag(args[2]), flag(args[3]), (unsigned int)num(args[4])};
+    return PyLong_FromLong(sp_mkdir(&p, (unsigned int)num(args[1]), options));
+}
+
+static PyObject *py_touch(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 3, "touch") || !load(args[0], &p))
+        return NULL;
+    return PyLong_FromLong(sp_touch(&p, (unsigned int)num(args[1]), flag(args[2])));
+}
+
+static PyObject *py_remove(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 4, "remove") || !load(args[0], &p))
+        return NULL;
+    SpRemoveOptions options = {flag(args[1]), flag(args[2]), flag(args[3])};
+    SpError err;
+    Py_BEGIN_ALLOW_THREADS
+    err = sp_remove(&p, options);
+    Py_END_ALLOW_THREADS
+    return PyLong_FromLong(err);
+}
+
+static PyObject *py_chmod(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 3, "chmod") || !load(args[0], &p))
+        return NULL;
+    return PyLong_FromLong(sp_chmod(&p, (unsigned int)num(args[1]), flag(args[2])));
+}
+
+static PyObject *py_link_to(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    SpPath target;
+    if (!arity(nargs, 4, "link_to") || !load(args[0], &p) || !load(args[1], &target))
+        return NULL;
+    SpLinkOptions options = {flag(args[2]), flag(args[3])};
+    return PyLong_FromLong(sp_link_to(&p, &target, options));
+}
+
+/* (contents, error, bytes): with SP_ERR_TOO_LONG, bytes is the file's size */
+static PyObject *py_read_file(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "read_file") || !load(args[0], &p))
+        return NULL;
+    Py_ssize_t size = PyLong_AsSsize_t(args[1]);
+    PyObject *bytes = PyBytes_FromStringAndSize(NULL, size > 0 ? size : 1);
+    if (!bytes)
+        return NULL;
+    SpIOResult r;
+    char *buf = PyBytes_AS_STRING(bytes);
+    Py_BEGIN_ALLOW_THREADS
+    r = sp_read_file(&p, buf, (size_t)size);
+    Py_END_ALLOW_THREADS
+    if (r.error == SP_OK && _PyBytes_Resize(&bytes, (Py_ssize_t)r.bytes) < 0)
+        return NULL;
+    return Py_BuildValue("(Nin)", bytes, (int)r.error, (Py_ssize_t)r.bytes);
+}
+
+static PyObject *py_write_file(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 2, "write_file") || !load(args[0], &p))
+        return NULL;
+    Py_buffer data;
+    if (PyObject_GetBuffer(args[1], &data, PyBUF_SIMPLE) < 0)
+        return NULL;
+    SpIOResult r;
+    Py_BEGIN_ALLOW_THREADS
+    r = sp_write_file(&p, data.buf, (size_t)data.len);
+    Py_END_ALLOW_THREADS
+    PyBuffer_Release(&data);
+    return Py_BuildValue("(ni)", (Py_ssize_t)r.bytes, (int)r.error);
+}
+
+/* Path.info: an SpPathInfo in a bytearray */
+static SpPathInfo *info_of(PyObject *o) {
+    if (!PyByteArray_Check(o) || PyByteArray_GET_SIZE(o) != (Py_ssize_t)sizeof(SpPathInfo)) {
+        PyErr_SetString(PyExc_TypeError, "expected an SpPathInfo bytearray");
+        return NULL;
+    }
+    return (SpPathInfo *)(void *)PyByteArray_AS_STRING(o);
+}
+
+static PyObject *info_new(const SpPathInfo *info) {
+    return PyByteArray_FromStringAndSize((const char *)(const void *)info, sizeof(SpPathInfo));
+}
+
+static PyObject *py_info_new(PyObject *m, PyObject *unused) {
+    (void)m;
+    (void)unused;
+    SpPathInfo info;
+    memset(&info, 0, sizeof(info));
+    return info_new(&info);
+}
+
+static PyObject *py_info(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    SpPathInfo *info = arity(nargs, 4, "info") && load(args[0], &p) ? info_of(args[1]) : NULL;
+    if (!info)
+        return NULL;
+    return PyBool_FromLong(sp_info(&p, info, (SpFileType)num(args[2]), flag(args[3])));
+}
+
+/* ([(entry, info), ...], error): the whole listing, as pathlib reads it before giving any */
+static PyObject *py_iterdir(PyObject *m, PyObject *o) {
+    (void)m;
+    SpPath p;
+    if (!load(o, &p))
+        return NULL;
+    PyObject *list = PyList_New(0);
+    SpIterdirIter it = sp_iterdir_begin(&p);
+    for (SpPath entry; list && sp_iterdir_next(&it, &entry);) {
+        PyObject *item = Py_BuildValue("(NN)", made(&entry), info_new(&it.info));
+        if (!item || PyList_Append(list, item) < 0)
+            Py_CLEAR(list);
+        Py_XDECREF(item);
+    }
+    sp_iterdir_end(&it);
+    return list ? Py_BuildValue("(Ni)", list, (int)it.error) : NULL;
+}
+
+/* ([match, ...], error): glob and rglob, every match */
+static PyObject *py_glob(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    Py_ssize_t len;
+    PyObject *keep;
+    const char *pattern = arity(nargs, 5, "glob") && load(args[0], &p) ? utf8(args[1], &len, &keep) : NULL;
+    if (!pattern)
+        return NULL;
+    SpGlobOptions options = {flag(args[2]), flag(args[3]), (SpCaseSensitivity)num(args[4])};
+    SpGlobIter *it = PyMem_Malloc(sizeof(SpGlobIter));
+    PyObject *list = it ? PyList_New(0) : PyErr_NoMemory();
+    if (it)
+        *it = sp_glob_begin(&p, pattern, options);
+    for (SpPath match; list && sp_glob_next(it, &match);) {
+        PyObject *item = made(&match);
+        if (!item || PyList_Append(list, item) < 0)
+            Py_CLEAR(list);
+        Py_XDECREF(item);
+    }
+    PyObject *result = list ? Py_BuildValue("(Ni)", list, (int)it->error) : NULL;
+    if (it)
+        sp_glob_end(it);
+    PyMem_Free(it);
+    Py_XDECREF(keep);
+    return result;
+}
+
+/* walk: an iterator object, since the caller prunes dirnames between steps */
+typedef struct {
+    PyObject_HEAD
+    SpWalkIter it;
+    char *buf;
+    PyObject *keep; /* what owns the dirnames given back, alive until the walk ends */
+} PyWalk;
+
+static void pywalk_dealloc(PyObject *o) {
+    PyWalk *w = (PyWalk *)o;
+    sp_walk_end(&w->it);
+    PyMem_Free(w->buf);
+    Py_XDECREF(w->keep);
+    Py_TYPE(o)->tp_free(o);
+}
+
+static PyTypeObject PyWalk_Type = {
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_snakepath.Walk",
+    .tp_basicsize = sizeof(PyWalk),
+    .tp_dealloc = pywalk_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+};
+
+static PyObject *py_walk(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    SpPath p;
+    if (!arity(nargs, 4, "walk") || !load(args[0], &p))
+        return NULL;
+    Py_ssize_t size = PyLong_AsSsize_t(args[3]);
+    PyWalk *w = PyObject_New(PyWalk, &PyWalk_Type);
+    if (!w)
+        return NULL;
+    w->buf = PyMem_Malloc((size_t)size);
+    w->keep = PyList_New(0);
+    SpWalkOptions options = {flag(args[1]), flag(args[2])};
+    w->it = sp_walk_begin(&p, options, w->buf, w->buf ? (size_t)size : 0);
+    if (!w->buf || !w->keep) {
+        Py_DECREF(w);
+        return PyErr_NoMemory();
+    }
+    return (PyObject *)w;
+}
+
+static PyObject *names_list(char **names, size_t count) {
+    PyObject *list = PyList_New((Py_ssize_t)count);
+    for (size_t i = 0; list && i < count; i++) {
+        PyObject *item = text(names[i], strlen(names[i]));
+        if (!item)
+            Py_CLEAR(list);
+        else
+            PyList_SET_ITEM(list, (Py_ssize_t)i, item);
+    }
+    return list;
+}
+
+/* (dirpath, dirnames, filenames, error), or None at the end (with the walk's error left in walk_error) */
+static PyObject *py_walk_next(PyObject *m, PyObject *o) {
+    (void)m;
+    if (!Py_IS_TYPE(o, &PyWalk_Type))
+        return PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
+    SpWalkEntry *e = sp_walk_next(&((PyWalk *)o)->it);
+    if (!e)
+        Py_RETURN_NONE;
+    return Py_BuildValue("(NNNi)", made(&e->dirpath), names_list(e->dirnames, e->dirname_count),
+                         names_list(e->filenames, e->filename_count), (int)e->error);
+}
+
+/* The dirnames the caller left, for the walk to go into: each level keeps the array it gets until the walk leaves it,
+ * so the arrays and the names live, in keep, until the walk ends */
+static PyObject *py_walk_prune(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    (void)m;
+    if (!arity(nargs, 2, "walk_prune") || !Py_IS_TYPE(args[0], &PyWalk_Type))
+        return PyErr_Occurred() ? NULL : PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
+    PyWalk *w = (PyWalk *)args[0];
+    PyObject *seq = PySequence_Fast(args[1], "dirnames must be a sequence");
+    if (!seq)
+        return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject *array = PyBytes_FromStringAndSize(NULL, (n > 0 ? n : 1) * (Py_ssize_t)sizeof(char *));
+    if (!array || PyList_Append(w->keep, array) < 0) {
+        Py_XDECREF(array);
+        Py_DECREF(seq);
+        return NULL;
+    }
+    char **names = (char **)(void *)PyBytes_AS_STRING(array);
+    Py_DECREF(array);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *encoded = PyUnicode_AsEncodedString(PySequence_Fast_GET_ITEM(seq, i), "utf-8", "surrogatepass");
+        if (!encoded || PyList_Append(w->keep, encoded) < 0) {
+            Py_XDECREF(encoded);
+            Py_DECREF(seq);
+            return NULL;
+        }
+        names[i] = PyBytes_AS_STRING(encoded);
+        Py_DECREF(encoded);
+    }
+    Py_DECREF(seq);
+    w->it.entry.dirnames = names;
+    w->it.entry.dirname_count = (size_t)n;
+    Py_RETURN_NONE;
+}
+
+static PyObject *py_walk_end(PyObject *m, PyObject *o) {
+    (void)m;
+    if (!Py_IS_TYPE(o, &PyWalk_Type))
+        return PyErr_Format(PyExc_TypeError, "expected a _snakepath.Walk");
+    sp_walk_end(&((PyWalk *)o)->it);
+    return PyLong_FromLong(((PyWalk *)o)->it.error);
+}
+
+static PyObject *py_error_str(PyObject *m, PyObject *err) {
+    (void)m;
+    return PyUnicode_FromString(sp_error_str((SpError)num(err)));
+}
+
+#define FAST(name) {#name, (PyCFunction)(void (*)(void))py_##name, METH_FASTCALL, NULL}
+#define ONE(name) {#name, (PyCFunction)(void (*)(void))py_##name, METH_O, NULL}
+static PyMethodDef methods[] = {
+    FAST(path),       FAST(convert),     ONE(str),          ONE(cwd),         ONE(home),        FAST(from_uri),
+    FAST(term),       ONE(suffixes),     ONE(as_uri),       FAST(id_name),    FAST(unary),      FAST(with_),
+    FAST(join),       FAST(join_path),   FAST(with_segments), FAST(relative_to), FAST(resolve), FAST(copy),
+    FAST(rename),     ONE(parts),        ONE(parents),      ONE(is_absolute), FAST(binary),     ONE(hash),
+    FAST(match),      FAST(is_),          FAST(stat),        FAST(stat_eq),    FAST(mkdir),      FAST(touch),
+    FAST(remove),     FAST(chmod),       FAST(link_to),     FAST(read_file),  FAST(write_file), FAST(info),
+    ONE(iterdir),     FAST(glob),        FAST(walk),        ONE(walk_next),   FAST(walk_prune), ONE(walk_end),
+    ONE(error_str),   {"info_new", (PyCFunction)(void (*)(void))py_info_new, METH_NOARGS, NULL},
+    {NULL, NULL, 0, NULL},
+};
+
+static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, "_snakepath", NULL, -1, methods, NULL, NULL, NULL, NULL};
+
+PyMODINIT_FUNC PyInit__snakepath(void) {
+    if (PyType_Ready(&PyPath_Type) < 0 || PyType_Ready(&PyWalk_Type) < 0)
+        return NULL;
+    PyObject *mod = PyModule_Create(&module);
+    if (!mod)
+        return NULL;
+#define CONST(name) PyModule_AddIntConstant(mod, #name, name);
+#define ERROR_CONST(name, message) CONST(name)
+    SP_ERRORS(ERROR_CONST)
+    CONST(SP_ANY)
+    CONST(SP_FILE)
+    CONST(SP_DIR)
+    CONST(SP_SYMLINK)
+    CONST(SP_BLOCK_DEVICE)
+    CONST(SP_CHAR_DEVICE)
+    CONST(SP_FIFO)
+    CONST(SP_SOCKET)
+    CONST(SP_MOUNT)
+    CONST(SP_JUNCTION)
+    CONST(SP_CASE_DEFAULT)
+    CONST(SP_CASE_SENSITIVE)
+    CONST(SP_CASE_INSENSITIVE)
+    CONST(SP_PATH_MAX)
+    CONST(SP_MAX_SUFFIXES)
+    return mod;
+}
 
 #elif defined(SP_DIFF)
 
@@ -2765,4 +3374,4 @@ int main(void) {
     return 0;
 }
 
-#endif /* SP_FFI */
+#endif /* SP_PYTHON */

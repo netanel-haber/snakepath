@@ -9,7 +9,7 @@
 /test_clangpp
 /test_fluent_gcc
 /test_fluent_clang
-/libsnakepath.so
+/_snakepath.*
 /api_demo
 # ./nob diff: the base ref's header, both sides' drivers and their outputs
 /diff_base/
