@@ -572,6 +572,16 @@ typedef HANDLE SpPrivFile;
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
+/* POSIX 2008's open flags and *at constants, which glibc's strict C modes hide: there glibc's internal names for the
+ * flags (they differ by architecture) and Linux's values for the rest */
+#if !defined(AT_FDCWD) && defined(__O_NOFOLLOW)
+#define O_NOFOLLOW __O_NOFOLLOW
+#define O_DIRECTORY __O_DIRECTORY
+#define O_CLOEXEC __O_CLOEXEC
+#define AT_FDCWD -100
+#define AT_REMOVEDIR 0x200
+#define AT_SYMLINK_NOFOLLOW 0x100
+#endif
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
 #ifndef __cplusplus
@@ -586,19 +596,11 @@ extern int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
 extern int gethostname(char *name, size_t len);
 extern int openat(int dir_fd, const char *path, int flags, ...);
 extern int unlinkat(int dir_fd, const char *path, int flags);
+extern int fstatat(int dir_fd, const char *path, struct stat *buf, int flags);
 extern DIR *fdopendir(int fd);
 extern int dirfd(DIR *dir);
 #endif
 
-/* POSIX 2008's open flags and *at constants, which glibc's strict C modes hide: there glibc's internal names for the
- * flags (they differ by architecture) and Linux's values for the rest */
-#if !defined(AT_FDCWD) && defined(__O_NOFOLLOW)
-#define O_NOFOLLOW __O_NOFOLLOW
-#define O_DIRECTORY __O_DIRECTORY
-#define O_CLOEXEC __O_CLOEXEC
-#define AT_FDCWD -100
-#define AT_REMOVEDIR 0x200
-#endif
 #endif
 
 /* A mode's file type bits, the same everywhere (Windows and strict C99 headers leave their names out) */
@@ -3217,6 +3219,15 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
         return err == SP_ERR_NOT_FOUND && !top ? SP_OK : err;
     }
 #else
+    /* CPython's check too: what opens is the directory lstat saw there */
+    const char *rest;
+    int at = sp_priv_at(through, p, &rest);
+    struct stat seen;
+    struct stat opened;
+    if (fstatat(at, rest, &seen, AT_SYMLINK_NOFOLLOW) != 0) {
+        SpError gone = sp_priv_last_error();
+        return gone == SP_ERR_NOT_FOUND && !top ? SP_OK : gone;
+    }
     SpError err = SP_OK;
 #endif
 
@@ -3227,7 +3238,13 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
     child.error = SP_OK;
     for (int pass = 0; err == SP_OK; pass++) {
         bool removed = false;
-        for (size_t n; err == SP_OK && (n = sp_priv_readdir_next(&listing, through, p, &child, &info)) > 0;) {
+        size_t n = sp_priv_readdir_next(&listing, through, p, &child, &info);
+#ifndef SP_WINDOWS
+        if (listing && (fstat(dirfd(SP_PRIV_CAST(DIR *, listing)), &opened) != 0 || opened.st_dev != seen.st_dev ||
+                        opened.st_ino != seen.st_ino))
+            err = SP_ERR_IO; /* CPython's "Cannot call rmtree on a symbolic link" */
+#endif
+        for (; err == SP_OK && n > 0; n = sp_priv_readdir_next(&listing, through, p, &child, &info)) {
             here.handle = listing;
             removed = true;
             if (sp_info(&child, &info, SP_DIR, false))
@@ -3253,8 +3270,6 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
     }
     CloseHandle(h);
 #else
-        const char *rest;
-        int at = sp_priv_at(through, p, &rest);
         if (err != SP_OK || unlinkat(at, rest, AT_REMOVEDIR) == 0)
             break;
         if (pass > 0 || !removed || (errno != ENOTEMPTY && errno != EEXIST)) {
