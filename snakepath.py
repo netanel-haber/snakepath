@@ -6,7 +6,7 @@ Python's pathlib and backed by the C library (the extension module _snakepath, t
 python snakepath.py --build makes it for the Python that runs it).
 
 Run it (nob does: python snakepath.py) to check snakepath.h's real call depth and that README.md
-embeds api_demo.c verbatim, then run CPython 3.15's own pathlib tests on these classes.
+embeds api_demo.c verbatim, then run the pathlib tests of the CPython running it (3.15 or later) on these classes.
 """
 
 import collections
@@ -23,7 +23,10 @@ import warnings
 # importing the bindings stays light
 
 # The extension module, test.c built with -DSP_PYTHON against CPython's stable ABI (abi3): one build for CPython
-# 3.12 and later, next to this file (where a wheel installs it, and where python snakepath.py --build makes it)
+# 3.15 and later, next to this file (where a wheel installs it, and where python snakepath.py --build makes it).
+# Parity is with pathlib 3.15, so older Pythons are refused rather than half served
+if sys.version_info < (3, 15):
+    raise ImportError(f"snakepath needs CPython 3.15 or later, not {sys.version.split()[0]}")
 _lib_dir = os.path.dirname(os.path.abspath(__file__))
 _ext_path = os.path.join(_lib_dir, '_snakepath' + ('.pyd' if os.name == 'nt' else '.abi3.so'))
 
@@ -1175,12 +1178,15 @@ def check_fs(limit=20):
 
 THIS_DIR = pathlib.Path(__file__).resolve().parent
 TEST_DIR = THIS_DIR / "cpython_tests"
-# CPython's own pathlib tests: the 3.15 branch's Lib/test/test_pathlib/test_pathlib.py. The other
-# files in that package only test Python-only machinery (pathlib.types protocols, zip/local backends).
-CPYTHON_BRANCH = "3.15"
-TEST_URL = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_BRANCH}/Lib/test/test_pathlib/test_pathlib.py"
-TEST_FILE = "test_pathlib_3_15.py"
-CLASS_TIMEOUT = 600  # seconds a test class may run before its worker dumps tracebacks and exits  # cached under a versioned name
+# CPython's own pathlib tests: Lib/test/test_pathlib/test_pathlib.py at the running CPython's release tag (v3.15.2,
+# v3.15.0b4), so each 3.15 release is checked against its own tests, as the fuzz and check_fs check it against its own
+# pathlib. The other files in that package only test Python-only machinery (pathlib.types protocols, zip/local backends).
+_v = sys.version_info
+_level = {"alpha": "a", "beta": "b", "candidate": "rc", "final": ""}[_v.releaselevel]
+CPYTHON_TAG = f"v{_v.major}.{_v.minor}.{_v.micro}{_level}{_v.serial if _level else ''}"
+TEST_URL = f"https://raw.githubusercontent.com/python/cpython/{CPYTHON_TAG}/Lib/test/test_pathlib/test_pathlib.py"
+TEST_FILE = f"test_pathlib_{CPYTHON_TAG.replace('.', '_')}.py"  # cached under the tag's name
+CLASS_TIMEOUT = 600  # seconds a test class may run before its worker dumps tracebacks and exits
 
 # Tests expected to fail with specific error messages
 # Format: {expected_error_substring: [(class_name, test_name), ...]}

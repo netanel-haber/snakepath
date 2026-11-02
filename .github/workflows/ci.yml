@@ -20,7 +20,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.15'
-          allow-prereleases: true
 
       - name: Install dependencies
         run: |
@@ -48,7 +47,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.15'
-          allow-prereleases: true
 
       - name: Install clang-format
         run: pip install clang-format==21.1.8
@@ -136,7 +134,58 @@ jobs:
         env:
           URL: ${{ steps.upload.outputs.artifact-url }}
 
-  # pip install snakepath: one stable-ABI (abi3) wheel per platform, for every CPython from 3.12 on, each tried once
+  # Every CPython 3.15 release (3.15.0, 3.15.1, ...), read from setup-python's list of builds so a new one joins the
+  # matrix by itself
+  python-releases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+
+    steps:
+      - id: list
+        shell: python
+        run: |
+          import json, os, re, urllib.request
+          url = "https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json"
+          versions = sorted({r["version"] for r in json.load(urllib.request.urlopen(url)) if re.fullmatch(r"3\.15\.\d+", r["version"])},
+                            key=lambda v: int(v.split(".")[2]))
+          assert versions, "no CPython 3.15 release listed"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              print(f"versions={json.dumps(versions)}", file=out)
+
+  # Parity with each 3.15 release, on Linux and Windows: the bindings built for it, then the fuzz and check_fs against
+  # its own pathlib and os, and CPython's pathlib tests from its own release tag. build-linux and build-windows run the
+  # same checks on the latest release, with everything else
+  parity:
+    needs: python-releases
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ${{ fromJSON(needs.python-releases.outputs.versions) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build the bindings and run their checks
+        run: |
+          python snakepath.py --build
+          python snakepath.py
+
+  # pip install snakepath: one stable-ABI (abi3) wheel per platform, for every CPython from 3.15 on, each tried once
   # where its runner can run it and audited for symbols outside the stable ABI
   wheels:
     strategy:
@@ -153,14 +202,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.15'
 
       - name: Build wheels
         run: |
           pip install cibuildwheel==4.3.1
           python -m cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp312-*"
+          CIBW_BUILD: "cp315-*"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           CIBW_ARCHS_WINDOWS: "AMD64 ARM64"
           CIBW_TEST_COMMAND: >-
@@ -197,7 +246,7 @@ jobs:
   # environment, registered as the project's publisher on pypi.org)
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows, wheels, sdist]
+    needs: [build-linux, build-windows, parity, wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

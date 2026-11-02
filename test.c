@@ -3,7 +3,7 @@
  * the driver ./nob diff compares two versions of the header with. */
 #ifdef SP_PYTHON
 #define PY_SSIZE_T_CLEAN
-#define Py_LIMITED_API 0x030C0000 /* the stable ABI from 3.12 on: one build for every later CPython (abi3) */
+#define Py_LIMITED_API 0x030F0000 /* the stable ABI from 3.15 on: one build for every later CPython (abi3) */
 #include <Python.h>               /* before any system header, as Python requires */
 #endif
 #ifdef _MSC_VER

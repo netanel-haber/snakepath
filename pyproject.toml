@@ -1,5 +1,5 @@
 # pip install snakepath: the Python bindings (snakepath.py) and their extension module (test.c built with -DSP_PYTHON),
-# one wheel per platform for every CPython from 3.12 on (the stable ABI, abi3)
+# one wheel per platform for every CPython from 3.15 on (the stable ABI, abi3)
 [build-system]
 requires = ["setuptools>=74.1"]
 build-backend = "setuptools.build_meta"
@@ -10,7 +10,7 @@ version = "0.1.0"
 description = "Python's pathlib, backed by snakepath.h (a C99 header-only port of pathlib)"
 license = "MIT"
 authors = [{ name = "Netanel Haber" }]
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 urls = { Homepage = "https://github.com/netanel-haber/snakepath" }
 
 [tool.setuptools]
@@ -20,4 +20,4 @@ ext-modules = [
 ]
 
 [tool.distutils.bdist_wheel]
-py-limited-api = "cp312"
+py-limited-api = "cp315"
