@@ -196,6 +196,7 @@ _sig('sp_glob_end_wrap', [POINTER(_SpGlobIter)])
 _sig('sp_glob_error_wrap', [POINTER(_SpGlobIter)], c_int)
 _sig('sp_walk_begin_wrap', [_PP, c_int, c_int, ctypes.c_void_p, c_size_t, POINTER(_SpWalkIter)])
 _sig('sp_walk_next_wrap', [POINTER(_SpWalkIter)], POINTER(_SpWalkEntry))
+_sig('sp_walk_end_wrap', [POINTER(_SpWalkIter)])
 _sig('sp_walk_error_wrap', [POINTER(_SpWalkIter)], c_int)
 
 
@@ -943,22 +944,25 @@ class Path(PurePath):
         _lib.sp_walk_begin_wrap(byref(self._sp), 0 if top_down else 1, 1 if follow_symlinks else 0, buf, len(buf),
                                 byref(it))
         pruned = []  # the dirnames given back to C, alive until the walk ends
-        while entry := _lib.sp_walk_next_wrap(byref(it)):
-            entry = entry.contents
-            dirpath = self._from_sp(entry.dirpath)
-            if entry.error != SP_OK:
-                if on_error is not None:
-                    on_error(_error(entry.error, dirpath))
-                continue
+        try:
+            while entry := _lib.sp_walk_next_wrap(byref(it)):
+                entry = entry.contents
+                dirpath = self._from_sp(entry.dirpath)
+                if entry.error != SP_OK:
+                    if on_error is not None:
+                        on_error(_error(entry.error, dirpath))
+                    continue
 
-            dirnames = [_decode(entry.dirnames[i]) for i in range(entry.dirname_count)]
-            filenames = [_decode(entry.filenames[i]) for i in range(entry.filename_count)]
-            yield dirpath, dirnames, filenames
-            if top_down:
-                pruned.append((c_char_p * max(len(dirnames), 1))(*[_encode(d) for d in dirnames]))
-                entry.dirnames = ctypes.cast(pruned[-1], POINTER(c_char_p))
-                entry.dirname_count = len(dirnames)
-        _check(_lib.sp_walk_error_wrap(byref(it)), self)
+                dirnames = [_decode(entry.dirnames[i]) for i in range(entry.dirname_count)]
+                filenames = [_decode(entry.filenames[i]) for i in range(entry.filename_count)]
+                yield dirpath, dirnames, filenames
+                if top_down:
+                    pruned.append((c_char_p * max(len(dirnames), 1))(*[_encode(d) for d in dirnames]))
+                    entry.dirnames = ctypes.cast(pruned[-1], POINTER(c_char_p))
+                    entry.dirname_count = len(dirnames)
+            _check(_lib.sp_walk_error_wrap(byref(it)), self)
+        finally:
+            _lib.sp_walk_end_wrap(byref(it))  # the handles of a walk stopped early
 
 
 class PosixPath(Path, PurePosixPath):
@@ -1290,9 +1294,10 @@ def check_fs(limit=20):
             compare(f"{name!r}.samefile(f.txt)", lambda: ours.samefile(Path(root, "f.txt")),
                     lambda: real.samefile(pathlib.Path(root, "f.txt")))
             compare(f"{name!r}.iterdir()", lambda: sorted(ours.iterdir()), lambda: sorted(real.iterdir()))
-            for pattern in ["*", "**/*", "*/*.py"]:
-                compare(f"{name!r}.glob({pattern!r})", lambda: sorted(ours.glob(pattern)),
-                        lambda: sorted(real.glob(pattern)))
+            for pattern in ["*", "**/*", "*/*.py", "**/*.py", "**/e/*", "**/h.txt", "**/*/", "**/H.TXT", "**/*.PY"]:
+                for options in [{}, {"case_sensitive": False}, {"recurse_symlinks": True}]:
+                    compare(f"{name!r}.glob({pattern!r}, **{options})", lambda: sorted(ours.glob(pattern, **options)),
+                            lambda: sorted(real.glob(pattern, **options)))
             for top_down in (True, False):
                 for follow in (True, False):
                     compare(f"{name!r}.walk(top_down={top_down}, follow_symlinks={follow})",
@@ -1313,6 +1318,16 @@ def check_fs(limit=20):
             compare(f"{name!r}.iterdir() infos", lambda: sorted((p.name, answers(p.info)) for p in Path(root, name).iterdir()),
                     lambda: sorted((p.name, answers(p.info)) for p in pathlib.Path(root, name).iterdir()))
 
+        # A link the caller adds to dirnames is walked into, as os.walk walks into it; the walk's own links aren't
+        def walk_adding_link(cls):
+            walked = []
+            for d, ds, fs in cls(root).walk():
+                walked.append((os.path.relpath(d, root), sorted(ds), sorted(fs)))
+                if os.path.relpath(d, root) == ".":
+                    ds.append("dlink")
+            return sorted(walked)
+        compare("walk() with 'dlink' added to dirnames", lambda: walk_adding_link(Path),
+                lambda: walk_adding_link(pathlib.Path))
         # Actions, judged by what CPython's os.stat sees afterwards, against pathlib doing the same
         for name in ["f.txt", "d"]:
             ours_copy = Path(root, name).copy(Path(root, f"copy-ours-{name}"), preserve_metadata=True)
@@ -1329,11 +1344,15 @@ def check_fs(limit=20):
             tree = pathlib.Path(root, f"tree-{side}")
             (tree / "a" / "b").mkdir(parents=True)
             (tree / "a" / "b" / "leaf").write_bytes(b"x")
+            (tree / "a" / "e" / "f").mkdir(parents=True)
+            if hasattr(os, "mkfifo"):
+                os.mkfifo(tree / "a" / "b" / "fifo")
             try:
-                (tree / "a" / "out").symlink_to(pathlib.Path(root, "d"), target_is_directory=True)
+                for link, target in [("out", "d"), ("b/out", "d"), ("flink", "f.txt"), ("dangling", "missing")]:
+                    (tree / "a" / link).symlink_to(pathlib.Path(root, target), target_is_directory=target == "d")
             except OSError:
                 pass  # Windows without the privilege to make symlinks
-        for step in ["a/b/leaf", "a", "", ""]:
+        for step in ["a/b/leaf", "a/out", "a/missing", "a", "", ""]:
             compare(f"tree/{step}._delete()", lambda: (Path(root, "tree-ours", step)._delete(), tree_snapshot("ours")),
                     lambda: (pathlib.Path(root, "tree-real", step)._delete(), tree_snapshot("real")))
         Path(root, "twin-ours").chmod(0o640)

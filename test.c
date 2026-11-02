@@ -211,6 +211,7 @@ SP_EXPORT void sp_walk_begin_wrap(const SpPath *top, int bottom_up, int follow_s
     *out = sp_walk_begin(top, options, buf, buf_size);
 }
 SP_EXPORT SpWalkEntry *sp_walk_next_wrap(SpWalkIter *it) { return sp_walk_next(it); }
+SP_EXPORT void sp_walk_end_wrap(SpWalkIter *it) { sp_walk_end(it); }
 SP_EXPORT int sp_walk_error_wrap(const SpWalkIter *it) { return it->error; }
 
 #elif defined(SP_DIFF)
@@ -630,6 +631,7 @@ static size_t count_parents(const SpPath *p) {
 #define test_rmdir _rmdir
 #define test_getpid _getpid
 #else
+#include <sys/wait.h>
 #include <unistd.h>
 #define test_rmdir rmdir
 #define test_getpid getpid
@@ -2022,7 +2024,7 @@ int main(void) {
         ASSERT_PATH(sp_relative_to(&drive_child, &win_empty, false), ".\\c:\\x");
     }
     {
-        /* readlink can return unnormalized paths; both directions of parts traversal must skip empty parts. */
+        /* A path made by hand may be unnormalized: both directions of parts traversal must skip empty parts. */
         SpPath raw = sp_path_f("", SP_FLAVOR_POSIX), base = sp_path_f("a", SP_FLAVOR_POSIX);
         memcpy(raw.buf, "a///b//", 8);
         raw.len = 7;
@@ -2362,6 +2364,15 @@ int main(void) {
     }
     ASSERT(iterdir_count == 3);
 
+    /* The entry's name (os.scandir's DirEntry.name): the end of the path just given, NUL-terminated */
+    idit = sp_iterdir_begin(&iterdir_base);
+    while (sp_iterdir_next(&idit, &entry)) {
+        SpTerm name = sp_name(&entry);
+        ASSERT(idit.name.len == name.len && memcmp(idit.name.data, name.buf, name.len) == 0);
+        ASSERT(idit.name.data == entry.buf + entry.len - idit.name.len && idit.name.data[idit.name.len] == '\0');
+    }
+    sp_iterdir_end(&idit);
+
     /* Path.info of each entry: the listing's own answers, as os.scandir's DirEntry gives them */
     {
         int files = 0;
@@ -2481,12 +2492,14 @@ int main(void) {
         ASSERT(e && e->error == SP_OK && sp_path_eq(&e->dirpath, &walk_subdir));
         ASSERT(e->dirname_count == 0 && e->filename_count == 1 && strcmp(e->filenames[0], "file3.txt") == 0);
         ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+        sp_walk_end(&it);
 
         /* Pruning: the walk goes into no subdirectory left out of dirnames */
         it = sp_walk_begin(&walk_base, walk_opts(false, false), names, sizeof(names));
         e = sp_walk_next(&it);
         e->dirname_count = 0;
         ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+        sp_walk_end(&it);
 
         /* Bottom-up: subdirectories first */
         it = sp_walk_begin(&walk_base, walk_opts(true, false), names, sizeof(names));
@@ -2495,15 +2508,37 @@ int main(void) {
         e = sp_walk_next(&it);
         ASSERT(e && sp_path_eq(&e->dirpath, &walk_base) && e->dirname_count == 1 && e->filename_count == 2);
         ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+        sp_walk_end(&it);
 
         /* A buffer too small for the names, and a directory that can't be listed */
         it = sp_walk_begin(&walk_base, walk_opts(false, false), names, 40);
         ASSERT(sp_walk_next(&it) == NULL && it.error == SP_ERR_TOO_LONG);
+        sp_walk_end(&it);
         SpPath missing = sp_join_one(&walk_base, "missing");
         it = sp_walk_begin(&missing, walk_opts(false, false), names, sizeof(names));
         e = sp_walk_next(&it);
         ASSERT(e && e->error == SP_ERR_NOT_FOUND && e->dirname_count == 0 && sp_path_eq(&e->dirpath, &missing));
         ASSERT(sp_walk_next(&it) == NULL && it.error == SP_OK);
+        sp_walk_end(&it);
+
+#ifdef __linux__
+        /* A walk stopped inside the tree holds the handles of the directories on its way down until sp_walk_end */
+        SpPath fds = sp_path_f("/proc/self/fd", SP_FLAVOR_NATIVE);
+        size_t open_before = 0;
+        SP_ITERDIR_FOREACH(&fds, fd_entry)
+        open_before++;
+        it = sp_walk_begin(&walk_base, walk_opts(false, false), names, sizeof(names));
+        ASSERT(sp_walk_next(&it) != NULL && sp_walk_next(&it) != NULL);
+        size_t open_walking = 0;
+        SP_ITERDIR_FOREACH(&fds, fd_entry)
+        open_walking++;
+        sp_walk_end(&it);
+        ASSERT(sp_walk_next(&it) == NULL);
+        size_t open_after = 0;
+        SP_ITERDIR_FOREACH(&fds, fd_entry)
+        open_after++;
+        ASSERT(open_walking == open_before + 2 && open_after == open_before);
+#endif
     }
 
     /* Cleanup */
@@ -2561,6 +2596,125 @@ int main(void) {
         ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
         ASSERT(!sp_is(&outside_dir, SP_ANY, false));
     }
+#ifndef SP_WINDOWS
+    {
+        /* CVE-2022-21658's race: while the tree is deleted, another process keeps swapping a directory in it for a
+         * link to one outside. The delete must never reach through the link (CPython's fd-based rmtree) */
+        char tree_path[128];
+        char outside_path[128];
+        snprintf(tree_path, sizeof(tree_path), "./test_delete_race_%ld", pid);
+        snprintf(outside_path, sizeof(outside_path), "./test_delete_race_outside_%ld", pid);
+        SpPath tree = sp_path_f(tree_path, SP_FLAVOR_NATIVE);
+        SpPath sub = sp_join_one(&tree, "sub");
+        SpPath held = sp_join_one(&tree, "held");
+        SpPath stop = sp_join_one(&tree, "stop");
+        SpPath outside_dir = sp_path_f(outside_path, SP_FLAVOR_NATIVE);
+        SpPath outside_abs = sp_absolute(&outside_dir);
+        SpPath kept = sp_join_one(&outside_dir, "keep");
+        ASSERT(sp_mkdir(&outside_dir, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&kept, "y", 1).error == SP_OK);
+        ASSERT(sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+
+        pid_t attacker = fork();
+        ASSERT(attacker >= 0);
+        if (attacker == 0) {
+            while (!sp_is(&stop, SP_ANY, false)) {
+                SpPath moved = sp_rename(&sub, &held, false);
+                if (moved.error != SP_OK)
+                    continue;
+                SpError linked = sp_link_to(&sub, &outside_abs, link_opts(false, true));
+                SpError unlinked = linked == SP_OK ? sp_remove(&sub, remove_opts(false, true)) : SP_OK;
+                SpPath back = sp_rename(&held, &sub, false);
+                if (unlinked != SP_OK || back.error != SP_OK)
+                    continue;
+            }
+            _exit(0);
+        }
+
+        bool reached_outside = false;
+        for (int round = 0; round < 1000 && !reached_outside; round++) {
+            if (sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) != SP_OK ||
+                sp_mkdir(&sub, 0755, mkdir_opts(false, true, SP_MODE_DIR)) != SP_OK)
+                continue;
+            for (int i = 0; i < 20; i++) {
+                char name[16];
+                snprintf(name, sizeof(name), i == 0 ? "keep" : "f%d", i);
+                SpPath file = sp_join_one(&sub, name);
+                SpIOResult wrote = sp_write_file(&file, "x", 1);
+                if (wrote.error != SP_OK)
+                    break;
+            }
+            SpError removed = sp_remove(&tree, recursive_opts(true)); /* may fail on a swapped link, never follow it */
+            (void)removed;
+            reached_outside = !sp_is(&kept, SP_FILE, true);
+        }
+
+        ASSERT(sp_mkdir(&tree, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&stop, "", 0).error == SP_OK);
+        int status = 0;
+        ASSERT(waitpid(attacker, &status, 0) == attacker);
+        ASSERT(!reached_outside);
+        if (sp_is(&sub, SP_SYMLINK, false))
+            ASSERT(sp_remove(&sub, remove_opts(false, false)) == SP_OK);
+        ASSERT(sp_remove(&tree, recursive_opts(false)) == SP_OK);
+        ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
+    }
+    {
+        /* The same race against a walk that doesn't follow links: a directory it listed as one, swapped for a link to
+         * one outside, must not be listed (os.walk would list it; the walk opens it through its parent, O_NOFOLLOW) */
+        char tree_path[128];
+        char outside_path[128];
+        snprintf(tree_path, sizeof(tree_path), "./test_walk_race_%ld", pid);
+        snprintf(outside_path, sizeof(outside_path), "./test_walk_race_outside_%ld", pid);
+        SpPath tree = sp_path_f(tree_path, SP_FLAVOR_NATIVE);
+        SpPath sub = sp_join_one(&tree, "sub");
+        SpPath held = sp_join_one(&tree, "held");
+        SpPath stop = sp_join_one(&tree, "stop");
+        SpPath inner = sp_join_one(&sub, "inner");
+        SpPath outside_dir = sp_path_f(outside_path, SP_FLAVOR_NATIVE);
+        SpPath outside_abs = sp_absolute(&outside_dir);
+        SpPath only_outside = sp_join_one(&outside_dir, "only_outside");
+        ASSERT(sp_mkdir(&outside_dir, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&only_outside, "y", 1).error == SP_OK);
+        ASSERT(sp_mkdir(&sub, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&inner, "x", 1).error == SP_OK);
+
+        pid_t attacker = fork();
+        ASSERT(attacker >= 0);
+        if (attacker == 0) {
+            while (!sp_is(&stop, SP_ANY, false)) {
+                SpPath moved = sp_rename(&sub, &held, false);
+                if (moved.error != SP_OK)
+                    continue;
+                SpError linked = sp_link_to(&sub, &outside_abs, link_opts(false, true));
+                SpError unlinked = linked == SP_OK ? sp_remove(&sub, remove_opts(false, true)) : SP_OK;
+                SpPath back = sp_rename(&held, &sub, false);
+                if (unlinked != SP_OK || back.error != SP_OK)
+                    continue;
+            }
+            _exit(0);
+        }
+
+        static char names[1 << 16];
+        bool listed_outside = false;
+        for (int round = 0; round < 3000 && !listed_outside; round++) {
+            SpWalkIter it = sp_walk_begin(&tree, walk_opts(false, false), names, sizeof(names));
+            for (SpWalkEntry *e; (e = sp_walk_next(&it)) != SP_PRIV_NULL;)
+                for (size_t i = 0; e->error == SP_OK && i < e->filename_count; i++)
+                    listed_outside = listed_outside || strcmp(e->filenames[i], "only_outside") == 0;
+            sp_walk_end(&it);
+        }
+
+        ASSERT(sp_write_file(&stop, "", 0).error == SP_OK);
+        int status = 0;
+        ASSERT(waitpid(attacker, &status, 0) == attacker);
+        ASSERT(!listed_outside);
+        if (sp_is(&sub, SP_SYMLINK, false))
+            ASSERT(sp_remove(&sub, remove_opts(false, false)) == SP_OK);
+        ASSERT(sp_remove(&tree, recursive_opts(false)) == SP_OK);
+        ASSERT(sp_remove(&outside_dir, recursive_opts(false)) == SP_OK);
+    }
+#endif
     printf("  recursive remove tests OK\n");
 
     test_errors(pid);
@@ -2595,7 +2749,7 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpSuffixes), 272);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpPathInfo), 8);
-    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 32);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 48);
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
     ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
     ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * 24);

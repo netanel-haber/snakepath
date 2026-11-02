@@ -434,6 +434,7 @@ int main(void) {
     for (SpWalkEntry *e; (e = sp_walk_next(&walk)) != NULL;)
         printf("  %s/ (%zu dirs, %zu files)\n", sp_str(&e->dirpath), e->dirname_count, e->filename_count);
     check("walk:", walk.error);
+    sp_walk_end(&walk); /* releases the directory handles of a walk stopped early */
 
     /* ── Error Handling ────────────────────────────────────────── */
     section("Error Handling");
