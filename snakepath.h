@@ -1058,17 +1058,17 @@ static void sp_priv_path_raw(SpPath *p, const char *s, size_t len, SpFlavor flav
     }
 }
 
-/* p cut to its first len bytes, at or past its anchor, so the anchor stays right */
-static SpPath sp_priv_prefix(const SpPath *p, size_t len) {
-    SpPath r; /* p with only len bytes of text copied: copying all of p would move SP_PATH_MAX */
-    memcpy(r.buf, p->buf, len);
-    r.buf[len] = '\0';
-    r.len = len;
-    r.anchor = p->anchor;
-    r.drive = p->drive;
-    r.flavor = p->flavor;
-    r.error = p->error;
-    return r;
+/* r made p cut to its first len bytes, at or past its anchor, so the anchor stays right; r may be p. Only the text is
+ * copied (all of p would move SP_PATH_MAX), into the caller's path: gcc copies a returned path out of its local */
+static void sp_priv_prefix(SpPath *r, const SpPath *p, size_t len) {
+    if (r != p)
+        memcpy(r->buf, p->buf, len);
+    r->buf[len] = '\0';
+    r->len = len;
+    r->anchor = p->anchor;
+    r->drive = p->drive;
+    r->flavor = p->flavor;
+    r->error = p->error;
 }
 
 /* dir / name for a directory entry or literal glob part (a single part), like join: a separator unless dir is
@@ -1144,6 +1144,20 @@ static void sp_priv_normalize(SpPath *p) {
     }
     if (p->anchor > len)
         buf[j++] = sep;
+
+    /* A path that is already normal (only sep past the anchor, no empty or '.' part and no trailing separator: most of
+     * what callers pass) stays as it is, checked with one memchr per part instead of the rewrite's several steps */
+    bool normal = j <= len && (sep == '/' || !memchr(buf + j, '/', len - j));
+    for (size_t i = j; normal && i < len;) {
+        const char *slash = SP_PRIV_CAST(const char *, memchr(buf + i, sep, len - i));
+        normal = buf[i] != sep && !(buf[i] == '.' && (i + 1 == len || buf[i + 1] == sep));
+        i = slash ? SP_PRIV_CAST(size_t, slash - buf) + 1 : len;
+        normal = normal && !(slash && i == len);
+    }
+    if (normal) {
+        buf[len] = '\0';
+        return;
+    }
 
     for (size_t i = j, end; i < len; i = end) {
         while (i < len && (buf[i] == '/' || buf[i] == sep))
@@ -1310,7 +1324,9 @@ SpPath sp_parent(const SpPath *p) {
         return *p;
 
     SP_ASSERT_PATH_INVARIANT(p);
-    return sp_priv_prefix(p, sp_priv_parent_len(p->buf, p->len, p->flavor, p->anchor));
+    SpPath r;
+    sp_priv_prefix(&r, p, sp_priv_parent_len(p->buf, p->len, p->flavor, p->anchor));
+    return r;
 }
 
 SpPartsIter sp_parts_begin(const SpPath *p) {
@@ -1366,47 +1382,51 @@ bool sp_parents_next(SpParentsIter *it, SpPath *out) {
         return false;
 
     it->current_len = next;
-    *out = sp_priv_prefix(p, next);
+    sp_priv_prefix(out, p, next);
     return true;
 }
 
-/* Internal length-aware join - handles embedded nulls correctly */
-static SpPath sp_priv_join_len(const SpPath *base, const char *other, size_t olen) {
-    SpFlavor flavor = base->flavor;
+/* other[0..olen) joined onto r in place (other, which may hold NULs, must not point into r): a join that returned its
+ * path would copy SP_PATH_MAX bytes out of it under gcc, once more for each part sp_join_impl joins */
+static void sp_priv_join_len(SpPath *r, const char *other, size_t olen) {
+    SpFlavor flavor = r->flavor;
     /* ntpath.join puts no separator after a rootless drive ending in ':' (like "c:") */
-    bool add_sep = !(base->drive > 0 && base->anchor == base->drive && base->drive == base->len &&
-                     base->buf[base->drive - 1] == ':');
+    bool add_sep = !(r->drive > 0 && r->anchor == r->drive && r->drive == r->len && r->buf[r->drive - 1] == ':');
     bool replace = false; /* by an anchored other */
-    SpPath r = sp_priv_prefix(base, base->len);
 
     if (olen > 0 && (other[0] == '/' || (flavor == SP_FLAVOR_WINDOWS && other[0] == '\\'))) {
-        replace = base->drive == 0 || sp_priv_is_unc(other, olen, flavor);
-        r.len = base->drive; /* Root only: keep the base drive. */
+        replace = r->drive == 0 || sp_priv_is_unc(other, olen, flavor);
+        r->len = r->drive; /* Root only: keep the base drive. */
         add_sep = false;
     } else if (sp_priv_drive_len(other, olen, flavor) > 0) {
         /* ntpath.join compares drives by str.lower(), where U+0130 (two characters lowered) matches only itself */
         size_t odrive = sp_priv_drive_len(other, olen, flavor);
-        size_t bdrive = sp_priv_drive_len(base->buf, base->len, flavor);
+        size_t bdrive = sp_priv_drive_len(r->buf, r->len, flavor);
         size_t oi = 0;
         size_t bi = 0;
         unsigned long oc = sp_priv_utf8_next(other, odrive, &oi);
-        unsigned long bc = bdrive > 0 ? sp_priv_utf8_next(base->buf, bdrive, &bi) : 0;
+        unsigned long bc = bdrive > 0 ? sp_priv_utf8_next(r->buf, bdrive, &bi) : 0;
         bool same = oc == bc || (oc != 0x130 && bc != 0x130 && sp_priv_lower(oc) == sp_priv_lower(bc));
         replace = bdrive == 0 || !same || (olen > odrive && (other[odrive] == '/' || other[odrive] == '\\'));
+        if (!replace && r->len - bdrive + odrive >= SP_PATH_MAX) {
+            sp_priv_set_error(r, SP_ERR_TOO_LONG);
+            return;
+        }
         if (!replace) { /* Same drive: keep the base path, spelling the drive like the other. */
-            sp_priv_path_raw(&r, other, odrive, flavor);
-            sp_priv_append(&r, base->buf + bdrive, base->len - bdrive, false);
+            memmove(r->buf + odrive, r->buf + bdrive, r->len - bdrive);
+            memcpy(r->buf, other, odrive);
+            r->len = r->len - bdrive + odrive;
+            r->buf[r->len] = '\0';
             other += odrive;
             olen -= odrive;
         }
     }
 
     if (replace)
-        sp_priv_path_raw(&r, other, olen, flavor);
+        sp_priv_path_raw(r, other, olen, flavor);
     else
-        sp_priv_append(&r, other, olen, add_sep);
-    sp_priv_normalize(&r);
-    return r;
+        sp_priv_append(r, other, olen, add_sep);
+    sp_priv_normalize(r);
 }
 
 SpPath sp_join_one(const SpPath *base, const char *other) { return sp_join_n(base, other, strlen(other)); }
@@ -1416,14 +1436,18 @@ SpPath sp_join_n(const SpPath *base, const char *s, size_t len) {
         return *base;
 
     SP_ASSERT_PATH_INVARIANT(base);
-    return sp_priv_join_len(base, s, len);
+    SpPath r;
+    sp_priv_prefix(&r, base, base->len);
+    sp_priv_join_len(&r, s, len);
+    return r;
 }
 
 SpPath sp_join_impl(const SpPath *base, const char **parts, size_t count) {
-    SpPath r = *base;
+    SpPath r;
+    sp_priv_prefix(&r, base, base->len);
     for (size_t i = 0; r.error == SP_OK && i < count; i++)
         if (parts[i][0])
-            r = sp_priv_join_len(&r, parts[i], strlen(parts[i]));
+            sp_priv_join_len(&r, parts[i], strlen(parts[i]));
     return r;
 }
 
@@ -1456,7 +1480,8 @@ static SpPath sp_priv_with_name_parts(const SpPath *p, SpStr head, SpStr tail) {
         (p->flavor == SP_FLAVOR_WINDOWS && memchr(name, '\\', len)))
         return sp_priv_error_path(p->flavor, SP_ERR_INVALID_ARG);
 
-    SpPath r = sp_priv_prefix(p, sp_priv_parent_len(p->buf, p->len, p->flavor, p->anchor));
+    SpPath r;
+    sp_priv_prefix(&r, p, sp_priv_parent_len(p->buf, p->len, p->flavor, p->anchor));
     if (r.len == 0 && sp_priv_drive_len(name, len, p->flavor) > 0)
         r.buf[r.len++] = '.'; /* keep "c:" from parsing as a drive */
 
@@ -1522,7 +1547,9 @@ SpPath sp_absolute(const SpPath *p) {
         return *p;
 
     SpPath cwd = sp_cwd(p->flavor);
-    return cwd.error != SP_OK ? cwd : sp_priv_join_len(&cwd, p->buf, p->len);
+    if (cwd.error == SP_OK)
+        sp_priv_join_len(&cwd, p->buf, p->len);
+    return cwd;
 }
 
 /* The length of p's prefix that equals other (CPython: other == p or other in p.parents, comparing str.lower() on
@@ -1551,7 +1578,8 @@ SpPath sp_relative_to(const SpPath *p, const SpPath *other, bool walk_up) {
     if (p->error != SP_OK || other->error != SP_OK)
         return p->error != SP_OK ? *p : *other;
 
-    SpPath base = sp_priv_prefix(other, other->len);
+    SpPath base;
+    sp_priv_prefix(&base, other, other->len);
     SpPath r = sp_priv_error_path(p->flavor, SP_OK);
     size_t skip; /* the length of p's prefix that equals base */
 
@@ -1773,15 +1801,26 @@ int sp_path_cmp(const SpPath *a, const SpPath *b) {
 
 /* Equal paths hash alike: on Windows by the code points of str.lower() */
 unsigned long sp_path_hash(const SpPath *p) {
-    unsigned long hash = 5381;
     const char *str = sp_str(p);
     size_t len = p->len > 0 ? p->len : 1;
     if (p->flavor != SP_FLAVOR_WINDOWS) {
-        for (size_t i = 0; i < len; i++)
-            hash = hash * 33 + SP_PRIV_CAST(unsigned char, str[i]);
-        return hash;
+        /* Equal POSIX paths are equal bytes, so 8 go in at a time, each word mixed by a multiply (FxHash's) and the
+         * result folded so its low bits, which hash tables use, depend on every byte */
+        uint64_t mixed = len;
+        uint64_t word = 0;
+        size_t i = 0;
+        for (; i + 8 <= len; i += 8) {
+            memcpy(&word, str + i, 8);
+            mixed = (mixed ^ word) * 0x9E3779B97F4A7C15u;
+        }
+        word = 0;
+        memcpy(&word, str + i, len - i);
+        mixed = (mixed ^ word) * 0x9E3779B97F4A7C15u;
+        mixed ^= mixed >> 32;
+        return SP_PRIV_CAST(unsigned long, mixed ^ (mixed >> 16));
     }
 
+    unsigned long hash = 5381;
     unsigned long owed = 0;
     for (size_t i = 0; i < len || owed != 0;)
         hash = hash * 33 + sp_priv_lower_next(str, len, &i, &owed);
@@ -2313,8 +2352,8 @@ static int sp_priv_readlink_step(SpPath *path) {
         return 0;
 
     /* normpath(join(dirname(link), target)) */
-    SpPath dir = sp_priv_prefix(path, sp_priv_parent_len(path->buf, path->len, path->flavor, path->anchor));
-    *path = sp_priv_join_len(&dir, target.buf, target.len);
+    sp_priv_prefix(path, path, sp_priv_parent_len(path->buf, path->len, path->flavor, path->anchor));
+    sp_priv_join_len(path, target.buf, target.len);
     sp_priv_collapse_dots(path, path->anchor, path->drive);
     return path->error == SP_OK ? 1 : -1;
 }
@@ -2487,7 +2526,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         }
         SpPath deep = step == -1 ? rest : step == 1 ? slow : fast;
         if (deep.len != rest.len || memcmp(deep.buf, rest.buf, rest.len) != 0) {
-            r = tail.len > 0 ? sp_priv_join_len(&deep, tail.buf, tail.len) : deep;
+            if (tail.len > 0)
+                sp_priv_join_len(&deep, tail.buf, tail.len);
+            r = deep;
             break;
         }
 
@@ -2500,7 +2541,9 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         if (spelled)
             name = SP_PRIV_STR(real.buf, real.len);
         if (name.len == 0) {
-            r = tail.len > 0 ? sp_priv_join_len(&rest, tail.buf, tail.len) : rest;
+            if (tail.len > 0)
+                sp_priv_join_len(&rest, tail.buf, tail.len);
+            r = rest;
             break;
         }
 
@@ -2518,7 +2561,7 @@ SpPath sp_resolve(const SpPath *p, bool strict) {
         }
         e = sp_priv_final_path(&rest, &r);
         if (e == 0 && tail.len > 0)
-            r = sp_priv_join_len(&r, tail.buf, tail.len);
+            sp_priv_join_len(&r, tail.buf, tail.len);
     }
 
     if (!had_prefix && r.error == SP_OK && r.len >= 4 && memcmp(r.buf, "\\\\?\\", 4) == 0)
@@ -2568,8 +2611,8 @@ SpError sp_link_to(const SpPath *p, const SpPath *target, SpLinkOptions options)
     bool target_is_directory = options.target_is_directory;
 #ifdef SP_WINDOWS
     if (!options.hard && !target_is_directory) {
-        SpPath dir = sp_parent(p);
-        SpPath resolved = sp_priv_join_len(&dir, target->buf, target->len);
+        SpPath resolved = sp_parent(p);
+        sp_priv_join_len(&resolved, target->buf, target->len);
         SpPrivNative native;
         DWORD attrs = INVALID_FILE_ATTRIBUTES;
         if (sp_priv_native(&resolved, &native) == SP_OK)
@@ -3173,7 +3216,11 @@ static SpPath sp_priv_destination(const SpPath *p, const SpPath *target, bool in
         return p->error != SP_OK ? sp_priv_error_path(target->flavor, p->error) : *target;
     if (name.len == 0)
         return sp_priv_error_path(target->flavor, SP_ERR_NO_NAME);
-    return sp_priv_join_len(target, name.data, name.len);
+
+    SpPath r;
+    sp_priv_prefix(&r, target, target->len);
+    sp_priv_join_len(&r, name.data, name.len);
+    return r;
 }
 
 SpPath sp_copy(const SpPath *p, const SpPath *target, SpCopyOptions options) {
@@ -3635,7 +3682,10 @@ SpPath sp_expanduser(const SpPath *p) {
     SpPath rest;
     sp_priv_path_raw(&rest, "./", 2, p->flavor);
     sp_priv_append(&rest, p->buf + end + 1, p->len - end - 1, false);
-    r = rest.error != SP_OK ? rest : sp_priv_join_len(&r, rest.buf, rest.len);
+    if (rest.error != SP_OK)
+        sp_priv_set_error(&r, rest.error);
+    else
+        sp_priv_join_len(&r, rest.buf, rest.len);
     return r;
 }
 

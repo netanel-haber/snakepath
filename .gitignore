@@ -9,7 +9,7 @@
 /test_clangpp
 /test_fluent_gcc
 /test_fluent_clang
-/libsnakepath.so
+/_snakepath.*
 /api_demo
 # ./nob diff: the base ref's header, both sides' drivers and their outputs
 /diff_base/
@@ -35,3 +35,6 @@ __pycache__/
 # Stale test symlink artifacts
 test_fluent_sym_*.tmp
 test_fluent_symtgt_*.tmp
+/snakepath.egg-info/
+/build/
+/dist/

@@ -1135,44 +1135,13 @@ static const char *all_artifacts[] = {
     /* PDB and obj files from MSVC */
     "test_msvc.pdb", "test_msvc_cpp.pdb", "test_fluent_msvc.pdb", "api_demo.pdb",
     "test_msvc.obj", "test_msvc_cpp.obj", "test_fluent_msvc.obj", "api_demo.obj",
-    "snakepath.dll",
 #else
     "test_gcc", "test_clang", "test_gcc_san", "test_clang_san",
     "test_gpp", "test_clangpp", "test_fluent_gcc", "test_fluent_clang",
     "api_demo",
-    "libsnakepath.so",
 #endif
     NULL
 };
-
-/* Build the library the Python bindings load: test.c with -DSP_FFI */
-static bool build_python_lib(Compiler compiler, Nob_Procs *procs) {
-    Nob_Cmd cmd = {0};
-
-#ifdef _WIN32
-    if (compiler == COMPILER_MSVC) {
-        nob_cmd_append(&cmd, "cl.exe", "/std:c11", "/LD", "/O2");
-        nob_cmd_append(&cmd, "/W4", "/DSP_FFI");
-        nob_cmd_append(&cmd, "/Fe:snakepath.dll");
-        nob_cmd_append(&cmd, "test.c");
-    } else {
-        nob_log(NOB_WARNING, "Python lib: Using clang on Windows");
-        nob_cmd_append(&cmd, "clang", "-shared", "-fPIC", "-O2");
-        nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
-        nob_cmd_append(&cmd, "-o", "snakepath.dll");
-        nob_cmd_append(&cmd, "test.c");
-    }
-#else
-    const char *cc = (compiler == COMPILER_CLANG || compiler == COMPILER_CLANGPP) ? "clang" : "gcc";
-    nob_cmd_append(&cmd, cc, "-shared", "-fPIC", "-O2");
-    nob_cmd_append(&cmd, "-Wall", "-Wextra");
-    nob_cmd_append(&cmd, "-fvisibility=hidden", "-DSP_FFI");
-    nob_cmd_append(&cmd, "-o", "libsnakepath.so");
-    nob_cmd_append(&cmd, "test.c");
-#endif
-
-    return nob_cmd_run(&cmd, .async = procs);
-}
 
 /* Run Python tests */
 static const char *find_python(void) {
@@ -1182,6 +1151,14 @@ static const char *find_python(void) {
     /* python3 unless only /usr/bin/python exists */
     return !nob_file_exists("/usr/bin/python3") && nob_file_exists("/usr/bin/python") ? "python" : "python3";
 #endif
+}
+
+/* The Python bindings' extension module (_snakepath, test.c with -DSP_PYTHON), which snakepath.py builds for the
+ * Python that runs it: that Python's headers, extension suffix and, on Windows, cl.exe */
+static bool build_python_lib(Nob_Procs *procs) {
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, find_python(), "snakepath.py", "--build");
+    return nob_cmd_run(&cmd, .async = procs);
 }
 
 /* Call depth, README embedding api_demo.c, and CPython's pathlib tests on the bindings */
@@ -1668,7 +1645,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(subcmd, "python") == 0) {
             /* Build and test Python bindings only */
             LOG_INFO( "=== Building Python bindings ===");
-            if (!build_python_lib(COMPILER_CLANG, NULL)) {
+            if (!build_python_lib(NULL)) {
                 nob_log(NOB_ERROR, "Failed to build Python library");
                 return 1;
             }
@@ -1738,13 +1715,9 @@ int main(int argc, char **argv) {
     LOG_INFO( "  Starting build: %s", demo_config.name);
     build_source_async(demo_config, "api_demo.c", &procs);
 
-    /* Build Python shared library */
+    /* Build the Python bindings' extension module */
     LOG_INFO( "  Starting build: Python bindings");
-#ifdef _WIN32
-    build_python_lib(COMPILER_MSVC, &procs);
-#else
-    build_python_lib(COMPILER_CLANG, &procs);
-#endif
+    build_python_lib(&procs);
 
     /* Wait for all builds to complete */
     if (!nob_procs_flush(&procs)) {
