@@ -315,6 +315,7 @@ typedef struct {
         SpWalkOptions options;
         bool pending;  /* entry.dirpath is the next directory to list */
         bool prunable; /* the entry is the innermost level's listing, given out top-down */
+        bool nofollow; /* entry.dirpath is a directory the listing above saw as no link */
     } priv_;
 } SpWalkIter;
 
@@ -436,9 +437,11 @@ SP_NODISCARD SpTerm sp_group(const SpPath *p, bool follow_symlinks);
 
 /* Path.walk as an iterator: sp_walk_next gives each directory in turn (NULL at the end, or with it.error set when the
  * walk had to stop). The names are kept in the caller's buf while their directory is being walked; an entry is valid
- * until the next call. */
+ * until the next call. sp_walk_end releases the directory handles of a walk stopped before its end (and does nothing
+ * after it). */
 SP_NODISCARD SpWalkIter sp_walk_begin(const SpPath *top, SpWalkOptions options, void *buf, size_t buf_size);
 SP_NODISCARD SpWalkEntry *sp_walk_next(SpWalkIter *it);
+void sp_walk_end(SpWalkIter *it);
 
 /* glob and rglob (options.recursive) over the paths matching a relative pattern
  * sp_glob_begin: the iterator; it.error is set for a bad pattern or base
@@ -3749,6 +3752,9 @@ typedef struct {
     size_t dirname_count;
     char **filenames;
     size_t filename_count;
+    char **listed; /* the subdirectories the listing found, sorted, whatever the caller does to dirnames */
+    size_t listed_count;
+    void *handle; /* the listing, which its subdirectories open through (POSIX) */
 } SpPrivWalkLevel;
 
 /* The entry shows a level's names */
@@ -3764,8 +3770,9 @@ static int sp_priv_walk_name_cmp(const void *a, const void *b) {
 }
 
 /* Lists entry.dirpath into a new level on top of the buffer's stack (levels start at pointer-aligned offsets) and points
- * the entry at its names. The listing's error leaves no level; a buffer too small for it is SP_ERR_TOO_LONG in
- * it->error. */
+ * the entry at its names. A subdirectory is listed through the level above's handle, and not through a link when that
+ * listing saw none there (os.walk would list what a link swapped in leads to). The listing's error leaves no level; a
+ * buffer too small for it is SP_ERR_TOO_LONG in it->error. */
 static SpError sp_priv_walk_list(SpWalkIter *it) {
     SpWalkEntry *e = &it->entry;
     char *buf = it->priv_.buf;
@@ -3773,30 +3780,44 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     size_t names = it->priv_.used + sizeof(SpPrivWalkLevel);
     size_t used = names;
     size_t count = 0;
+    size_t dirs_listed = 0;
     bool follow = it->priv_.options.follow_symlinks;
+    SpPrivDirAt above = SP_PRIV_ZERO;
+    if (it->priv_.level != SP_PRIV_CAST(size_t, -1)) {
+        SpPrivWalkLevel *up = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, buf + it->priv_.level));
+        above.handle = up->handle;
+        above.len = up->dir_len;
+        above.nofollow = it->priv_.nofollow;
+    }
 
     /* A directory or not as the listing says, like os.walk's scandir entries: a stat only for a link to follow */
     void *handle = SP_PRIV_NULL;
     SpPath child;
     SpPathInfo info;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, SP_PRIV_NULL, &e->dirpath, &child, &info)) > 0; count++) {
+    for (size_t n; (n = sp_priv_readdir_next(&handle, &above, &e->dirpath, &child, &info)) > 0; count++) {
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
         }
-        buf[used] = sp_info(&child, &info, SP_DIR, follow) ? 'd' : 'f';
+        bool is_dir = sp_info(&child, &info, SP_DIR, follow);
+        buf[used] = is_dir ? 'd' : 'f';
         memcpy(buf + used + 1, child.buf + child.len - n, n + 1);
         used += n + 2;
+        dirs_listed += is_dir ? 1 : 0;
     }
-    sp_priv_readdir_close(&handle);
-    if (it->error != SP_OK || child.error != SP_OK)
-        return it->error != SP_OK ? it->error : child.error;
 
-    /* The pointers after the names: subdirectories from the front, the rest from the back */
+    /* The pointers after the names: subdirectories from the front, the rest from the back, then the subdirectories
+     * again, kept sorted for the walk */
     size_t ptrs = (used + sizeof(char *) - 1) / sizeof(char *) * sizeof(char *);
-    if (names > it->priv_.size || ptrs + count * sizeof(char *) > it->priv_.size) {
+    if (it->error == SP_OK && child.error == SP_OK &&
+        (names > it->priv_.size || ptrs + (count + dirs_listed) * sizeof(char *) > it->priv_.size))
         it->error = SP_ERR_TOO_LONG;
-        return it->error;
+#ifdef SP_WINDOWS
+    sp_priv_readdir_close(&handle); /* held, it would keep a deleted subdirectory pending, so its parent not empty */
+#endif
+    if (it->error != SP_OK || child.error != SP_OK) {
+        sp_priv_readdir_close(&handle);
+        return it->error != SP_OK ? it->error : child.error;
     }
     char **list = SP_PRIV_CAST(char **, SP_PRIV_CAST(void *, buf + ptrs));
     size_t dirs = 0;
@@ -3809,6 +3830,8 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     }
     qsort(list, dirs, sizeof(char *), sp_priv_walk_name_cmp);
     qsort(list + dirs, files, sizeof(char *), sp_priv_walk_name_cmp);
+    if (dirs > 0)
+        memcpy(list + count, list, dirs * sizeof(char *));
 
     level->prev = it->priv_.level;
     level->dir_len = e->dirpath.len;
@@ -3817,8 +3840,11 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     level->dirname_count = dirs;
     level->filenames = list + dirs;
     level->filename_count = files;
+    level->listed = list + count;
+    level->listed_count = dirs;
+    level->handle = handle;
     it->priv_.level = it->priv_.used;
-    it->priv_.used = ptrs + count * sizeof(char *);
+    it->priv_.used = ptrs + (count + dirs) * sizeof(char *);
     sp_priv_walk_show(e, level);
     return SP_OK;
 }
@@ -3879,9 +3905,14 @@ SpWalkEntry *sp_walk_next(SpWalkIter *it) {
             const char *name = level->dirnames[level->next++];
             it->error = sp_priv_join_child(&e->dirpath, name, strlen(name));
             it->priv_.pending = true;
+
+            /* A name the caller put in dirnames is followed, as os.walk follows it; one the listing found isn't */
+            bool listed = bsearch(&name, level->listed, level->listed_count, sizeof(char *), sp_priv_walk_name_cmp);
+            it->priv_.nofollow = !it->priv_.options.follow_symlinks && listed;
             continue;
         }
 
+        sp_priv_readdir_close(&level->handle);
         it->priv_.used = it->priv_.level;
         it->priv_.level = level->prev;
         if (!top_down) {
@@ -3891,6 +3922,17 @@ SpWalkEntry *sp_walk_next(SpWalkIter *it) {
         }
     }
     return SP_PRIV_NULL;
+}
+
+void sp_walk_end(SpWalkIter *it) {
+    while (it->priv_.level != SP_PRIV_CAST(size_t, -1)) {
+        SpPrivWalkLevel *level = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, it->priv_.buf + it->priv_.level));
+        sp_priv_readdir_close(&level->handle);
+        it->priv_.used = it->priv_.level;
+        it->priv_.level = level->prev;
+    }
+    it->priv_.pending = false;
+    it->priv_.prunable = false;
 }
 
 /* ============ Fluent API Implementation ============ */
