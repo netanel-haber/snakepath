@@ -3198,20 +3198,20 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
     SpError err = sp_priv_native(p, &native);
     DWORD access = DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES;
     DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
-    HANDLE h = err == SP_OK ? CreateFileW(native.path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
-                                          flags, NULL)
-                            : INVALID_HANDLE_VALUE;
-    FILE_ATTRIBUTE_TAG_INFO tag;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    FILE_ATTRIBUTE_TAG_INFO tag = {0, 0};
+    if (err == SP_OK)
+        h = CreateFileW(native.path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, flags, NULL);
     if (err == SP_OK &&
         (h == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag))))
         err = sp_priv_last_error();
-    else if (err == SP_OK && ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
-                              !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY))) {
+    bool link = (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+    if (err == SP_OK && link) {
         CloseHandle(h);
         h = INVALID_HANDLE_VALUE;
         err = sp_priv_remove_impl(p, false);
     }
-    if (err != SP_OK || h == INVALID_HANDLE_VALUE) {
+    if (err != SP_OK || link) {
         if (h != INVALID_HANDLE_VALUE)
             CloseHandle(h);
         return err == SP_ERR_NOT_FOUND && !top ? SP_OK : err;
@@ -3224,6 +3224,7 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
     SpPath child;
     SpPathInfo info;
     SpPrivDirAt here = {SP_PRIV_NULL, p->len, true};
+    child.error = SP_OK;
     for (int pass = 0; err == SP_OK; pass++) {
         bool removed = false;
         for (size_t n; err == SP_OK && (n = sp_priv_readdir_next(&listing, through, p, &child, &info)) > 0;) {
