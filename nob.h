@@ -4093,7 +4093,8 @@ static bool trim_snakepath(const char *program, const char *drop, Nob_String_Bui
 
 /* snake.c, the site's export: logo.c as a program (LOGO_MAIN), with the snakepath it uses in place of its #include */
 static bool make_snake(void) {
-    static const char include[] = "#include \"snakepath.h\"\n";
+    static const char include[] = "#include \"snakepath.h\""; /* the line, ended by \n or, checked out on
+                                                                 * Windows, \r\n */
     static char logo[TEXT_MAX];
     Nob_String_Builder snake = {0};
     size_t len;
@@ -4114,7 +4115,8 @@ static bool make_snake(void) {
                        "#include. */\n#define LOGO_MAIN\n");
     nob_sb_append_buf(&snake, logo, (size_t)(at - logo));
     ok = trim_snakepath("logo.c", "SNAKEPATH_FLUENT", &snake);
-    nob_sb_append_cstr(&snake, at + strlen(include));
+    at = strchr(at, '\n');
+    nob_sb_append_cstr(&snake, at == NULL ? "" : at + 1);
     ok = ok && write_text("snake.c", snake.items, snake.count);
     nob_sb_free(snake);
     return ok;

@@ -102,7 +102,7 @@ static size_t trim_skip(const char *s, size_t len, size_t i) {
     return i < len ? i + 1 : len;
 }
 
-/* Past the line at i, with its backslash continuations */
+/* Past the line at i, with its backslash continuations (lines may end in \r\n, as Windows checks them out) */
 static size_t trim_line_end(const char *s, size_t len, size_t i) {
     while (i < len && s[i] != '\n') {
         size_t next = trim_skip(s, len, i);
@@ -110,7 +110,7 @@ static size_t trim_line_end(const char *s, size_t len, size_t i) {
         if (next != i)
             i = next;
         else
-            i += s[i] == '\\' && i + 1 < len ? 2 : 1;
+            i += s[i] == '\\' && i + 1 < len ? (s[i + 1] == '\r' && i + 2 < len ? 3 : 2) : 1;
     }
     return i < len ? i + 1 : len;
 }
