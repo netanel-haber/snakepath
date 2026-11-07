@@ -92,8 +92,8 @@ const STYLE = `
   canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
   :host(.live) ::slotted(*) { visibility: hidden; }
   .knobs { display: none; position: absolute; right: 2%; top: 2%; width: 118px; padding: 3px 5px; box-sizing: border-box;
-           font-size: 10px; line-height: 1.15; color: #ccc; background: rgba(21, 21, 21, 0.9); border-radius: 4px;
-           opacity: 0.9; transition: opacity 0.2s; }
+           font-size: 10px; line-height: 1.15; color: #ccc; background: rgba(21, 21, 21, 0.95); border-radius: 4px;
+           opacity: 0.97; transition: opacity 0.2s; }
   .knobs:hover, .knobs:focus-within { opacity: 1; }
   :host(.live) .knobs { display: block; }
   label { display: grid; grid-template-columns: 62px 1fr; align-items: center; column-gap: 0.25rem; }
