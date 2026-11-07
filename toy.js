@@ -10,8 +10,8 @@
 // middle is at x = 0.5: the default sits mid-way, and the ends reach far enough to feel at once and be a little silly.
 const KNOBS = [
   ['speed', 0.03, 0.3, 2.4],
-  ['sway', 0, 2, 12],
-  ['waves', 0, 0.7, 3],
+  ['sway', 0, 1, 3],
+  ['waves', 0, 1, 3],
   ['resolution', 96, 112, 192],
   ['rattle', 0, 0.6, 5],
 ];
