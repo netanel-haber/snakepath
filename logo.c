@@ -14,7 +14,7 @@
    and ./nob snake makes it snake.c, the site's export: with LOGO_MAIN, a program that plays it in a terminal, with
    the snakepath it uses in place of the #include. */
 
-#define LOGO_MIN_COLS 96 /* fewer, and the snake is lost in the floor at the site's size */
+#define LOGO_MIN_COLS 80 /* fewer, and the head loses its eyes */
 #define LOGO_MAX_COLS 192
 #define LOGO_MAX_ROWS 102 /* 51 rows for each 96 columns */
 #define LOGO_PI 3.14159265358979323846
@@ -33,7 +33,7 @@ extern char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)];
 int logo_frame(double t);
 
 #ifndef LOGO_SETTINGS
-#define LOGO_SETTINGS {0.3, 2, 1, 144, 0.6}
+#define LOGO_SETTINGS {0.3, 2, 1, 96, 0.6}
 #endif
 LogoSettings logo_set = LOGO_SETTINGS;
 char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' */
@@ -62,9 +62,9 @@ static const double logo_eyes[2] = {52, 62};
 
 /* The tongue: from under the chin to where it forks, then to each tip, as row and column */
 static const double logo_tongue[3][4] = {
-    {39.5, 54.5, 43, 54.5},
-    {43, 54.5, 45.5, 51},
-    {43, 54.5, 45.5, 58.5},
+    {39.5, 54.5, 42.125, 54.5},
+    {42.125, 54.5, 44, 51.875},
+    {42.125, 54.5, 44, 57.125},
 };
 
 /* The rattle: three segments of three rows above a row of floor over the tail's end, each 0.85 the width of the one
@@ -76,7 +76,7 @@ static int logo_cols; /* this frame's size */
 static int logo_height;
 static double logo_scale; /* columns of this frame per column of the model */
 
-/* floor, round, sqrt (for 0 <= v <= 25, as the snake needs) and sin without libm */
+/* floor, round, sqrt (exact to 400, more than the snake needs, and too large past it) and sin without libm */
 static double logo_floor_of(double v) {
     double t = (double)(long)v;
 
@@ -133,6 +133,12 @@ static int logo_y(double row) { return logo_round(row * logo_scale); }
 
 static double logo_x(double col) { return (col - LOGO_CENTER + 48) * logo_scale; }
 
+#define LOGO_LENGTH 1.18 /* how much longer the snake is drawn than the logo's, from the tail's end down */
+#define LOGO_SLIM 0.7    /* and how much slimmer its body: drawn as long and wide as the logo's, it looked blobby */
+
+/* The row the snake's model row r is drawn on: stretched down from the tail's end */
+static double logo_long(double r) { return r < LOGO_TAIL ? r : LOGO_TAIL + (r - LOGO_TAIL) * LOGO_LENGTH; }
+
 static int logo_floor_line(int y) {
     unsigned i;
 
@@ -177,6 +183,10 @@ static double logo_drawn(int side, double r) {
     return (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
 }
 
+#define LOGO_KNEES 3       /* the body's bends at rest, the first to the right below the neck */
+#define LOGO_BEND 6.0      /* columns a knee reaches from the line between the tail's end and the neck, by the neck */
+#define LOGO_BEND_TAIL 4.0 /* and by the tail */
+
 /* The body's bend at row LOGO_NECK - i (i from 0 at the neck to LOGO_NECK - LOGO_TAIL at the tail's end), its
  * middle's distance from the straight line between the tail's end and the neck as drawn, and its quadrature: the same
  * bends a quarter of a wave further along the body (the drawn bend's sine series with every term turned a quarter,
@@ -189,13 +199,8 @@ static void logo_bends(int i, double *bend, double *quad) {
     int j;
     int n;
 
-    for (j = 0; !ready && j <= N; j++) {
-        double middle = (logo_drawn(0, LOGO_NECK - j) + logo_drawn(1, LOGO_NECK - j)) / 2;
-        double neck = (logo_drawn(0, LOGO_NECK) + logo_drawn(1, LOGO_NECK)) / 2;
-        double tail = (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
-
-        bends[j] = middle - (neck + (tail - neck) * j / N);
-    }
+    for (j = 0; !ready && j <= N; j++) /* the knees, smaller toward the tail, which is further off */
+        bends[j] = (LOGO_BEND + (LOGO_BEND_TAIL - LOGO_BEND) * j / N) * logo_sin(LOGO_KNEES * LOGO_PI * j / N);
     for (n = 1; !ready && n < N; n++) {
         double b = 0;
 
@@ -238,6 +243,9 @@ static double logo_middle(double row, double p) {
     double ease = near > 1 ? 1 : near * near * (3 - 2 * near);
     double far = (u - 0.75) / 0.25;
     double tip = 1 - LOGO_TIP * (far < 0 ? 0 : far * far * (3 - 2 * far));
+    double tail = (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
+    double neck = (logo_drawn(0, LOGO_NECK) + logo_drawn(1, LOGO_NECK)) / 2;
+    double line = neck + (tail - neck) * u; /* the straight line the bends are measured from */
     double bend[2];
     double quad[2];
     double turned;
@@ -245,63 +253,143 @@ static double logo_middle(double row, double p) {
     if (r >= LOGO_NECK)
         return middle + logo_nod(p);
     logo_bends(i, &bend[0], &quad[0]);
-    logo_bends(i + 1 < LOGO_NECK - LOGO_TAIL ? i + 1 : i, &bend[1], &quad[1]);
+    logo_bends(i + 1 <= LOGO_NECK - LOGO_TAIL ? i + 1 : i, &bend[1], &quad[1]);
     bend[0] += (bend[1] - bend[0]) * t;
     quad[0] += (quad[1] - quad[0]) * t;
     turned = bend[0] * logo_sin(q + LOGO_PI / 2) + travel * tip * quad[0] * logo_sin(q);
-    return middle + grow * (bend[0] + mix * ease * (turned - bend[0])) - bend[0] + (1 - u) * logo_nod(p);
+    return line + grow * (bend[0] + mix * ease * (turned - bend[0])) + (1 - u) * logo_nod(p);
 }
 
-/* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right. The body keeps its
- * thickness across its path, not across a row (a row is two columns tall, so it crosses a slanted stretch wider than
- * an upright one): where the middle stands more upright than in the drawing, the drawn width narrows with it, to
- * 3/4 at most, and where it slants more it stays, since a wider row reads as a lump */
-static double logo_side(int side, double row, double p) {
-    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
-    double up = r - 0.5 < LOGO_TAIL ? LOGO_TAIL : r - 0.5;
-    double down = r + 0.5 > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : r + 0.5;
-    double drawn = (logo_drawn(0, down) + logo_drawn(1, down) - logo_drawn(0, up) - logo_drawn(1, up)) / 2;
-    double now = logo_middle(down, p) - logo_middle(up, p);
-    double slant = (4 + now * now) / (4 + drawn * drawn);
-    double width = (logo_drawn(1, r) - logo_drawn(0, r)) * logo_sqrt(slant < 0.5625 ? 0.5625 : slant < 1 ? slant : 1);
+/* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
+ * hangs from the one below it as the tail moves it and swings a little after it */
+static void logo_rattle_cols(double p, double cols[4]) {
+    double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
+    int k;
 
-    return logo_x(logo_middle(row, p) + (side ? width : -width) / 2);
+    cols[0] = logo_middle(LOGO_TAIL, p);
+    for (k = 0; k < 3; k++) {
+        moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
+        cols[k + 1] = logo_rattle_rest[k] + moved;
+    }
 }
 
-/* An edge outside a side of the snake on row y, as the floor's lines are drawn: from where the side is halfway to
- * the row above to where it is halfway to the row below, and a column more, so the edges run on unbroken; and past
- * it a dark margin as wide, so the snake's outline stands apart from the floor's lines */
-static void logo_draw_edge(int side, int y, double p) {
-    double half = 0.5 / logo_scale;
-    double above = logo_side(side, logo_row(y) - half, p);
-    double below = logo_side(side, logo_row(y) + half, p);
-    double near = side ? (above < below ? above : below) : (above > below ? above : below);
-    double far = side ? (above > below ? above : below) : (above < below ? above : below);
-    double out = side ? 1 : -1;
+#define LOGO_EDGE 1.3   /* the outline's thickness, in the model's columns at its own width */
+#define LOGO_MARGIN 1.0 /* the dark margin's past it */
 
-    logo_fill(y, far + (1 + logo_thin()) * out, far + (1 + 2 * logo_thin()) * out, ' '); /* a dark margin outside */
-    logo_fill(y, near + out, far + (1 + logo_thin()) * out, 'c');
+/* Half the snake's thickness across its path at the model's row r: LOGO_SLIM of half the logo's width there, so the
+ * body thins toward the tail as the logo's does */
+static double logo_half(double r) {
+    if (r > LOGO_NECK - 3) /* the neck widens to the head's width as the logo's does */
+        return (LOGO_SLIM + (1 - LOGO_SLIM) * (r - (LOGO_NECK - 3)) / 3) * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
+    return LOGO_SLIM * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
 }
 
-/* The snake: dark between its sides, with an edge outside each on a row between floor lines, the floor closed under
- * the chin, and the eyes (the tail's end tapers into the rattle, which logo_draw_rattle draws) */
+#define LOGO_STEP 0.25                                        /* rows between two points of the snake's line */
+#define LOGO_POINTS (4 * (LOGO_NECK - 1 - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
+
+/* The snake, drawn by its distance from its middle line, from the first rattle segment's middle (the tail tapering
+ * to it) to the chin: dark within its thickness, then an outline of even thickness all round, then a dark margin that
+ * sets it apart from the floor's lines (not on the solid horizon, which the tail cuts into without one). Drawn this
+ * way the outline is one unbroken band at every slant, phase and resolution: drawn row by row, it came apart into
+ * staggered strokes where the body slanted or kinked */
 static void logo_draw_snake(double p) {
-    int tail = logo_y(LOGO_TAIL);
-    int chin = logo_y(LOGO_CHIN);
+    double col[LOGO_POINTS];
+    double row[LOGO_POINTS];
+    double half[LOGO_POINTS];
+    double rattle[4];
+    double edge =
+        LOGO_EDGE / logo_sqrt(logo_scale); /* heavier in columns at higher resolutions, lighter in the model's */
+    double margin = LOGO_MARGIN / logo_sqrt(logo_scale);
+    double down = logo_long(LOGO_NECK) - LOGO_NECK; /* how far the head is drawn below the logo's */
+    int i;
     int y;
     int e;
 
-    for (y = tail; y < chin; y++) {
-        logo_draw_edge(0, y, p);
-        logo_draw_edge(1, y, p);
-        logo_fill(y, logo_side(0, logo_row(y), p), logo_side(1, logo_row(y), p), ' ');
-    }
-    for (y = chin; y < logo_y(LOGO_CHIN + 1); y++)
-        logo_fill(y, logo_side(0, LOGO_CHIN, p) - logo_thin(), logo_side(1, LOGO_CHIN, p) + logo_thin(), 'c');
-    for (e = 0; e < 2; e++) {
-        double col = logo_eyes[e] + logo_nod(p);
+    logo_rattle_cols(p, rattle);
+    for (i = 0; i < LOGO_POINTS; i++) {
+        double t = (i * LOGO_STEP) / 3; /* 0 at the first segment's middle, 1 at the tail's end */
 
-        logo_fill(logo_y(LOGO_EYES_ROW), logo_x(col - 0.4), logo_x(col + 0.4), 'c');
+        double r = LOGO_TAIL - 3 + i * LOGO_STEP; /* the model's row */
+
+        row[i] = logo_long(r);
+        col[i] = t < 1 ? rattle[1] + (rattle[0] - rattle[1]) * t : logo_middle(r, p);
+        half[i] = (t < 1 ? t : 1) * logo_half(r < LOGO_TAIL ? LOGO_TAIL : r);
+    }
+
+    for (y = logo_y(LOGO_TAIL - 3) - logo_y(2); y <= logo_y(logo_long(LOGO_NECK + 2)); y++) {
+        double m = logo_row(y);
+        double lo = 1e9;
+        double hi = -1e9;
+        int x;
+
+        for (i = 0; i < LOGO_POINTS; i++) {
+            double reach = half[i] + edge + margin;
+
+            if ((row[i] - m) * 2 < reach && (m - row[i]) * 2 < reach) {
+                lo = col[i] - reach < lo ? col[i] - reach : lo;
+                hi = col[i] + reach > hi ? col[i] + reach : hi;
+            }
+        }
+        for (x = logo_round(logo_x(lo)); lo < hi && x <= logo_round(logo_x(hi)); x++) {
+            double c = x / logo_scale + LOGO_CENTER - 48; /* the model's column of this cell */
+            double d = 1e9;
+
+            for (i = 0; i + 1 < LOGO_POINTS; i++) {
+                double ax = col[i];
+                double ay = row[i] * 2;
+                double bx = col[i + 1] - ax;
+                double by = (row[i + 1] - row[i]) * 2;
+                double t = ((c - ax) * bx + (m * 2 - ay) * by) / (bx * bx + by * by);
+                double dx;
+                double dy;
+                double here;
+
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                dx = c - ax - t * bx;
+                dy = m * 2 - ay - t * by;
+                here = logo_sqrt(dx * dx + dy * dy) - (half[i] + (half[i + 1] - half[i]) * t);
+                d = here < d ? here : d;
+            }
+            if (x < 0 || x >= logo_cols || y < 0 || y >= logo_height)
+                continue;
+            if (d < 0)
+                logo_rows[y][x] = ' ';
+            else if (d < edge)
+                logo_rows[y][x] = 'c';
+            else if (d < edge + margin && y > logo_y(LOGO_HORIZON))
+                logo_rows[y][x] = ' ';
+        }
+    }
+
+    for (y = logo_y(LOGO_NECK - 1 + down); y < logo_y(LOGO_CHIN + down); y++) { /* the head as the logo draws it */
+        double r = logo_row(y) - down;
+        double up = r - 0.5 / logo_scale < LOGO_NECK - 1 ? LOGO_NECK - 1 : r - 0.5 / logo_scale;
+        double on = r + 0.5 / logo_scale > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : r + 0.5 / logo_scale;
+        double left = logo_x(logo_drawn(0, r) + logo_nod(p));
+        double right = logo_x(logo_drawn(1, r) + logo_nod(p));
+        /* each side's edge reaches from where the side is half a row up to half a row down, so it runs on unbroken
+         * where the jaw slants */
+        double outer0 =
+            logo_x((logo_drawn(0, up) < logo_drawn(0, on) ? logo_drawn(0, up) : logo_drawn(0, on)) + logo_nod(p));
+        double outer1 =
+            logo_x((logo_drawn(1, up) > logo_drawn(1, on) ? logo_drawn(1, up) : logo_drawn(1, on)) + logo_nod(p));
+        double inner0 =
+            logo_x((logo_drawn(0, up) > logo_drawn(0, on) ? logo_drawn(0, up) : logo_drawn(0, on)) + logo_nod(p));
+        double inner1 =
+            logo_x((logo_drawn(1, up) < logo_drawn(1, on) ? logo_drawn(1, up) : logo_drawn(1, on)) + logo_nod(p));
+
+        logo_fill(y, outer0 - (edge + margin) * logo_scale, outer1 + (edge + margin) * logo_scale, ' ');
+        logo_fill(y, outer0 - edge * logo_scale, inner0 - 1, 'c');
+        logo_fill(y, inner1 + 1, outer1 + edge * logo_scale, 'c');
+        logo_fill(y, left, right, ' ');
+    }
+    for (y = logo_y(LOGO_CHIN + down); y < logo_y(LOGO_CHIN + 1 + down); y++) /* the floor closed under the chin */
+        logo_fill(y, logo_x(logo_drawn(0, LOGO_CHIN - 1) + logo_nod(p)) - edge * logo_scale,
+                  logo_x(logo_drawn(1, LOGO_CHIN - 1) + logo_nod(p)) + edge * logo_scale, 'c');
+    for (e = 0; e < 2; e++) {
+        double eye = logo_eyes[e] + logo_nod(p);
+
+        logo_fill(logo_y(LOGO_EYES_ROW + down), logo_x(eye - 0.4), logo_x(eye + 0.4), 'c');
     }
 }
 
@@ -314,14 +402,20 @@ static void logo_draw_tongue(double p) {
     unsigned i;
 
     for (i = 0; i < sizeof logo_tongue / sizeof logo_tongue[0]; i++) {
-        const double *part = logo_tongue[i];
+        double down = logo_long(LOGO_CHIN) - LOGO_CHIN; /* the tongue hangs from the chin where it is drawn */
+        double part[4];
+
+        part[0] = logo_tongue[i][0] + down;
+        part[1] = logo_tongue[i][1];
+        part[2] = logo_tongue[i][2] + down;
+        part[3] = logo_tongue[i][3];
 
         for (y = logo_y(part[0]); y < logo_y(part[2]); y++) {
             double from = logo_row(y) - half < part[0] ? part[0] : logo_row(y) - half;
             double to = logo_row(y) + half > part[2] ? part[2] : logo_row(y) + half;
             double a = part[1] + (part[3] - part[1]) * (from - part[0]) / (part[2] - part[0]);
             double b = part[1] + (part[3] - part[1]) * (to - part[0]) / (part[2] - part[0]);
-            double moved = logo_nod(p) + flick * (to - LOGO_CHIN) / (part[2] - LOGO_CHIN);
+            double moved = logo_nod(p) + flick * (to - part[0]) / (part[2] - part[0]);
             double left = logo_x((a < b ? a : b) + moved);
             double right = logo_x((a < b ? b : a) + moved);
 
@@ -332,37 +426,16 @@ static void logo_draw_tongue(double p) {
     }
 }
 
-/* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end;
- * the tail tapers into it, its dark narrowing row by row from the tail's width to nothing at the first segment's
- * middle, with the body's outline on rows between floor lines, so the body runs into the rattle without a wall
- * between them or a stray glyph at any resolution */
+/* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end,
+ * which tapers into it (logo_draw_snake draws the taper) */
 static void logo_draw_rattle(double p) {
     double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
     double cols[4];
-    double left = logo_side(0, LOGO_TAIL, p);
-    double right = logo_side(1, LOGO_TAIL, p);
-    double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
     double scale = 1.05;
     int k;
     int y;
 
-    cols[0] = (left + right) / 2 / logo_scale + LOGO_CENTER - 48; /* back in the model's columns */
-    for (k = 0; k < 3; k++) {
-        moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
-        cols[k + 1] = logo_rattle_rest[k] + moved;
-    }
-
-    for (y = logo_y(rows[1]); y < logo_y(LOGO_TAIL); y++) {
-        double t = (logo_row(y) - rows[1]) / (rows[0] - rows[1]); /* 0 at the segment's middle, 1 at the tail's end */
-        double spine = logo_x(cols[1] + (cols[0] - cols[1]) * t);
-        double half = (right - left) / 2 * t;
-
-        /* the outline, on into the rattle: an edge each side and a dark margin past it */
-        logo_fill(y, spine - half - 1 - 2 * logo_thin(), spine + half + 1 + 2 * logo_thin(), ' ');
-        logo_fill(y, spine - half - 1 - logo_thin(), spine + half + 1 + logo_thin(), 'c');
-        logo_fill(y, spine - half, spine + half, ' ');
-    }
-
+    logo_rattle_cols(p, cols);
     for (k = 0; k < 3; k++, scale *= 0.85) {
         double middle = rows[k + 1];
 
@@ -391,7 +464,7 @@ static char logo_shown(int y, int x) {
     for (dy = -1; dy <= 1; dy++)
         for (dx = -1; dx <= 1; dx++)
             around += (dy || dx) && logo_lit(y + dy, x + dx);
-    if (logo_rows[y][x] == 'c' && around == 0 && y != logo_y(LOGO_EYES_ROW))
+    if (logo_rows[y][x] == 'c' && around == 0 && y != logo_y(LOGO_EYES_ROW + logo_long(LOGO_NECK) - LOGO_NECK))
         return ' ';
     if (logo_rows[y][x] == ' ' && logo_lit(y, x - 1) && logo_lit(y, x + 1) && logo_lit(y - 1, x) && logo_lit(y + 1, x))
         return 'c';

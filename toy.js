@@ -12,7 +12,7 @@ const KNOBS = [
   ['speed', 0.03, 0.3, 2.4],
   ['sway', 0, 2, 12],
   ['waves', 0, 1, 3],
-  ['resolution', 96, 144, 192],
+  ['resolution', 80, 96, 192],
   ['rattle', 0, 0.6, 5],
 ];
 const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log((middle - low) / (high - low)) / Math.log(0.5));
@@ -29,12 +29,10 @@ const WORKER = `
   // The frame is drawn as snakepath.png is: each 'c' a whole glyph, on a canvas of its own with cells at least 8
   // pixels wide (a row is two character widths tall, and a monospace character is 0.6 of its font size wide), then
   // scaled down to the box with smoothing. Glyphs drawn straight at a few pixels each overlapped into stripes, and
-  // blocks in their place read as dashes. The canvas has at most 2 device pixels a character, and the page scales it
-  // up: sharper, the floor's glyphs come apart into strokes as heavy as the snake's outline, and the snake is lost.
+  // blocks in their place read as dashes.
   function size(cols, rows) {
-    const scale = Math.min(box.dpr, (2 * cols) / box.width); // at most 2 device pixels a character: see above
-    canvas.width = Math.round(box.width * scale);
-    canvas.height = Math.round(box.height * scale);
+    canvas.width = Math.round(box.width * box.dpr);
+    canvas.height = Math.round(box.height * box.dpr);
     const w = Math.max(8, Math.ceil(canvas.width / cols));
     cell = { w, h: 2 * w, cols, rows };
     big = new OffscreenCanvas(w * cols, 2 * w * rows);
