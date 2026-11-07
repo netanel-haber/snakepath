@@ -204,7 +204,7 @@ static void logo_draw_edge(int side, int y, double p) {
 }
 
 /* The snake: dark between its sides, with an edge outside each on a row between floor lines, the floor closed under
- * the chin, and the eyes (the tail's end fades into the rattle, which logo_draw_rattle draws) */
+ * the chin, and the eyes (the tail's end tapers into the rattle, which logo_draw_rattle draws) */
 static void logo_draw_snake(double p) {
     int tail = logo_y(LOGO_TAIL);
     int chin = logo_y(LOGO_CHIN);
@@ -255,43 +255,30 @@ static void logo_draw_tongue(double p) {
 }
 
 /* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end;
- * and between the tail's end and the first segment a fade, dark on the line from one to the other and dithered (by a
- * 4 by 4 ordered pattern, so it is an even half-tone at every resolution) to the solid horizon LOGO_FADE columns
- * from it and LOGO_FADE_UP rows up, so the tail softens into the rattle and the segments stay sharp */
-#define LOGO_FADE 7.0    /* columns either side of the line the fade reaches */
-#define LOGO_FADE_UP 2.5 /* rows above the tail's end the fade reaches: up to the first segment's middle */
+ * the tail tapers into it, its dark narrowing row by row from the tail's width to nothing at the first segment's
+ * middle, so the body runs into the rattle without a wall between them or a stray glyph at any resolution */
 static void logo_draw_rattle(double p) {
-    static const unsigned char order[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
-    double rows[4] = {LOGO_TAIL - 0.5, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
+    double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
     double cols[4];
+    double left = logo_side(0, LOGO_TAIL, p);
+    double right = logo_side(1, LOGO_TAIL, p);
     double moved = logo_offset(LOGO_TAIL, p);
     double scale = 1.05;
     int k;
     int y;
-    int x;
 
-    cols[0] = (logo_side(0, LOGO_TAIL, p) + logo_side(1, LOGO_TAIL, p)) / 2 / logo_scale;
+    cols[0] = (left + right) / 2 / logo_scale;
     for (k = 0; k < 3; k++) {
         moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
         cols[k + 1] = logo_rattle_rest[k] + moved;
     }
 
-    for (y = logo_y(rows[0] - LOGO_FADE_UP); y < logo_y(LOGO_TAIL); y++) {
-        double row = logo_row(y);
-        double up = 1 - (rows[0] - row) / LOGO_FADE_UP; /* how dark the fade is on this row, at the line */
-        double spine;
+    for (y = logo_y(rows[1]); y < logo_y(LOGO_TAIL); y++) {
+        double t = (logo_row(y) - rows[1]) / (rows[0] - rows[1]); /* 0 at the segment's middle, 1 at the tail's end */
+        double spine = logo_x(cols[1] + (cols[0] - cols[1]) * t);
+        double half = (right - left) / 2 * t;
 
-        k = 0;
-        while (k < 2 && row <= rows[k + 1])
-            k++;
-        spine = cols[k] + (cols[k + 1] - cols[k]) * (rows[k] - row) / (rows[k] - rows[k + 1]);
-        for (x = 0; x < logo_cols; x++) {
-            double off = x / logo_scale - spine;
-            double across = 1 - (off < 0 ? -off : off) / LOGO_FADE;
-
-            if (up > 0 && across > 0 && up * across * 16 > order[y % 4][x % 4])
-                logo_rows[y][x] = ' ';
-        }
+        logo_fill(y, spine - half, spine + half, ' ');
     }
 
     for (k = 0; k < 3; k++, scale *= 0.85) {
