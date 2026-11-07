@@ -38,6 +38,7 @@ test_fluent_symtgt_*.tmp
 /snakepath.egg-info/
 /build/
 /dist/
-logo.wasm
-snake.c
+/site/logo.wasm
+/site/snake.c
+/site/README.md
 trim_out/

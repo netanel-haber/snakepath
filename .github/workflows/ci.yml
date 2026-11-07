@@ -113,8 +113,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Put the README, the site's page, in the site's folder
+        run: cp README.md site/README.md
+
       - name: Build the site with GitHub Pages' builder
         uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./site
 
       - name: Screenshot the site at 1920x1080
         run: >
@@ -133,7 +138,8 @@ jobs:
         env:
           URL: ${{ steps.upload.outputs.artifact-url }}
 
-  # The site as GitHub Pages builds it, plus logo.wasm and snake.c made from logo.c (the logo's toy), deployed from main
+  # The site (site/, with README.md as its page) as GitHub Pages builds it, plus logo.wasm and snake.c made from
+  # site/logo.c (the logo's toy), deployed from main
   site:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -142,8 +148,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Put the README, the site's page, in the site's folder
+        run: cp README.md site/README.md
+
       - name: Build the site with GitHub Pages' builder
         uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./site
 
       - name: Install the WebAssembly linker
         run: sudo apt-get update && sudo apt-get install -y lld
@@ -151,13 +162,13 @@ jobs:
       - name: Compile logo.c to logo.wasm
         run: |
           clang -std=c99 --target=wasm32 -mbulk-memory -O2 -nostdlib -Wall -Wextra -Werror -pedantic \
-            -Wl,--no-entry -Wl,--export=logo_frame,--export=logo_set,--export=logo_out -o logo.wasm logo.c
+            -Wl,--no-entry -Wl,--export=logo_frame,--export=logo_set,--export=logo_out -o logo.wasm site/logo.c
           sudo cp logo.wasm _site/logo.wasm
 
       - name: Make snake.c, the site's export, with nob and trim.h
         run: |
           cc -x c -o nob nob.h && ./nob snake
-          sudo cp snake.c _site/snake.c
+          sudo cp site/snake.c _site/snake.c
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3

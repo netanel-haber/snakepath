@@ -10,7 +10,7 @@
 
    The site runs it as WebAssembly, freestanding (no libc, so no libm either):
      clang -std=c99 --target=wasm32 -mbulk-memory -O2 -nostdlib -Wl,--no-entry \
-       -Wl,--export=logo_frame,--export=logo_set,--export=logo_out -o logo.wasm logo.c
+       -Wl,--export=logo_frame,--export=logo_set,--export=logo_out -o logo.wasm site/logo.c
    and ./nob snake makes it snake.c, the site's export: with LOGO_MAIN, a program that plays it in a terminal, with
    the snakepath it uses in place of the #include. */
 

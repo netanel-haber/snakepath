@@ -4,7 +4,7 @@
    Build: cc -x c -o nob nob.h && ./nob     (quiet: add -DSNAKEPATH_QUIET; MSVC: cl /Tcnob.h)
    Format: ./nob format                    (snakepath.h's clang-format layout, which ./nob checks)
    Diff: ./nob diff [ref]                  (the pure path API against the header at a git ref, default origin/main)
-   Snake: ./nob snake                      (snake.c, the site's export: logo.c with the snakepath it uses, by trim.h)
+   Snake: ./nob snake                      (snake.c, the site's export: site/logo.c with the snakepath it uses, by trim.h, into site/snake.c)
    Builds run in parallel across the available CPU cores.
 
    To upgrade nob, replace the part between the markers with upstream nob.h.
@@ -3431,7 +3431,7 @@ NOBDEF char *nob_temp_running_executable_path(void)
 #define SNAKEPATH_IMPLEMENTATION
 #include "snakepath.h"
 #define TRIM_IMPLEMENTATION
-#include "trim.h"
+#include "site/trim.h"
 
 #define TEXT_MAX (1 << 20) /* the largest file the build reads whole */
 
@@ -3696,7 +3696,7 @@ static bool run_clang_format(bool rewrite) {
         nob_cmd_append(&cmd, "-i");
     else
         nob_cmd_append(&cmd, "--dry-run", "--Werror");
-    nob_cmd_append(&cmd, "snakepath.h", "trim.h", "logo.c");
+    nob_cmd_append(&cmd, "snakepath.h", "site/trim.h", "site/logo.c");
     return nob_cmd_run(&cmd);
 }
 
@@ -4101,7 +4101,7 @@ static bool make_snake(void) {
     const char *at;
     bool ok;
 
-    if (!read_text("logo.c", logo, sizeof(logo), &len))
+    if (!read_text("site/logo.c", logo, sizeof(logo), &len))
         return false;
     at = strstr(logo, include);
     if (at == NULL) {
@@ -4114,10 +4114,10 @@ static bool make_snake(void) {
                        " * It is logo.c with the snakepath it uses (snakepath.h cut down by trim.h) in place of its "
                        "#include. */\n#define LOGO_MAIN\n");
     nob_sb_append_buf(&snake, logo, (size_t)(at - logo));
-    ok = trim_snakepath("logo.c", "SNAKEPATH_FLUENT", &snake);
+    ok = trim_snakepath("site/logo.c", "SNAKEPATH_FLUENT", &snake);
     at = strchr(at, '\n');
     nob_sb_append_cstr(&snake, at == NULL ? "" : at + 1);
-    ok = ok && write_text("snake.c", snake.items, snake.count);
+    ok = ok && write_text("site/snake.c", snake.items, snake.count);
     nob_sb_free(snake);
     return ok;
 }
@@ -4137,7 +4137,7 @@ static bool make_trimmed_tests(void) {
 }
 
 static bool clean_artifacts(void) {
-    const char *trees[] = {TRIM_DIR, DIFF_BASE_DIR, DIFF_HEAD_DIR, "snake.c"};
+    const char *trees[] = {TRIM_DIR, DIFF_BASE_DIR, DIFF_HEAD_DIR, "site/snake.c", "site/README.md"};
     bool all_ok = true;
     LOG_INFO( "Cleaning build artifacts...");
     for (size_t i = 0; all_artifacts[i] != NULL; i++)
@@ -4274,7 +4274,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < snake_count; i++) {
         if (!config_enabled(snake_configs[i])) continue;
         LOG_INFO( "  Starting build: %s", snake_configs[i].name);
-        build_source_async(snake_configs[i], "snake.c", &procs);
+        build_source_async(snake_configs[i], "site/snake.c", &procs);
     }
 
     /* Build the Python bindings' extension module */
