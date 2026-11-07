@@ -292,10 +292,8 @@ static void logo_draw_snake(double p) {
     int e;
 
     for (y = tail; y < chin; y++) {
-        if (!logo_floor_line(y)) {
-            logo_draw_edge(0, y, p);
-            logo_draw_edge(1, y, p);
-        }
+        logo_draw_edge(0, y, p);
+        logo_draw_edge(1, y, p);
         logo_fill(y, logo_side(0, logo_row(y), p), logo_side(1, logo_row(y), p), ' ');
     }
     for (y = chin; y < logo_y(LOGO_CHIN + 1); y++)
@@ -359,10 +357,9 @@ static void logo_draw_rattle(double p) {
         double spine = logo_x(cols[1] + (cols[0] - cols[1]) * t);
         double half = (right - left) / 2 * t;
 
-        if (!logo_floor_line(y)) { /* the outline, on into the rattle: an edge each side and a dark margin past it */
-            logo_fill(y, spine - half - 1 - 2 * logo_thin(), spine + half + 1 + 2 * logo_thin(), ' ');
-            logo_fill(y, spine - half - 1 - logo_thin(), spine + half + 1 + logo_thin(), 'c');
-        }
+        /* the outline, on into the rattle: an edge each side and a dark margin past it */
+        logo_fill(y, spine - half - 1 - 2 * logo_thin(), spine + half + 1 + 2 * logo_thin(), ' ');
+        logo_fill(y, spine - half - 1 - logo_thin(), spine + half + 1 + logo_thin(), 'c');
         logo_fill(y, spine - half, spine + half, ' ');
     }
 

@@ -29,10 +29,12 @@ const WORKER = `
   // The frame is drawn as snakepath.png is: each 'c' a whole glyph, on a canvas of its own with cells at least 8
   // pixels wide (a row is two character widths tall, and a monospace character is 0.6 of its font size wide), then
   // scaled down to the box with smoothing. Glyphs drawn straight at a few pixels each overlapped into stripes, and
-  // blocks in their place read as dashes.
+  // blocks in their place read as dashes. The canvas has at most 2 device pixels a character, and the page scales it
+  // up: sharper, the floor's glyphs come apart into strokes as heavy as the snake's outline, and the snake is lost.
   function size(cols, rows) {
-    canvas.width = Math.round(box.width * box.dpr);
-    canvas.height = Math.round(box.height * box.dpr);
+    const scale = Math.min(box.dpr, (2 * cols) / box.width); // at most 2 device pixels a character: see above
+    canvas.width = Math.round(box.width * scale);
+    canvas.height = Math.round(box.height * scale);
     const w = Math.max(8, Math.ceil(canvas.width / cols));
     cell = { w, h: 2 * w, cols, rows };
     big = new OffscreenCanvas(w * cols, 2 * w * rows);
