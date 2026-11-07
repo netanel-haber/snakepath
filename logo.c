@@ -210,7 +210,9 @@ static double logo_middle(double row, double p) {
     double mix = reach < 1 ? reach : 1;
     double grow = reach > 1 ? 1 + (reach - 1) * 0.15 : 1;
     double knees = logo_knees();
-    double deep = (LOGO_BEND + (LOGO_BEND_TAIL - LOGO_BEND) * u) * (knees > 3 ? 3 / knees : 1);
+    double rise = u / 0.25; /* the knees fade out toward the neck, so the body meets the head where the head is */
+    double deep = (LOGO_BEND + (LOGO_BEND_TAIL - LOGO_BEND) * u) * (knees > 3 ? 3 / knees : 1) *
+                  (rise > 1 ? 1 : rise * rise * (3 - 2 * rise));
     double near = u / 0.3;
     double ease = near > 1 ? 1 : near * near * (3 - 2 * near);
     double far = (u - 0.75) / 0.25;
@@ -251,8 +253,8 @@ static double logo_half(double r) {
     return LOGO_SLIM * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
 }
 
-#define LOGO_STEP 0.25                                        /* rows between two points of the snake's line */
-#define LOGO_POINTS (4 * (LOGO_NECK - 1 - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
+#define LOGO_STEP 0.25                                    /* rows between two points of the snake's line */
+#define LOGO_POINTS (4 * (LOGO_NECK - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
 
 /* The snake, drawn by its distance from its middle line, from the first rattle segment's middle (the tail tapering
  * to it) to the chin: dark within its thickness, then an outline of even thickness all round, then a dark margin that
