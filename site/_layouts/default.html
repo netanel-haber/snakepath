@@ -74,7 +74,7 @@
     body { display: grid; grid-template-columns: 1fr fit-content(calc(100% - 4rem)) 1fr; align-content: start; }
     header { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
     .container { grid-column: 2; min-width: 0; }
-    .hero, #main_content > :is(p, h1, h2, h3, h4, ul, ol, details, table, blockquote) { contain: inline-size; }
+    .hero, #main_content > :is(p, h1, h2:not(#build--test), h3, h4, ul, ol, details, table, blockquote) { contain: inline-size; }
     section { display: block; margin: 0 0 0.75rem 0; }
     h1, h2, h3, h4, h5, h6 { margin: 0 0 0.75rem; }
     li { line-height: 1.4; }
