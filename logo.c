@@ -119,9 +119,10 @@ static void logo_fill(int y, double from, double to, char ch) {
         logo_rows[y][c] = ch;
 }
 
-/* How thick the snake's lines are drawn past their geometry, in this frame's columns: a column of the model's, so
- * that they keep their weight against the floor at every resolution */
-static double logo_thin(void) { return logo_scale; }
+/* How thick the snake's lines are drawn past their geometry, in this frame's columns: a column of the model's at the
+ * model's own width, and more at higher resolutions, since the floor's lines cross a row in as many columns at every
+ * resolution and an outline no heavier than they are dissolves into them */
+static double logo_thin(void) { return logo_scale * logo_scale; }
 
 /* The model's row at the middle of row y, and the row or column of the model in this frame */
 static double logo_row(int y) { return y / logo_scale; }
@@ -177,15 +178,33 @@ static double logo_offset(double row, double p) {
     return sway * (head + (1 - head) * u * logo_sqrt(u)) * logo_sin(p - from_neck * logo_wave());
 }
 
+#define LOGO_FLIP 2.0 /* the sway from which the body's bend flips all the way to the other side */
+
+/* How far the body's bend has moved at row r (between the tail's end and the neck) at phase p, for a row whose middle
+ * is at the model's column middle: its distance from the straight line from the tail's end to the neck is multiplied
+ * by a factor that swings from 1 to -1 and back (with the waves' lag), so the knee turns inside out every sway */
+static double logo_bend(double r, double middle, double p) {
+    double tail = (logo_snake[0][0] + logo_snake[0][1]) / 2.0;
+    double neck = (logo_snake[LOGO_NECK - LOGO_TAIL][0] + logo_snake[LOGO_NECK - LOGO_TAIL][1]) / 2.0;
+    double line = tail + (neck - tail) * (r - LOGO_TAIL) / (LOGO_NECK - LOGO_TAIL);
+    double flip = logo_set.sway < LOGO_FLIP ? logo_set.sway / LOGO_FLIP : 1;
+    double turned = 1 - logo_sin(p + LOGO_PI / 2 - (LOGO_NECK - r) * logo_wave()); /* 0, then 2 half a sway on */
+
+    return r < LOGO_NECK ? -flip * turned * (middle - line) : 0;
+}
+
 /* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right, interpolated */
 static double logo_side(int side, double row, double p) {
     double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
     int below = (int)r; /* r is never below 0, so this is its floor */
     int above = below + 1 < LOGO_CHIN ? below + 1 : below;
     double t = r - below;
-    double col = (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
+    const unsigned char *low = logo_snake[below - LOGO_TAIL];
+    const unsigned char *high = logo_snake[above - LOGO_TAIL];
+    double col = (1 - t) * low[side] + t * high[side];
+    double middle = ((1 - t) * (low[0] + low[1]) + t * (high[0] + high[1])) / 2;
 
-    return logo_x(col + logo_offset(row, p));
+    return logo_x(col + logo_offset(row, p) + logo_bend(r, middle, p));
 }
 
 /* An edge outside a side of the snake on row y, as the floor's lines are drawn: from where the side is halfway to
@@ -256,7 +275,8 @@ static void logo_draw_tongue(double p) {
 
 /* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end;
  * the tail tapers into it, its dark narrowing row by row from the tail's width to nothing at the first segment's
- * middle, so the body runs into the rattle without a wall between them or a stray glyph at any resolution */
+ * middle, with the body's outline on rows between floor lines, so the body runs into the rattle without a wall
+ * between them or a stray glyph at any resolution */
 static void logo_draw_rattle(double p) {
     double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
     double cols[4];
@@ -278,6 +298,11 @@ static void logo_draw_rattle(double p) {
         double spine = logo_x(cols[1] + (cols[0] - cols[1]) * t);
         double half = (right - left) / 2 * t;
 
+        if (!logo_floor_line(
+                y)) { /* the body's outline, on into the rattle: an edge each side and a dark margin past it */
+            logo_fill(y, spine - half - 1 - 2 * logo_thin(), spine + half + 1 + 2 * logo_thin(), ' ');
+            logo_fill(y, spine - half - 1 - logo_thin(), spine + half + 1 + logo_thin(), 'c');
+        }
         logo_fill(y, spine - half, spine + half, ' ');
     }
 
