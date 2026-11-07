@@ -11,8 +11,8 @@
 const KNOBS = [
   ['speed', 0.03, 0.3, 2.4],
   ['sway', 0, 2, 12],
-  ['waves', 0, 0.7, 3],
-  ['resolution', 96, 112, 192],
+  ['waves', 0, 1, 3],
+  ['resolution', 96, 144, 192],
   ['rattle', 0, 0.6, 5],
 ];
 const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log((middle - low) / (high - low)) / Math.log(0.5));
@@ -20,28 +20,31 @@ const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log(
 // Runs logo.wasm and draws its frames: only the rows that changed, each 'c' from one drawing of the glyph. The page's
 // first message hands the canvas over, and every message waits until logo.wasm is loaded.
 const WORKER = `
-  let wasm, settings, canvas, ctx, box, glyph, cell, loaded, shown = [];
+  let wasm, settings, canvas, ctx, box, big, bctx, glyph, cell, loaded, shown = [];
 
   function text() {
     const bytes = new Uint8Array(wasm.memory.buffer, wasm.logo_out.value);
     return new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0)));
   }
-  // The glyph for this many columns and rows in the box: a row is two character widths tall, and a monospace
-  // character is 0.6 of its font size wide. Under 6 pixels wide a glyph is too thin to show the snake, and drawn whole
-  // pixels apart its copies overlap into stripes, so each 'c' is drawn instead as its box (0.8 of the cell wide and
-  // half as tall) at its own fractional place, nearly as bright as a glyph, so that the snake keeps its contrast against
-  // the floor.
+  // The frame is drawn as snakepath.png is: each 'c' a whole glyph, on a canvas of its own with cells at least 8
+  // pixels wide (a row is two character widths tall, and a monospace character is 0.6 of its font size wide), then
+  // scaled down to the box with smoothing. Glyphs drawn straight at a few pixels each overlapped into stripes, and
+  // blocks in their place read as dashes.
   function size(cols, rows) {
     canvas.width = Math.round(box.width * box.dpr);
     canvas.height = Math.round(box.height * box.dpr);
-    cell = { w: canvas.width / cols, h: canvas.height / rows, cols, rows };
-    glyph = new OffscreenCanvas(Math.ceil(cell.w) + 2, Math.ceil(cell.h));
+    const w = Math.max(8, Math.ceil(canvas.width / cols));
+    cell = { w, h: 2 * w, cols, rows };
+    big = new OffscreenCanvas(w * cols, 2 * w * rows);
+    bctx = big.getContext('2d');
+    glyph = new OffscreenCanvas(w + 2, 2 * w);
     const g = glyph.getContext('2d');
-    g.font = 'bold ' + cell.h / 1.2 + 'px ' + box.fontFamily;
+    g.font = 'bold ' + (2 * w) / 1.2 + 'px ' + box.fontFamily;
     const f = g.measureText('c');
     g.fillStyle = '#35f56a';
-    g.fillText('c', 1, (cell.h - f.fontBoundingBoxAscent - f.fontBoundingBoxDescent) / 2 + f.fontBoundingBoxAscent);
-    ctx.fillStyle = 'rgba(53, 245, 106, 0.85)';
+    g.fillText('c', 1, (2 * w - f.fontBoundingBoxAscent - f.fontBoundingBoxDescent) / 2 + f.fontBoundingBoxAscent);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     shown = [];
   }
   function draw() {
@@ -49,15 +52,13 @@ const WORKER = `
     if (!cell || rows.length !== cell.rows || rows[0].length !== cell.cols) size(rows[0].length, rows.length);
     rows.forEach((row, r) => {
       if (row === shown[r]) return;
-      const y = Math.round(r * cell.h);
-      ctx.clearRect(0, y, canvas.width, Math.round((r + 1) * cell.h) - y);
-      for (let c = 0; c < row.length; c++) {
-        if (row[c] !== 'c') continue;
-        if (cell.w >= 6) ctx.drawImage(glyph, Math.round(c * cell.w) - 1, y);
-        else ctx.fillRect((c + 0.1) * cell.w, (r + 0.25) * cell.h, 0.8 * cell.w, 0.5 * cell.h);
-      }
+      bctx.clearRect(0, r * cell.h, big.width, cell.h);
+      for (let c = 0; c < row.length; c++)
+        if (row[c] === 'c') bctx.drawImage(glyph, c * cell.w - 1, r * cell.h);
     });
     shown = rows;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(big, 0, 0, canvas.width, canvas.height);
   }
   function tick(now) {
     if (wasm.logo_frame(now) || !cell) draw();

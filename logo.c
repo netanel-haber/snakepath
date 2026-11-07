@@ -14,7 +14,7 @@
    and ./nob snake makes it snake.c, the site's export: with LOGO_MAIN, a program that plays it in a terminal, with
    the snakepath it uses in place of the #include. */
 
-#define LOGO_MIN_COLS 96 /* fewer, and the snake's outline dissolves into the floor at the site's size */
+#define LOGO_MIN_COLS 96 /* fewer, and the snake is lost in the floor at the site's size */
 #define LOGO_MAX_COLS 192
 #define LOGO_MAX_ROWS 102 /* 51 rows for each 96 columns */
 #define LOGO_PI 3.14159265358979323846
@@ -33,7 +33,7 @@ extern char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)];
 int logo_frame(double t);
 
 #ifndef LOGO_SETTINGS
-#define LOGO_SETTINGS {0.3, 2, 0.7, 112, 0.6}
+#define LOGO_SETTINGS {0.3, 2, 1, 144, 0.6}
 #endif
 LogoSettings logo_set = LOGO_SETTINGS;
 char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' */
@@ -76,7 +76,7 @@ static int logo_cols; /* this frame's size */
 static int logo_height;
 static double logo_scale; /* columns of this frame per column of the model */
 
-/* floor, round, sqrt (for 0 <= v <= 1) and sin without libm */
+/* floor, round, sqrt (for 0 <= v <= 25, as the snake needs) and sin without libm */
 static double logo_floor_of(double v) {
     double t = (double)(long)v;
 
@@ -157,39 +157,115 @@ static void logo_draw_floor(void) {
     }
 }
 
-#define LOGO_NOD                                                                                                       \
-    0.575 /* the head's part of the sway: 1.15 columns each way, 3 px at the site's 250 px, at the default */
-#define LOGO_SHEAR 2.2 /* the most the sway may move one row of the body against the next, in columns */
+#define LOGO_NOD 1.15 /* columns the head nods each way at the default sway: 3 px at the site's 250 px */
+#ifndef LOGO_TIP
+#define LOGO_TIP 0.65 /* how much less the bends move toward the tail's end, which is far off and thin */
+#endif
+#ifndef LOGO_START
+#define LOGO_START (LOGO_PI / 2) /* the phase it starts at: a quarter of a sway on, halfway to its mirror image */
+#endif
 
-/* The radians the sway lags by per row away from the neck */
+/* The radians the rattle's swing lags by per row away from the neck */
 static double logo_wave(void) { return logo_set.waves * 2 * LOGO_PI / (LOGO_NECK - LOGO_TAIL); }
 
-/* How far the snake is from its place at the model's row (from the neck on, the head; past the tail's end, the
- * rattle) at phase p: the sway grows toward the tail, and the head, in the view's middle, nods with a small part of it */
-static double logo_offset(double row, double p) {
-    double from_neck = row < LOGO_NECK ? LOGO_NECK - row : 0;
-    double u = from_neck / (LOGO_NECK - LOGO_TAIL);
-    double head = LOGO_NOD;
-
-    double sway = logo_set.sway;
-
-    /* no more than LOGO_SHEAR columns between two rows, or the body comes apart into bars: the more waves, the less
-     * it can swing */
-    if (sway * logo_wave() > LOGO_SHEAR)
-        sway = LOGO_SHEAR / logo_wave();
-    u = u > 1 ? 1 : u;
-    return sway * (head + (1 - head) * u * logo_sqrt(u)) * logo_sin(p - from_neck * logo_wave());
-}
-
-/* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right, interpolated */
-static double logo_side(int side, double row, double p) {
-    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
+/* The model's column of side 0 (the left) or 1 (the right) of the snake as drawn, at row r between two rows */
+static double logo_drawn(int side, double r) {
     int below = (int)r; /* r is never below 0, so this is its floor */
     int above = below + 1 < LOGO_CHIN ? below + 1 : below;
     double t = r - below;
-    double col = (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
 
-    return logo_x(col + logo_offset(row, p));
+    return (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
+}
+
+/* The body's bend at row LOGO_NECK - i (i from 0 at the neck to LOGO_NECK - LOGO_TAIL at the tail's end), its
+ * middle's distance from the straight line between the tail's end and the neck as drawn, and its quadrature: the same
+ * bends a quarter of a wave further along the body (the drawn bend's sine series with every term turned a quarter,
+ * the discrete Hilbert transform). Turning from the one to the other moves the drawn S along the body as a wave */
+static void logo_bends(int i, double *bend, double *quad) {
+    static double bends[LOGO_NECK - LOGO_TAIL + 1];
+    static double quads[LOGO_NECK - LOGO_TAIL + 1];
+    const int N = LOGO_NECK - LOGO_TAIL;
+    static int ready;
+    int j;
+    int n;
+
+    for (j = 0; !ready && j <= N; j++) {
+        double middle = (logo_drawn(0, LOGO_NECK - j) + logo_drawn(1, LOGO_NECK - j)) / 2;
+        double neck = (logo_drawn(0, LOGO_NECK) + logo_drawn(1, LOGO_NECK)) / 2;
+        double tail = (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
+
+        bends[j] = middle - (neck + (tail - neck) * j / N);
+    }
+    for (n = 1; !ready && n < N; n++) {
+        double b = 0;
+
+        for (j = 1; j < N; j++)
+            b += 2.0 / N * bends[j] * logo_sin(n * LOGO_PI * j / N);
+        for (j = 0; j <= N; j++)
+            quads[j] += b * logo_sin(n * LOGO_PI * j / N + LOGO_PI / 2);
+    }
+    ready = 1;
+    *bend = bends[i];
+    *quad = quads[i];
+}
+
+/* How far the head nods from its place in the view's middle at phase p */
+static double logo_nod(double p) {
+    double reach = logo_set.sway / 2;
+
+    return LOGO_NOD * (reach < 1 ? reach : 1) * logo_sin(p);
+}
+
+/* The middle of the snake at the model's row (held between the tail's end and the chin) at phase p, as a snake
+ * crawls: the drawn S's bends run along the body, from the neck toward the tail, so that it is always an S and half a
+ * sway on it is the drawing's mirror image. The sway knob takes it from still (0) through all the way into the mirror
+ * image (the default) to a wider swing; the waves knob from the S turning over in place (0) through its bends running
+ * along it (the default) to more of them at once. The turn eases in below the neck, so the head stays in the middle,
+ * and the bends move less toward the tail's end, which is far off: moved as far as near ones, it lay flat */
+static double logo_middle(double row, double p) {
+    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
+    double middle = (logo_drawn(0, r) + logo_drawn(1, r)) / 2;
+    double from_neck = LOGO_NECK - r;
+    double u = from_neck / (LOGO_NECK - LOGO_TAIL);
+    int i = (int)from_neck; /* from_neck is never below 0 here, so this is its floor */
+    double t = from_neck - i;
+    double reach = logo_set.sway / 2;
+    double mix = reach < 1 ? reach : 1;
+    double grow = reach > 1 ? 1 + (reach - 1) * 0.15 : 1;
+    double travel = logo_set.waves < 1 ? logo_set.waves : 1;
+    double q = p - (logo_set.waves > 1 ? logo_set.waves - 1 : 0) * 2 * LOGO_PI * u;
+    double near = u / 0.3;
+    double ease = near > 1 ? 1 : near * near * (3 - 2 * near);
+    double far = (u - 0.75) / 0.25;
+    double tip = 1 - LOGO_TIP * (far < 0 ? 0 : far * far * (3 - 2 * far));
+    double bend[2];
+    double quad[2];
+    double turned;
+
+    if (r >= LOGO_NECK)
+        return middle + logo_nod(p);
+    logo_bends(i, &bend[0], &quad[0]);
+    logo_bends(i + 1 < LOGO_NECK - LOGO_TAIL ? i + 1 : i, &bend[1], &quad[1]);
+    bend[0] += (bend[1] - bend[0]) * t;
+    quad[0] += (quad[1] - quad[0]) * t;
+    turned = bend[0] * logo_sin(q + LOGO_PI / 2) + travel * tip * quad[0] * logo_sin(q);
+    return middle + grow * (bend[0] + mix * ease * (turned - bend[0])) - bend[0] + (1 - u) * logo_nod(p);
+}
+
+/* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right. The body keeps its
+ * thickness across its path, not across a row (a row is two columns tall, so it crosses a slanted stretch wider than
+ * an upright one): where the middle stands more upright than in the drawing, the drawn width narrows with it, to
+ * 3/4 at most, and where it slants more it stays, since a wider row reads as a lump */
+static double logo_side(int side, double row, double p) {
+    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
+    double up = r - 0.5 < LOGO_TAIL ? LOGO_TAIL : r - 0.5;
+    double down = r + 0.5 > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : r + 0.5;
+    double drawn = (logo_drawn(0, down) + logo_drawn(1, down) - logo_drawn(0, up) - logo_drawn(1, up)) / 2;
+    double now = logo_middle(down, p) - logo_middle(up, p);
+    double slant = (4 + now * now) / (4 + drawn * drawn);
+    double width = (logo_drawn(1, r) - logo_drawn(0, r)) * logo_sqrt(slant < 0.5625 ? 0.5625 : slant < 1 ? slant : 1);
+
+    return logo_x(logo_middle(row, p) + (side ? width : -width) / 2);
 }
 
 /* An edge outside a side of the snake on row y, as the floor's lines are drawn: from where the side is halfway to
@@ -225,7 +301,7 @@ static void logo_draw_snake(double p) {
     for (y = chin; y < logo_y(LOGO_CHIN + 1); y++)
         logo_fill(y, logo_side(0, LOGO_CHIN, p) - logo_thin(), logo_side(1, LOGO_CHIN, p) + logo_thin(), 'c');
     for (e = 0; e < 2; e++) {
-        double col = logo_eyes[e] + logo_offset(LOGO_EYES_ROW, p);
+        double col = logo_eyes[e] + logo_nod(p);
 
         logo_fill(logo_y(LOGO_EYES_ROW), logo_x(col - 0.4), logo_x(col + 0.4), 'c');
     }
@@ -247,7 +323,7 @@ static void logo_draw_tongue(double p) {
             double to = logo_row(y) + half > part[2] ? part[2] : logo_row(y) + half;
             double a = part[1] + (part[3] - part[1]) * (from - part[0]) / (part[2] - part[0]);
             double b = part[1] + (part[3] - part[1]) * (to - part[0]) / (part[2] - part[0]);
-            double moved = logo_offset(LOGO_CHIN, p) + flick * (to - LOGO_CHIN) / (part[2] - LOGO_CHIN);
+            double moved = logo_nod(p) + flick * (to - LOGO_CHIN) / (part[2] - LOGO_CHIN);
             double left = logo_x((a < b ? a : b) + moved);
             double right = logo_x((a < b ? b : a) + moved);
 
@@ -267,7 +343,7 @@ static void logo_draw_rattle(double p) {
     double cols[4];
     double left = logo_side(0, LOGO_TAIL, p);
     double right = logo_side(1, LOGO_TAIL, p);
-    double moved = logo_offset(LOGO_TAIL, p);
+    double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
     double scale = 1.05;
     int k;
     int y;
@@ -326,8 +402,8 @@ static char logo_shown(int y, int x) {
 }
 
 int logo_frame(double t) {
-    static double p;      /* the phase, carried on at the current speed: a change of speed goes on from here */
-    static double last_t; /* the time of the frame before */
+    static double p = LOGO_START; /* the phase, carried on at the current speed: a change of speed goes on from here */
+    static double last_t;         /* the time of the frame before */
     double cols = logo_set.columns;
     int changed = 0;
     int y;
