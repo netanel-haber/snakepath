@@ -271,9 +271,9 @@ static void logo_draw_snake(double p) {
      * columns tall): thinner, it fell apart into single glyphs where the body slants */
     double edge =
         LOGO_EDGE / logo_sqrt(logo_scale) > 2.2 / logo_scale ? LOGO_EDGE / logo_sqrt(logo_scale) : 2.2 / logo_scale;
-    /* and as wide across a row wherever the body runs (3 of this frame's columns at least): measured across the body
-     * alone, it was two glyphs where the body runs straight down and four where it slants */
-    double across = 3.0 / logo_scale > edge ? 3.0 / logo_scale : edge;
+    /* and as wide across a row wherever the body runs (2 of this frame's columns at least): measured across the body
+     * alone, it was two glyphs where the body runs straight down and four where it slants; 3 was too busy */
+    double across = 2.0 / logo_scale > edge ? 2.0 / logo_scale : edge;
     double margin =
         LOGO_MARGIN / logo_sqrt(logo_scale) > 1.2 / logo_scale ? LOGO_MARGIN / logo_sqrt(logo_scale) : 1.2 / logo_scale;
     double down = logo_long(LOGO_NECK) - LOGO_NECK; /* how far the head is drawn below the logo's */
