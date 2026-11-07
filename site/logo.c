@@ -287,7 +287,7 @@ static void logo_draw_snake(double p) {
 
         double r = LOGO_TAIL - 3 + i * LOGO_STEP; /* the model's row */
         /* the tail narrows to a point over LOGO_POINTED rows, its tip at the first segment's lower end, which it just
-         * touches *
+         * touches */
         double point = (r - (LOGO_TAIL - 2)) / LOGO_POINTED;
 
         row[i] = logo_long(r);
