@@ -13,7 +13,7 @@ const KNOBS = [
   ['sway', 0, 2, 12],
   ['waves', 0, 1, 3],
   ['resolution', 80, 96, 192],
-  ['rattle', 0, 2, 6],
+  ['rattle', 0, 1, 4],
 ];
 const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log((middle - low) / (high - low)) / Math.log(0.5));
 

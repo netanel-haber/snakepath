@@ -33,7 +33,7 @@ extern char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)];
 int logo_frame(double t);
 
 #ifndef LOGO_SETTINGS
-#define LOGO_SETTINGS {0.3, 2, 1, 96, 2}
+#define LOGO_SETTINGS {0.3, 2, 1, 96, 1}
 #endif
 LogoSettings logo_set = LOGO_SETTINGS;
 char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' */
@@ -227,16 +227,20 @@ static double logo_middle(double row, double p) {
 
 /* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
  * hangs from the one below it as the tail moves it and swings a little after it */
-#define LOGO_LEAN 0.5  /* how much of the tail's lean the rattle carries on */
+#define LOGO_LEAN 0.15 /* how much of the tail's lean the rattle carries on */
 #define LOGO_SHAKE 1.5 /* swings of the rattle for each sway of the body */
 
 static void logo_rattle_cols(double p, double cols[4]) {
     /* the tail's line at its end, in columns per row: the rattle carries on along it, so it leans whichever way the
      * tail points and turns over with the body */
     double lean = (logo_middle(LOGO_TAIL, p) - logo_middle(LOGO_TAIL + 2, p)) / 2;
+    double usual = 0; /* its average over a sway, so the rattle swings as far to each side */
     double moved = 0;
     int k;
 
+    for (k = 0; k < 16; k++)
+        usual += (logo_middle(LOGO_TAIL, k * LOGO_PI / 8) - logo_middle(LOGO_TAIL + 2, k * LOGO_PI / 8)) / 2 / 16;
+    lean -= usual;
     cols[0] = logo_middle(LOGO_TAIL, p);
     for (k = 0; k < 3; k++) {
         moved += logo_set.rattle * logo_sin(LOGO_SHAKE * p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
