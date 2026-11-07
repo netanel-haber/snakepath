@@ -13,7 +13,7 @@ const KNOBS = [
   ['sway', 0, 2, 12],
   ['waves', 0, 1, 3],
   ['resolution', 80, 96, 192],
-  ['rattle', 0, 1, 4],
+  ['rattle', 0, 2, 4],
 ];
 const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log((middle - low) / (high - low)) / Math.log(0.5));
 
@@ -92,8 +92,8 @@ const STYLE = `
   canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
   :host(.live) ::slotted(*) { visibility: hidden; }
   .knobs { display: none; position: absolute; right: 2%; top: 2%; width: 118px; padding: 3px 5px; box-sizing: border-box;
-           font-size: 10px; line-height: 1.15; color: #ccc; background: rgba(21, 21, 21, 0.95); border-radius: 4px;
-           opacity: 0.97; transition: opacity 0.2s; }
+           font-size: 10px; line-height: 1.15; color: #ccc; background: #151515; border-radius: 4px;
+           opacity: 0.98; transition: opacity 0.2s; }
   .knobs:hover, .knobs:focus-within { opacity: 1; }
   :host(.live) .knobs { display: block; }
   label { display: grid; grid-template-columns: 62px 1fr; align-items: center; column-gap: 0.25rem; }
