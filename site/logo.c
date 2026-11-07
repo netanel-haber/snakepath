@@ -41,11 +41,11 @@ char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' *
 /* The floor: solid to the horizon, lines across it on these rows, and between them lines fanning out from a
  * vanishing point above the top, half a step either side of it, so that none stands upright (one line through it
  * read as a column) and the floor is patterned right up to the snake, which reads by its dark against it */
-#define LOGO_HORIZON 11
-static const unsigned char logo_floor_lines[] = {15, 19, 24, 30, 36, 43, 50};
+#define LOGO_HORIZON 2
+static const unsigned char logo_floor_lines[] = {4, 6, 9, 12, 15, 19, 24, 30, 36, 43, 50};
 #define LOGO_VANISH_COL 61.5
-#define LOGO_VANISH_ROW (-2.4)
-#define LOGO_FAN 0.345 /* columns between two fan lines per row away from the vanishing point */
+#define LOGO_VANISH_ROW (-14)
+#define LOGO_FAN 0.27 /* columns between two fan lines per row away from the vanishing point */
 
 /* The snake from the tail's end to above its chin, by the dark columns of each row: the body to the neck, then the
  * head, with its eyes on LOGO_EYES_ROW */
@@ -424,11 +424,15 @@ static void logo_draw_rattle(double p) {
     for (k = 0; k < 3; k++, scale *= 0.85) {
         double middle = rows[k + 1];
 
-        for (y = logo_y(middle - 1); y <= logo_y(middle + 1); y++) {
+        /* on the floor's grid, each segment is a solid bead in a dark margin */
+        for (y = logo_y(middle - 2); y <= logo_y(middle + 2); y++) {
             double off = logo_row(y) - middle;
             double half = (2 - 1.5 * (off < 0 ? -off : off)) * scale; /* widest in the middle */
+            double margin = 1 / logo_scale > 0.8 ? 1 / logo_scale : 0.8;
 
-            logo_fill(y, logo_x(cols[k + 1] - half), logo_x(cols[k + 1] + half), ' ');
+            logo_fill(y, logo_x(cols[k + 1] - half - 2 * margin) - 1, logo_x(cols[k + 1] + half + 2 * margin) + 1, ' ');
+            if (off > -1.25 && off < 1.25)
+                logo_fill(y, logo_x(cols[k + 1] - half), logo_x(cols[k + 1] + half), 'c');
         }
     }
 }
