@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>snakepath</title>
+  <!-- The snakepath logo as a toy, alone, filling the frame it is in, for other pages to embed (netanel.dev's
+       tile); toy.html?controls shows its knobs -->
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #151515; }
+    body { display: grid; place-items: center; font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal, monospace; }
+    img { display: block; height: min(100vh, 100vw * 1664 / 1568); }
+  </style>
+</head>
+<body>
+  <snakepath-toy><img src="snakepath.png" alt="snake ascii art that also looks like a path"></snakepath-toy>
+  <script>
+    // toy.html?controls shows the knobs
+    if (new URLSearchParams(location.search).has('controls')) document.querySelector('snakepath-toy').setAttribute('controls', '');
+  </script>
+  <script type="module" src="toy.js"></script>
+</body>
+</html>

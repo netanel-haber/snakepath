@@ -133,6 +133,54 @@ jobs:
         env:
           URL: ${{ steps.upload.outputs.artifact-url }}
 
+  # The site as GitHub Pages builds it, plus logo.wasm and snake.c made from logo.c (the logo's toy), deployed from main
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build the site with GitHub Pages' builder
+        uses: actions/jekyll-build-pages@v1
+
+      - name: Install the WebAssembly linker
+        run: sudo apt-get update && sudo apt-get install -y lld
+
+      - name: Compile logo.c to logo.wasm
+        run: |
+          clang -std=c99 --target=wasm32 -mbulk-memory -O2 -nostdlib -Wall -Wextra -Werror -pedantic \
+            -Wl,--no-entry -Wl,--export=logo_frame,--export=logo_set,--export=logo_out -o logo.wasm logo.c
+          sudo cp logo.wasm _site/logo.wasm
+
+      - name: Make snake.c, the site's export, with nob and trim.h
+        run: |
+          cc -x c -o nob nob.h && ./nob snake
+          sudo cp snake.c _site/snake.c
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy-site:
+    needs: site
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Deploy the site
+        id: deploy
+        uses: actions/deploy-pages@v4
+
   # Every CPython 3.15 release (3.15.0, 3.15.1, ...), read from setup-python's list of builds so a new one joins the
   # matrix by itself
   python-releases:
