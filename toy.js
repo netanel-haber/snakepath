@@ -27,7 +27,7 @@ const WORKER = `
     return new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0)));
   }
   // The glyph for this many columns and rows in the box: a row is two character widths tall, and a monospace
-  // character is 0.6 of its font size wide. Under 4 pixels wide a glyph has no shape left to show, and drawn whole
+  // character is 0.6 of its font size wide. Under 6 pixels wide a glyph is too thin to show the snake, and drawn whole
   // pixels apart its copies overlap into stripes, so each 'c' is drawn instead as its box (0.8 of the cell wide and
   // half as tall) at its own fractional place, nearly as bright as a glyph, so that the snake keeps its contrast against
   // the floor.
@@ -53,7 +53,7 @@ const WORKER = `
       ctx.clearRect(0, y, canvas.width, Math.round((r + 1) * cell.h) - y);
       for (let c = 0; c < row.length; c++) {
         if (row[c] !== 'c') continue;
-        if (cell.w >= 4) ctx.drawImage(glyph, Math.round(c * cell.w) - 1, y);
+        if (cell.w >= 6) ctx.drawImage(glyph, Math.round(c * cell.w) - 1, y);
         else ctx.fillRect((c + 0.1) * cell.w, (r + 0.25) * cell.h, 0.8 * cell.w, 0.5 * cell.h);
       }
     });

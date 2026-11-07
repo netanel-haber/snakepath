@@ -76,7 +76,7 @@ static int logo_cols; /* this frame's size */
 static int logo_height;
 static double logo_scale; /* columns of this frame per column of the model */
 
-/* floor, round, sqrt (for 0 <= v <= 25, as the snake needs) and sin without libm */
+/* floor, round, sqrt (for 0 <= v <= 1) and sin without libm */
 static double logo_floor_of(double v) {
     double t = (double)(long)v;
 
@@ -181,59 +181,15 @@ static double logo_offset(double row, double p) {
     return sway * (head + (1 - head) * u * logo_sqrt(u)) * logo_sin(p - from_neck * logo_wave());
 }
 
-#define LOGO_FLIP 2.0  /* the sway from which the body's bend crosses all the way to the other side */
-#define LOGO_EASE 4.0  /* rows below the neck over which the bend fades out */
-#define LOGO_DEPTH 1.0 /* how far it crosses, as a part of how far it was on its own side */
-
-/* How far the body's bend has moved at row r (between the tail's end and the neck) at phase p, for a row whose middle
- * is at the model's column middle: its distance from the straight line from the tail's end to the neck is multiplied
- * by a factor that swings from 1 to -LOGO_DEPTH and back (with the waves' lag), so the knee crosses to the other side every
- * sway */
-static double logo_bend(double r, double middle, double p) {
-    double tail = (logo_snake[0][0] + logo_snake[0][1]) / 2.0;
-    double neck = (logo_snake[LOGO_NECK - LOGO_TAIL][0] + logo_snake[LOGO_NECK - LOGO_TAIL][1]) / 2.0;
-    double line = tail + (neck - tail) * (r - LOGO_TAIL) / (LOGO_NECK - LOGO_TAIL);
-    double flip = logo_set.sway < LOGO_FLIP ? logo_set.sway / LOGO_FLIP : 1;
-    double turned = (1 - logo_sin(p + LOGO_PI / 2 - (LOGO_NECK - r) * logo_wave())) / 2 *
-                    (1 + LOGO_DEPTH); /* 0, then 1 + LOGO_DEPTH */
-
-    double near = (LOGO_NECK - r) / LOGO_EASE; /* eased in over the rows below the neck, so the neck bends smoothly */
-    double ease = near > 1 ? 1 : near < 0 ? 0 : near * near * (3 - 2 * near);
-
-    return -flip * ease * turned * (middle - line);
-}
-
-/* The model's column of side 0 (the left) or 1 (the right) of the snake as drawn at rest, at row r between two rows */
-static double logo_drawn(int side, double r) {
+/* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right, interpolated */
+static double logo_side(int side, double row, double p) {
+    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
     int below = (int)r; /* r is never below 0, so this is its floor */
     int above = below + 1 < LOGO_CHIN ? below + 1 : below;
     double t = r - below;
+    double col = (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
 
-    return (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
-}
-
-/* The middle of the snake at the model's row (r, held between the tail's end and the chin) at phase p */
-static double logo_middle(double row, double p) {
-    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
-    double middle = (logo_drawn(0, r) + logo_drawn(1, r)) / 2;
-
-    return middle + logo_offset(row, p) + logo_bend(r, middle, p);
-}
-
-/* A side of the snake at the model's row, in this frame's columns: side 0 the left, 1 the right. The body keeps its
- * thickness across its path, not across a row: a row crosses a slanted stretch wider than an upright one (a row is
- * two columns tall), so where the middle stands more upright than at rest the width drawn at rest narrows with it;
- * where it slants more, the width stays, since a wider row reads as a lump */
-static double logo_side(int side, double row, double p) {
-    double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
-    double up = r - 0.5 < LOGO_TAIL ? LOGO_TAIL : r - 0.5;
-    double down = r + 0.5 > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : r + 0.5;
-    double rest = (logo_drawn(0, down) + logo_drawn(1, down) - logo_drawn(0, up) - logo_drawn(1, up)) / 2;
-    double now = logo_middle(down, p) - logo_middle(up, p);
-    double slant = (4 + now * now) / (4 + rest * rest);
-    double width = (logo_drawn(1, r) - logo_drawn(0, r)) * (logo_sqrt(slant < 0.5625 ? 0.5625 : slant < 1 ? slant : 1));
-
-    return logo_x(logo_middle(row, p) + (side ? width : -width) / 2);
+    return logo_x(col + logo_offset(row, p));
 }
 
 /* An edge outside a side of the snake on row y, as the floor's lines are drawn: from where the side is halfway to
@@ -316,7 +272,7 @@ static void logo_draw_rattle(double p) {
     int k;
     int y;
 
-    cols[0] = logo_middle(LOGO_TAIL, p);
+    cols[0] = (left + right) / 2 / logo_scale + LOGO_CENTER - 48; /* back in the model's columns */
     for (k = 0; k < 3; k++) {
         moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
         cols[k + 1] = logo_rattle_rest[k] + moved;
@@ -327,8 +283,7 @@ static void logo_draw_rattle(double p) {
         double spine = logo_x(cols[1] + (cols[0] - cols[1]) * t);
         double half = (right - left) / 2 * t;
 
-        if (!logo_floor_line(
-                y)) { /* the body's outline, on into the rattle: an edge each side and a dark margin past it */
+        if (!logo_floor_line(y)) { /* the outline, on into the rattle: an edge each side and a dark margin past it */
             logo_fill(y, spine - half - 1 - 2 * logo_thin(), spine + half + 1 + 2 * logo_thin(), ' ');
             logo_fill(y, spine - half - 1 - logo_thin(), spine + half + 1 + logo_thin(), 'c');
         }
