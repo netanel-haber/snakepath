@@ -1,8 +1,10 @@
 /* snakepath.h - C99 pathlib port, STB-style header-only library
  * No mallocs. POSIX and Windows compatible.
- * Directories are listed into snakepath's own memory: getdents64 on Linux, NtQueryDirectoryFile on Windows. What still
- * allocates does so inside the OS: the C library's user and group lookups (~user, owner, group), Windows' path calls,
- * and opendir on other POSIX systems, which have no other way to list a directory.
+ * On Linux nothing under it allocates either: directories are listed with getdents64 into snakepath's own memory, the
+ * working directory comes from the system call, and the user database is read from /etc/passwd and /etc/group, as the
+ * C library's "files" source reads them (so a user that only LDAP or systemd knows isn't found; Android's lookups are
+ * its C library's). Elsewhere some OS calls allocate inside: Windows' path calls (its listings read into snakepath's
+ * memory too, with NtQueryDirectoryFile), and on other POSIX systems opendir and the user lookups.
  *
  * Usage:
  *   #define SNAKEPATH_IMPLEMENTATION
@@ -583,8 +585,10 @@ typedef HANDLE SpPrivFile;
 #include <stdlib.h> /* For getenv */
 #include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
 #include <utime.h>  /* For utime() */
-#include <pwd.h>    /* For getpwuid_r, getpwnam_r */
-#include <grp.h>    /* For getgrgid_r */
+#if !defined(__linux__) || defined(__ANDROID__)
+#include <pwd.h> /* For getpwuid_r, getpwnam_r */
+#include <grp.h> /* For getgrgid_r */
+#endif
 #ifdef __linux__
 #include <sys/ioctl.h>
 #include <sys/sendfile.h>
@@ -623,9 +627,11 @@ extern long syscall(long number, ...);
 extern DIR *fdopendir(int fd);
 extern int dirfd(DIR *dir);
 #endif
+#if !defined(__linux__) || defined(__ANDROID__)
 extern int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t size, struct passwd **result);
 extern int getpwnam_r(const char *name, struct passwd *pw, char *buf, size_t size, struct passwd **result);
 extern int getgrgid_r(gid_t gid, struct group *gr, char *buf, size_t size, struct group **result);
+#endif
 #endif
 
 #endif
@@ -1555,6 +1561,14 @@ SpPath sp_cwd(SpFlavor flavor) {
         p.error = sp_priv_last_error();
     else
         p.error = n < SP_PATH_MAX ? sp_priv_from_wide(wide, n, p.buf, SP_PATH_MAX, &p.len) : SP_ERR_TOO_LONG;
+#elif defined(__linux__)
+    /* The system call itself: glibc's getcwd looks for a directory the kernel can't name (one longer than a page, or
+     * out of reach of the process's root) with opendir, which allocates. Out of reach, it is no path. */
+    long n = syscall(SYS_getcwd, p.buf, SP_PATH_MAX);
+    if (n > 0 && p.buf[0] == '/')
+        p.len = SP_PRIV_CAST(size_t, n) - 1;
+    else
+        p.error = n > 0 ? SP_ERR_NOT_FOUND : sp_priv_last_error();
 #else
     if (getcwd(p.buf, SP_PATH_MAX))
         p.len = strlen(p.buf);
@@ -1644,10 +1658,13 @@ static bool sp_priv_quote(const char *s, size_t len, const char *safe, char *buf
         if (*pos + (plain ? 1u : 3u) >= buf_size)
             return false;
 
-        if (plain)
+        if (plain) {
             buf[(*pos)++] = SP_PRIV_CAST(char, c);
-        else
-            *pos += SP_PRIV_CAST(size_t, snprintf(buf + *pos, 4, "%%%02X", c));
+        } else {
+            buf[(*pos)++] = '%';
+            buf[(*pos)++] = "0123456789ABCDEF"[c >> 4];
+            buf[(*pos)++] = "0123456789ABCDEF"[c & 15];
+        }
     }
 
     buf[*pos] = '\0';
@@ -3715,6 +3732,140 @@ static SpPath sp_priv_getenv_path(const wchar_t *name, SpFlavor flavor) {
 }
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)
+/* The entry of file, /etc/passwd (name:password:uid:gid:gecos:home:shell) or /etc/group (name:password:gid:members),
+ * whose name is name, or with a NULL name whose id (the third field) is id: its field want, into out. Fields up to
+ * last_number are numbers. Read as glibc's "files" source parses these files: blank lines, lines starting with '#' after
+ * blanks, and lines whose numbers aren't numbers are skipped; a name starting with '+' or '-' (NIS's) never matches; a
+ * missing field is empty. A line is read a buffer at a time, so it may be of any length (a group's member list). out
+ * is empty when there is no such entry or file (SP_ERR_NOT_FOUND), or the field doesn't fit (SP_ERR_TOO_LONG). */
+static void sp_priv_db_find(const char *file, size_t last_number, const char *name, size_t name_len, unsigned long id,
+                            size_t want, SpTerm *out) {
+    out->len = 0;
+    out->error = SP_ERR_NOT_FOUND;
+    size_t key = name ? 0 : 2; /* the id is the third field of both */
+    int fd = open(file, O_RDONLY | O_CLOEXEC);
+    char buf[1024];
+    size_t field = 0;
+    size_t at = 0; /* bytes of the field so far */
+    unsigned long long number = 0;
+    bool start = true; /* no byte of the line but blanks yet */
+    bool skip = false; /* the line can't be the entry */
+    bool match = true;
+    bool too_long = false;
+    for (long got = 1; fd >= 0 && got > 0 && out->error == SP_ERR_NOT_FOUND;) {
+        got = read(fd, buf, sizeof(buf));
+        if (got < 0 && errno == EINTR) {
+            got = 1;
+            continue;
+        }
+        if (got == 0)
+            buf[0] = '\n'; /* the end of the file ends its last line */
+        for (long i = 0; got >= 0 && i < (got > 0 ? got : 1) && out->error == SP_ERR_NOT_FOUND; i++) {
+            char c = buf[i];
+            bool blank = c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r';
+            skip = skip || (start && c == '#');
+            if (c != '\n' && (skip || (start && blank)))
+                continue;
+            start = false;
+
+            if (c != ':' && c != '\n') {
+                /* A byte of the field: of the name or number to match, and of the field wanted */
+                if (field == 0 && at == 0 && (c == '+' || c == '-'))
+                    match = false;
+                if (field == key && name)
+                    match = match && at < name_len && name[at] == c;
+                if (field >= 2 && field <= last_number) {
+                    match = match && c >= '0' && c <= '9';
+                    number = match ? number * 10 + SP_PRIV_CAST(unsigned long long, c - '0') : 0;
+                    match = match && number <= 0xFFFFFFFFu;
+                }
+                if (field == want && out->len + 1 < SP_PATH_MAX)
+                    out->buf[out->len++] = c;
+                else if (field == want)
+                    too_long = true;
+                at++;
+                skip = !match;
+                continue;
+            }
+
+            /* The end of a field: a number has a digit, and the key is all of it */
+            if (field >= 2 && field <= last_number)
+                match = match && at > 0;
+            if (field == key)
+                match = match && (name ? at == name_len : number == id);
+            field++;
+            at = 0;
+            number = 0;
+            skip = skip || !match;
+            if (c != '\n')
+                continue;
+
+            /* The end of a line: an entry with all its numbers is the one */
+            if (!skip && field > last_number) {
+                out->error = too_long ? SP_ERR_TOO_LONG : SP_OK;
+            } else {
+                out->len = 0;
+                field = 0;
+                start = true;
+                skip = false;
+                match = true;
+                too_long = false;
+            }
+        }
+    }
+    if (fd >= 0)
+        close(fd);
+    out->len = out->error == SP_OK ? out->len : 0;
+    out->buf[out->len] = '\0';
+}
+#endif
+
+#ifndef SP_WINDOWS
+/* A user's name, or home (want_dir), by id or with a name by name; with group, a group's name by id. out gets it, or is
+ * empty with SP_ERR_NOT_FOUND (no such entry) or SP_ERR_TOO_LONG (one past SP_PATH_MAX). On Linux, Android aside, the
+ * files the C library's "files" source reads, read here: its lookups allocate (glibc's open the file with stdio), and
+ * other sources it may be set up with (LDAP, systemd's users) aren't asked. Elsewhere, the C library's lookups, into
+ * a buffer here. */
+static void sp_priv_user_db(bool group, const char *name, size_t name_len, unsigned long id, bool want_dir,
+                            SpTerm *out) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    sp_priv_db_find(group ? "/etc/group" : "/etc/passwd", group ? 2 : 3, name, name_len, id, want_dir ? 5 : 0, out);
+#else
+    out->len = 0;
+    out->error = SP_ERR_NOT_FOUND;
+    out->buf[0] = '\0';
+    char entry_buf[16384]; /* a group's members' names too */
+    char user[256];
+    struct passwd pw_entry;
+    struct passwd *pw = SP_PRIV_NULL;
+    struct group gr_entry;
+    struct group *gr = SP_PRIV_NULL;
+    int failed = 0;
+    if (name && (name_len >= sizeof(user) || memchr(name, '\0', name_len)))
+        return;
+    if (name) {
+        memcpy(user, name, name_len);
+        user[name_len] = '\0';
+    }
+    if (group)
+        failed = getgrgid_r(SP_PRIV_CAST(gid_t, id), &gr_entry, entry_buf, sizeof(entry_buf), &gr);
+    else if (name)
+        failed = getpwnam_r(user, &pw_entry, entry_buf, sizeof(entry_buf), &pw);
+    else
+        failed = getpwuid_r(SP_PRIV_CAST(uid_t, id), &pw_entry, entry_buf, sizeof(entry_buf), &pw);
+
+    const char *found = gr ? gr->gr_name : !pw ? SP_PRIV_NULL : want_dir ? pw->pw_dir : pw->pw_name;
+    size_t len = found ? strlen(found) : 0;
+    out->error = failed == ERANGE || len >= SP_PATH_MAX ? SP_ERR_TOO_LONG : found ? SP_OK : SP_ERR_NOT_FOUND;
+    out->len = out->error == SP_OK ? len : 0;
+    if (out->len > 0)
+        memcpy(out->buf, found, out->len);
+    out->buf[out->len] = '\0';
+#endif
+}
+#endif
+
 /* os.path.expanduser("~" + user) as a path: SP_ERR_NO_HOME when the home directory is unknown */
 static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) {
 #ifdef SP_WINDOWS
@@ -3753,25 +3904,13 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
     return home;
 #else
     /* posixpath: HOME (else the passwd entry) for the current user, the passwd entry for others */
-    /* The entry's strings go in entry_buf (getpw*_r, as CPython's pwd module asks), not a buffer the C library keeps */
     const char *dir = ulen == 0 ? getenv("HOME") : SP_PRIV_NULL;
-    char entry_buf[SP_PATH_MAX + 1024];
+    SpTerm entry;
     if (!dir) {
-        char name[256];
-        if (ulen >= sizeof(name))
-            return sp_priv_error_path(flavor, SP_ERR_NO_HOME);
-        memcpy(name, user, ulen);
-        name[ulen] = '\0';
-
-        struct passwd entry;
-        struct passwd *pw = SP_PRIV_NULL;
-        int failed = ulen == 0 ? getpwuid_r(getuid(), &entry, entry_buf, sizeof(entry_buf), &pw)
-                               : getpwnam_r(name, &entry, entry_buf, sizeof(entry_buf), &pw);
-        if (failed == ERANGE)
-            return sp_priv_error_path(flavor, SP_ERR_TOO_LONG);
-        if (!pw || !pw->pw_dir)
-            return sp_priv_error_path(flavor, SP_ERR_NO_HOME);
-        dir = pw->pw_dir;
+        sp_priv_user_db(false, ulen > 0 ? user : SP_PRIV_NULL, ulen, getuid(), true, &entry);
+        if (entry.error != SP_OK)
+            return sp_priv_error_path(flavor, entry.error == SP_ERR_TOO_LONG ? SP_ERR_TOO_LONG : SP_ERR_NO_HOME);
+        dir = entry.buf;
     }
 
     size_t len = strlen(dir);
@@ -3818,19 +3957,10 @@ SpTerm sp_owner(const SpPath *p, bool follow_symlinks) {
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
     SpStatResult st = sp_stat(p, follow_symlinks);
-    struct passwd entry;
-    struct passwd *pw = SP_PRIV_NULL;
-    char entry_buf[SP_PATH_MAX + 1024];
-    int failed = st.error == SP_OK ? getpwuid_r(st.sp_uid, &entry, entry_buf, sizeof(entry_buf), &pw) : 0;
-    const char *name = pw ? pw->pw_name : SP_PRIV_NULL;
-    if (!name)
-        return sp_priv_term(NULL, 0,
-                            st.error != SP_OK  ? st.error
-                            : failed == ERANGE ? SP_ERR_TOO_LONG
-                                               : SP_ERR_NOT_FOUND);
-
-    size_t len = strlen(name);
-    return sp_priv_term(name, len, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
+    SpTerm name = sp_priv_term(NULL, 0, st.error);
+    if (st.error == SP_OK)
+        sp_priv_user_db(false, SP_PRIV_NULL, 0, st.sp_uid, false, &name);
+    return name;
 #endif
 }
 
@@ -3841,19 +3971,10 @@ SpTerm sp_group(const SpPath *p, bool follow_symlinks) {
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
     SpStatResult st = sp_stat(p, follow_symlinks);
-    struct group entry;
-    struct group *gr = SP_PRIV_NULL;
-    char entry_buf[16384]; /* the members' names too: a large group past it is SP_ERR_TOO_LONG */
-    int failed = st.error == SP_OK ? getgrgid_r(st.sp_gid, &entry, entry_buf, sizeof(entry_buf), &gr) : 0;
-    const char *name = gr ? gr->gr_name : SP_PRIV_NULL;
-    if (!name)
-        return sp_priv_term(NULL, 0,
-                            st.error != SP_OK  ? st.error
-                            : failed == ERANGE ? SP_ERR_TOO_LONG
-                                               : SP_ERR_NOT_FOUND);
-
-    size_t len = strlen(name);
-    return sp_priv_term(name, len, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
+    SpTerm name = sp_priv_term(NULL, 0, st.error);
+    if (st.error == SP_OK)
+        sp_priv_user_db(true, SP_PRIV_NULL, 0, st.sp_gid, false, &name);
+    return name;
 #endif
 }
 

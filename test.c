@@ -1297,6 +1297,15 @@ void *realloc(void *ptr, size_t size) {
     heap_calls += heap_armed;
     return __libc_realloc(ptr, size);
 }
+
+/* What glibc's own lookups (NSS) say, for comparison; strict C99 leaves them undeclared */
+#include <grp.h>
+#include <pwd.h>
+extern int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t size, struct passwd **result);
+extern int getpwnam_r(const char *name, struct passwd *pw, char *buf, size_t size, struct passwd **result);
+extern int getgrgid_r(gid_t gid, struct group *gr, char *buf, size_t size, struct group **result);
+extern int setenv(const char *name, const char *value, int overwrite);
+extern int unsetenv(const char *name);
 #endif
 
 static int tests_run = 0;
@@ -2987,6 +2996,104 @@ int main(void) {
     ASSERT(group_str.error == SP_ERR_UNSUPPORTED && group_str.len == 0);
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)
+    /* The user database as glibc's "files" source reads it, on files written here: what glibc's lookups answer for
+     * them, line by line (a comment, blanks, NIS's names, numbers that aren't, a line short of fields, a repeated name,
+     * a last line with no newline), then a line longer than a read and a home longer than a path */
+    {
+        char db_dir[64];
+        snprintf(db_dir, sizeof(db_dir), "./test_userdb_%ld", pid);
+        SpPath db_base = sp_path(db_dir);
+        SpPath db_passwd = sp_join_one(&db_base, "passwd");
+        SpPath db_group = sp_join_one(&db_base, "group");
+        static const char passwd_text[] = "root:x:0:0:root:/root:/bin/bash\n"
+                                          "# comment:x:5000:5000::/home/c:/bin/sh\n"
+                                          "\n"
+                                          "   \n"
+                                          "  spaced:x:5001:5001::/home/spaced:/bin/sh\n"
+                                          "+nis:x:5002:5002::/home/nis:/bin/sh\n"
+                                          "-minus:x:5003:5003::/home/minus:/bin/sh\n"
+                                          "badnum:x:50a4:5004::/home/badnum:/bin/sh\n"
+                                          "badgid:x:5005:x::/home/badgid:/bin/sh\n"
+                                          "short:x:5006:5006\n"
+                                          "dup:x:5008:5008::/home/dup1:/bin/sh\n"
+                                          "dup:x:5009:5009::/home/dup2:/bin/sh\n"
+                                          "empty_uid:x::5010::/home/eu:/bin/sh\n"
+                                          "huge:x:4294967296:1::/home/huge:/bin/sh\n"
+                                          "max:x:4294967294:1::/home/max:/bin/sh\n"
+                                          "last:x:5012:5012::/home/last:/bin/sh";
+        static const char *passwd_names[][2] = {
+            {"root", "/root"}, {"spaced", "/home/spaced"}, {"  spaced", NULL}, {"+nis", NULL},   {"nis", NULL},
+            {"-minus", NULL},  {"minus", NULL},            {"badnum", NULL},   {"badgid", NULL}, {"short", ""},
+            {"dup", "/home/dup1"}, {"empty_uid", NULL},    {"huge", NULL},     {"max", "/home/max"},
+            {"last", "/home/last"}, {"comment", NULL},     {"# comment", NULL}, {"missing", NULL}, {"dup:x", NULL}};
+        static const struct {
+            unsigned long id;
+            const char *name;
+        } passwd_ids[] = {{0, "root"},    {5001, "spaced"}, {5002, NULL},  {5003, NULL},       {5004, NULL},
+                          {5005, NULL},   {5006, "short"},  {5008, "dup"}, {5009, "dup"},      {5010, NULL},
+                          {5012, "last"}, {4294967294UL, "max"}, {7, NULL}};
+        SpTerm found;
+        ASSERT(sp_mkdir(&db_base, 0755, mkdir_opts(true, true, SP_MODE_DIR)) == SP_OK);
+        ASSERT(sp_write_file(&db_passwd, passwd_text, strlen(passwd_text)).error == SP_OK);
+        for (size_t i = 0; i < ARRAY_LEN(passwd_names); i++) {
+            const char *user = passwd_names[i][0];
+            sp_priv_db_find(sp_str(&db_passwd), 3, user, strlen(user), 0, 5, &found);
+            if (passwd_names[i][1])
+                ASSERT(found.error == SP_OK && strcmp(found.buf, passwd_names[i][1]) == 0);
+            else
+                ASSERT(found.error == SP_ERR_NOT_FOUND && found.len == 0 && found.buf[0] == '\0');
+        }
+        for (size_t i = 0; i < ARRAY_LEN(passwd_ids); i++) {
+            sp_priv_db_find(sp_str(&db_passwd), 3, NULL, 0, passwd_ids[i].id, 0, &found);
+            if (passwd_ids[i].name)
+                ASSERT(found.error == SP_OK && strcmp(found.buf, passwd_ids[i].name) == 0);
+            else
+                ASSERT(found.error == SP_ERR_NOT_FOUND && found.len == 0);
+        }
+
+        /* A group with 3000 members' names before the one looked up, and a home past SP_PATH_MAX */
+        static char long_text[SP_PATH_MAX * 3];
+        const char *long_head = "big:x:7000:";
+        const char *long_tail = "m\n+big:x:7001:\nafter:x:7001:a\n";
+        size_t long_len = strlen(long_head);
+        memcpy(long_text, long_head, long_len);
+        for (int i = 0; i < 3000; i++) {
+            long_text[long_len++] = 'm';
+            long_text[long_len++] = "0123456789"[i % 10];
+            long_text[long_len++] = ',';
+        }
+        memcpy(long_text + long_len, long_tail, strlen(long_tail));
+        long_len += strlen(long_tail);
+        ASSERT(sp_write_file(&db_group, long_text, long_len).error == SP_OK);
+        sp_priv_db_find(sp_str(&db_group), 2, NULL, 0, 7001, 0, &found);
+        ASSERT(found.error == SP_OK && strcmp(found.buf, "after") == 0);
+        sp_priv_db_find(sp_str(&db_group), 2, NULL, 0, 7000, 0, &found);
+        ASSERT(found.error == SP_OK && strcmp(found.buf, "big") == 0);
+        sp_priv_db_find(sp_str(&db_group), 2, NULL, 0, 7002, 0, &found);
+        ASSERT(found.error == SP_ERR_NOT_FOUND);
+
+        long_head = "deep:x:1:1::/";
+        long_tail = ":/bin/sh\n";
+        long_len = strlen(long_head);
+        memcpy(long_text, long_head, long_len);
+        memset(long_text + long_len, 'h', SP_PATH_MAX);
+        long_len += SP_PATH_MAX;
+        memcpy(long_text + long_len, long_tail, strlen(long_tail));
+        long_len += strlen(long_tail);
+        ASSERT(sp_write_file(&db_passwd, long_text, long_len).error == SP_OK);
+        sp_priv_db_find(sp_str(&db_passwd), 3, "deep", 4, 0, 5, &found);
+        ASSERT(found.error == SP_ERR_TOO_LONG && found.len == 0);
+        sp_priv_db_find(sp_str(&db_passwd), 3, NULL, 0, 1, 0, &found);
+        ASSERT(found.error == SP_OK && strcmp(found.buf, "deep") == 0);
+
+        SpPath db_missing = sp_join_one(&db_base, "missing");
+        sp_priv_db_find(sp_str(&db_missing), 3, NULL, 0, 0, 0, &found);
+        ASSERT(found.error == SP_ERR_NOT_FOUND);
+        ASSERT(sp_remove(&db_base, recursive_opts(false)) == SP_OK);
+    }
+#endif
+
     printf("  owner/group tests OK\n");
 
     /* iterdir tests */
@@ -3382,7 +3489,8 @@ int main(void) {
 #ifdef TEST_HEAP
     /* Every listing (iterdir, glob, walk, copy, recursive remove) and walk's sorting, which glibc's opendir and qsort
      * would allocate for: a tree with more names in a directory than qsort sorts on its stack, deep enough for listings
-     * to nest. User and group names are left out: glibc's lookups open the user database with stdio. */
+     * to nest. Then the user database (owner, group, ~root, and ~ without HOME), which glibc's lookups open with stdio;
+     * a working directory longer than a page, which glibc's getcwd looks for with opendir; and a URI to escape. */
     printf("\nheap tests:\n");
     {
         char heap_name[64];
@@ -3430,17 +3538,91 @@ int main(void) {
         SpCopyOptions heap_copy_opts = {false, true, false};
         SpPath heap_copied = sp_copy(&heap_tree, &heap_copy, heap_copy_opts);
         SpPath heap_resolved = sp_resolve(&heap_deep, true);
-        SpPath heap_home = sp_home(SP_FLAVOR_NATIVE);
         SpPath heap_cwd = sp_cwd(SP_FLAVOR_NATIVE);
-        SpError heap_uri_error = sp_as_uri(&heap_resolved, heap_uri, sizeof(heap_uri));
+        SpPath heap_quoted = sp_join(&heap_resolved, "a b%.txt");
+        SpError heap_uri_error = sp_as_uri(&heap_quoted, heap_uri, sizeof(heap_uri));
+
+        SpPath heap_file = sp_join(&heap_deep, "file_000.txt");
+        SpStatResult heap_st = sp_stat(&heap_file, true);
+        SpTerm heap_owner = sp_owner(&heap_file, true);
+        SpTerm heap_group = sp_group(&heap_file, true);
+        SpPath heap_tilde = sp_path("~root/x");
+        SpPath heap_root_x = sp_expanduser(&heap_tilde);
+
+        /* The other families on files: links, metadata, moves, reading, URIs */
+        SpPath heap_hard = sp_join(&heap_top, "hard");
+        SpPath heap_moved = sp_join(&heap_top, "moved");
+        SpPath heap_renamed = sp_join(&heap_top, "renamed");
+        SpPath heap_relative = sp_path("relative/x");
+        SpPath heap_missing = sp_join(&heap_tree, "link", "missing", "..", "x");
+        SpLinkOptions heap_hardlink = {true, false};
+        char heap_read[64];
+        ASSERT(sp_link_to(&heap_hard, &heap_file, heap_hardlink) == SP_OK && sp_samefile(&heap_hard, &heap_file));
+        ASSERT(sp_touch(&heap_hard, 0644, true) == SP_OK && sp_chmod(&heap_hard, 0600, false) == SP_OK);
+        ASSERT(sp_stat(&heap_hard, false).error == SP_OK && sp_is(&heap_hard, SP_FILE, true));
+        ASSERT(sp_read_file(&heap_hard, heap_read, sizeof(heap_read)).bytes == strlen("file_000.txt"));
+        ASSERT(sp_rename(&heap_hard, &heap_renamed, true).error == SP_OK);
+        ASSERT(sp_move(&heap_renamed, &heap_moved, false).error == SP_OK);
+        ASSERT(!sp_is(&heap_top, SP_MOUNT, false) && sp_absolute(&heap_relative).error == SP_OK);
+        ASSERT(!heap_links || sp_readlink(&heap_link).error == SP_OK);
+        ASSERT(sp_resolve(&heap_missing, false).error == SP_OK);
+        ASSERT(sp_from_uri("file://localhost/etc/passwd", SP_FLAVOR_POSIX).error == SP_OK);
+        ASSERT(sp_from_uri("file://elsewhere/etc/passwd", SP_FLAVOR_POSIX).error == SP_ERR_INVALID_ARG);
+        heap_armed = 0;
+        static char heap_saved_home[SP_PATH_MAX];
+        const char *heap_env_home = getenv("HOME");
+        snprintf(heap_saved_home, sizeof(heap_saved_home), "%s", heap_env_home ? heap_env_home : "");
+        ASSERT(unsetenv("HOME") == 0);
+        heap_armed = 1;
+        SpPath heap_home = sp_home(SP_FLAVOR_NATIVE);
+        heap_armed = 0;
+        if (heap_env_home)
+            ASSERT(setenv("HOME", heap_saved_home, 1) == 0);
+
+        /* 22 directories of 200 bytes below the working directory */
+        char heap_part[201];
+        memset(heap_part, 'd', 200);
+        heap_part[200] = '\0';
+        ASSERT(chdir(heap_name) == 0);
+        for (int i = 0; i < 22; i++)
+            ASSERT(mkdir(heap_part, 0755) == 0 && chdir(heap_part) == 0);
+        heap_armed = 1;
+        SpPath heap_deep_cwd = sp_cwd(SP_FLAVOR_NATIVE);
+        heap_armed = 0;
+        for (int i = 0; i < 22; i++)
+            ASSERT(chdir("..") == 0 && rmdir(heap_part) == 0);
+        ASSERT(chdir("..") == 0);
+
+        heap_armed = 1;
         SpError heap_removed = sp_remove(&heap_top, recursive_opts(false));
         heap_armed = 0;
 
         ASSERT(heap_listed == (heap_links ? 152 : 151));
         ASSERT(heap_globbed == (heap_links ? 450 : 300));
         ASSERT(heap_walked == 2 * (heap_links ? 450 : 300));
-        ASSERT(heap_copied.error == SP_OK && heap_resolved.error == SP_OK && heap_home.error == SP_OK && heap_cwd.error == SP_OK);
+        ASSERT(heap_copied.error == SP_OK && heap_resolved.error == SP_OK && heap_cwd.error == SP_OK);
         ASSERT(heap_uri_error == SP_OK && heap_removed == SP_OK);
+        ASSERT(strlen(heap_uri) > 13 && strcmp(heap_uri + strlen(heap_uri) - 13, "/a%20b%25.txt") == 0);
+        ASSERT(heap_deep_cwd.error == SP_ERR_TOO_LONG);
+
+        /* The same answers as glibc's lookups */
+        static char heap_db[16384];
+        struct passwd heap_pw;
+        struct passwd *heap_pwr = NULL;
+        struct group heap_gr;
+        struct group *heap_grr = NULL;
+        ASSERT(heap_st.error == SP_OK);
+        ASSERT(getpwuid_r((uid_t)heap_st.sp_uid, &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        ASSERT_TERM(heap_owner, heap_pw.pw_name);
+        ASSERT(getgrgid_r((gid_t)heap_st.sp_gid, &heap_gr, heap_db, sizeof(heap_db), &heap_grr) == 0 && heap_grr);
+        ASSERT_TERM(heap_group, heap_gr.gr_name);
+        ASSERT(getpwuid_r(getuid(), &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        SpPath heap_expected = sp_path(heap_pw.pw_dir);
+        ASSERT(heap_home.error == SP_OK && sp_path_eq(&heap_home, &heap_expected));
+        ASSERT(getpwnam_r("root", &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        heap_expected = sp_path(heap_pw.pw_dir);
+        heap_expected = sp_join(&heap_expected, "x");
+        ASSERT(heap_root_x.error == SP_OK && sp_path_eq(&heap_root_x, &heap_expected));
         if (heap_calls != 0)
             fprintf(stderr, "  %ld heap allocations\n", heap_calls);
         ASSERT(heap_calls == 0);
