@@ -231,13 +231,15 @@ static double logo_middle(double row, double p) {
 
 /* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
  * hangs from the one below it as the tail moves it and swings a little after it */
+#define LOGO_SHAKE 1.5 /* swings of the rattle for each sway of the body */
+
 static void logo_rattle_cols(double p, double cols[4]) {
     double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
     int k;
 
     cols[0] = logo_middle(LOGO_TAIL, p);
     for (k = 0; k < 3; k++) {
-        moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
+        moved += logo_set.rattle * logo_sin(LOGO_SHAKE * p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
         cols[k + 1] = logo_rattle_rest[k] + moved;
     }
 }
@@ -253,6 +255,9 @@ static double logo_half(double r) {
     return LOGO_SLIM * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
 }
 
+/* How far the rattle hangs above where the logo's segments are drawn, in the model's rows: one row of this frame,
+ * since a segment moved by part of a row is drawn with other widths */
+#define LOGO_RAISE (1 / logo_scale)
 #define LOGO_POINTED 5.5                                  /* rows the tail narrows to its point over */
 #define LOGO_STEP 0.25                                    /* rows between two points of the snake's line */
 #define LOGO_POINTS (4 * (LOGO_NECK - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
@@ -288,7 +293,7 @@ static void logo_draw_snake(double p) {
         double r = LOGO_TAIL - 3 + i * LOGO_STEP; /* the model's row */
         /* the tail narrows to a point over LOGO_POINTED rows, its tip at the first segment's lower end, which it just
          * touches */
-        double point = (r - (LOGO_TAIL - 2)) / LOGO_POINTED;
+        double point = (r - (LOGO_TAIL - 2 - LOGO_RAISE)) / LOGO_POINTED;
 
         row[i] = logo_long(r);
         col[i] = t < 1 ? rattle[1] + (rattle[0] - rattle[1]) * t : logo_middle(r, p);
@@ -414,7 +419,7 @@ static void logo_draw_tongue(double p) {
 /* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end,
  * which tapers into it (logo_draw_snake draws the taper) */
 static void logo_draw_rattle(double p) {
-    double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
+    double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3 - LOGO_RAISE, LOGO_TAIL - 6 - LOGO_RAISE, LOGO_TAIL - 9 - LOGO_RAISE};
     double cols[4];
     double scale = 1.05;
     int k;
