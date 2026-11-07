@@ -11,7 +11,7 @@ const KNOBS = [
   ['speed', 0.03, 0.3, 0.57],
   ['sway', 0, 1.12, 2.24],
   ['waves', 0, 1, 2],
-  ['resolution', 64, 96, 128],
+  ['resolution', 80, 105, 130],
   ['rattle', 0, 2, 4],
 ];
 const value = ([, low, , high], x) => low + (high - low) * x;

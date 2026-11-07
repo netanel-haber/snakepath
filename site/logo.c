@@ -14,7 +14,7 @@
    and ./nob snake makes it snake.c, the site's export: with LOGO_MAIN, a program that plays it in a terminal, with
    the snakepath it uses in place of the #include. */
 
-#define LOGO_MIN_COLS 64 /* fewer, and the head loses its eyes */
+#define LOGO_MIN_COLS 80 /* fewer, and the head loses its eyes */
 #define LOGO_MAX_COLS 192
 #define LOGO_MAX_ROWS 102 /* 51 rows for each 96 columns */
 #define LOGO_PI 3.14159265358979323846
@@ -33,7 +33,7 @@ extern char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)];
 int logo_frame(double t);
 
 #ifndef LOGO_SETTINGS
-#define LOGO_SETTINGS {0.3, 1.12, 1, 96, 2}
+#define LOGO_SETTINGS {0.3, 1.12, 1, 105, 2}
 #endif
 LogoSettings logo_set = LOGO_SETTINGS;
 char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' */
