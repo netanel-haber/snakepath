@@ -297,9 +297,12 @@ static void logo_draw_snake(double p) {
     double row[LOGO_POINTS];
     double half[LOGO_POINTS];
     double rattle[4];
+    /* the outline at least 2.2 of this frame's columns across, which is more than one row up and down (a row is two
+     * columns tall): thinner, it fell apart into single glyphs where the body slants */
     double edge =
-        LOGO_EDGE / logo_sqrt(logo_scale); /* heavier in columns at higher resolutions, lighter in the model's */
-    double margin = LOGO_MARGIN / logo_sqrt(logo_scale);
+        LOGO_EDGE / logo_sqrt(logo_scale) > 2.2 / logo_scale ? LOGO_EDGE / logo_sqrt(logo_scale) : 2.2 / logo_scale;
+    double margin =
+        LOGO_MARGIN / logo_sqrt(logo_scale) > 1.2 / logo_scale ? LOGO_MARGIN / logo_sqrt(logo_scale) : 1.2 / logo_scale;
     double down = logo_long(LOGO_NECK) - LOGO_NECK; /* how far the head is drawn below the logo's */
     int i;
     int y;
