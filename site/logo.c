@@ -67,10 +67,6 @@ static const double logo_tongue[3][4] = {
     {42.125, 54.5, 44, 57.125},
 };
 
-/* The rattle: three segments of three rows above a row of floor over the tail's end, each 0.85 the width of the one
- * below, centred where these columns are at rest */
-static const double logo_rattle_rest[3] = {40.66, 42.94, 46.84};
-
 static char logo_rows[LOGO_MAX_ROWS][LOGO_MAX_COLS];
 static int logo_cols; /* this frame's size */
 static int logo_height;
@@ -231,16 +227,20 @@ static double logo_middle(double row, double p) {
 
 /* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
  * hangs from the one below it as the tail moves it and swings a little after it */
+#define LOGO_LEAN 0.5  /* how much of the tail's lean the rattle carries on */
 #define LOGO_SHAKE 1.5 /* swings of the rattle for each sway of the body */
 
 static void logo_rattle_cols(double p, double cols[4]) {
-    double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
+    /* the tail's line at its end, in columns per row: the rattle carries on along it, so it leans whichever way the
+     * tail points and turns over with the body */
+    double lean = (logo_middle(LOGO_TAIL, p) - logo_middle(LOGO_TAIL + 2, p)) / 2;
+    double moved = 0;
     int k;
 
     cols[0] = logo_middle(LOGO_TAIL, p);
     for (k = 0; k < 3; k++) {
         moved += logo_set.rattle * logo_sin(LOGO_SHAKE * p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
-        cols[k + 1] = logo_rattle_rest[k] + moved;
+        cols[k + 1] = cols[0] + LOGO_LEAN * lean * 3 * (k + 1) + moved;
     }
 }
 
