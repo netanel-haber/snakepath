@@ -381,9 +381,9 @@ static void logo_draw_snake(double p) {
         double inner1 =
             logo_x((logo_drawn(1, up) < logo_drawn(1, on) ? logo_drawn(1, up) : logo_drawn(1, on)) + logo_nod(p));
 
-        logo_fill(y, outer0 - (edge + margin) * logo_scale, outer1 + (edge + margin) * logo_scale, ' ');
-        logo_fill(y, outer0 - edge * logo_scale, inner0 - 1, 'c');
-        logo_fill(y, inner1 + 1, outer1 + edge * logo_scale, 'c');
+        logo_fill(y, outer0 - (edge + margin) * logo_scale - 1, outer1 + (edge + margin) * logo_scale + 1, ' ');
+        logo_fill(y, outer0 - edge * logo_scale - 1, inner0 - 1, 'c'); /* as heavy as the body's, which slants */
+        logo_fill(y, inner1 + 1, outer1 + edge * logo_scale + 1, 'c');
         logo_fill(y, left, right, ' ');
     }
     for (y = logo_y(LOGO_CHIN + down); y < logo_y(LOGO_CHIN + 1 + down); y++) /* the floor closed under the chin */
