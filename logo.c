@@ -14,7 +14,7 @@
    and ./nob snake makes it snake.c, the site's export: with LOGO_MAIN, a program that plays it in a terminal, with
    the snakepath it uses in place of the #include. */
 
-#define LOGO_MIN_COLS 80 /* fewer, and the head loses its eyes */
+#define LOGO_MIN_COLS 96 /* fewer, and the snake's outline dissolves into the floor at the site's size */
 #define LOGO_MAX_COLS 192
 #define LOGO_MAX_ROWS 102 /* 51 rows for each 96 columns */
 #define LOGO_PI 3.14159265358979323846
@@ -278,6 +278,7 @@ static void logo_draw_rattle(double p) {
 
     for (y = logo_y(rows[0] - LOGO_FADE_UP); y < logo_y(LOGO_TAIL); y++) {
         double row = logo_row(y);
+        double up = 1 - (rows[0] - row) / LOGO_FADE_UP; /* how dark the fade is on this row, at the line */
         double spine;
 
         k = 0;
@@ -286,9 +287,9 @@ static void logo_draw_rattle(double p) {
         spine = cols[k] + (cols[k + 1] - cols[k]) * (rows[k] - row) / (rows[k] - rows[k + 1]);
         for (x = 0; x < logo_cols; x++) {
             double off = x / logo_scale - spine;
-            double dark = (1 - (off < 0 ? -off : off) / LOGO_FADE) * (1 - (rows[0] - row) / LOGO_FADE_UP);
+            double across = 1 - (off < 0 ? -off : off) / LOGO_FADE;
 
-            if (dark * 16 > order[y % 4][x % 4])
+            if (up > 0 && across > 0 && up * across * 16 > order[y % 4][x % 4])
                 logo_rows[y][x] = ' ';
         }
     }
