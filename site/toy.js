@@ -6,16 +6,15 @@
 // toy.html, which other pages embed.
 
 // The knobs, in the order of logo.c's LogoSettings: name, and the values at the left end, in the middle (where each
-// starts) and at the right end. A knob's position x (0 to 1) gives low + (high - low) * x^k, with k such that the
-// middle is at x = 0.5: the default sits mid-way, and the ends reach far enough to feel at once and be a little silly.
+// starts) and at the right end, the two ends as far from the middle on either side.
 const KNOBS = [
-  ['speed', 0.03, 0.3, 2.4],
-  ['sway', 0, 2, 12],
-  ['waves', 0, 1, 3],
-  ['resolution', 80, 96, 192],
-  ['rattle', 0, 0.6, 5],
+  ['speed', 0.03, 0.3, 0.57],
+  ['sway', 0, 1.12, 2.24],
+  ['waves', 0, 1, 2],
+  ['resolution', 80, 105, 130],
+  ['rattle', 0, 2, 4],
 ];
-const value = ([, low, middle, high], x) => low + (high - low) * x ** (Math.log((middle - low) / (high - low)) / Math.log(0.5));
+const value = ([, low, , high], x) => low + (high - low) * x;
 
 // Runs logo.wasm and draws its frames: only the rows that changed, each 'c' from one drawing of the glyph. The page's
 // first message hands the canvas over, and every message waits until logo.wasm is loaded.
@@ -92,8 +91,8 @@ const STYLE = `
   canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
   :host(.live) ::slotted(*) { visibility: hidden; }
   .knobs { display: none; position: absolute; right: 2%; top: 2%; width: 118px; padding: 3px 5px; box-sizing: border-box;
-           font-size: 10px; line-height: 1.15; color: #ccc; background: rgba(21, 21, 21, 0.9); border-radius: 4px;
-           opacity: 0.9; transition: opacity 0.2s; }
+           font-size: 10px; line-height: 1.15; color: #ccc; background: #151515; border-radius: 4px;
+           opacity: 0.98; transition: opacity 0.2s; }
   .knobs:hover, .knobs:focus-within { opacity: 1; }
   :host(.live) .knobs { display: block; }
   label { display: grid; grid-template-columns: 62px 1fr; align-items: center; column-gap: 0.25rem; }

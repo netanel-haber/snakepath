@@ -33,7 +33,7 @@ extern char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)];
 int logo_frame(double t);
 
 #ifndef LOGO_SETTINGS
-#define LOGO_SETTINGS {0.3, 2, 1, 96, 0.6}
+#define LOGO_SETTINGS {0.3, 1.12, 1, 105, 2}
 #endif
 LogoSettings logo_set = LOGO_SETTINGS;
 char logo_out[LOGO_MAX_ROWS * (LOGO_MAX_COLS + 1)]; /* the rows joined by '\n' */
@@ -66,10 +66,6 @@ static const double logo_tongue[3][4] = {
     {42.125, 54.5, 44, 51.875},
     {42.125, 54.5, 44, 57.125},
 };
-
-/* The rattle: three segments of three rows above a row of floor over the tail's end, each 0.85 the width of the one
- * below, centred where these columns are at rest */
-static const double logo_rattle_rest[3] = {40.66, 42.94, 46.84};
 
 static char logo_rows[LOGO_MAX_ROWS][LOGO_MAX_COLS];
 static int logo_cols; /* this frame's size */
@@ -231,14 +227,24 @@ static double logo_middle(double row, double p) {
 
 /* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
  * hangs from the one below it as the tail moves it and swings a little after it */
+#define LOGO_LEAN 0.15 /* how much of the tail's lean the rattle carries on */
+#define LOGO_SHAKE 1.5 /* swings of the rattle for each sway of the body */
+
 static void logo_rattle_cols(double p, double cols[4]) {
-    double moved = logo_middle(LOGO_TAIL, p) - (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
+    /* the tail's line at its end, in columns per row: the rattle carries on along it, so it leans whichever way the
+     * tail points and turns over with the body */
+    double lean = (logo_middle(LOGO_TAIL, p) - logo_middle(LOGO_TAIL + 2, p)) / 2;
+    double usual = 0; /* its average over a sway, so the rattle swings as far to each side */
+    double moved = 0;
     int k;
 
+    for (k = 0; k < 16; k++)
+        usual += (logo_middle(LOGO_TAIL, k * LOGO_PI / 8) - logo_middle(LOGO_TAIL + 2, k * LOGO_PI / 8)) / 2 / 16;
+    lean -= usual;
     cols[0] = logo_middle(LOGO_TAIL, p);
     for (k = 0; k < 3; k++) {
-        moved += logo_set.rattle * logo_sin(p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
-        cols[k + 1] = logo_rattle_rest[k] + moved;
+        moved += logo_set.rattle * logo_sin(LOGO_SHAKE * p - (LOGO_NECK - LOGO_TAIL + 3 * (k + 1)) * logo_wave());
+        cols[k + 1] = cols[0] + LOGO_LEAN * lean * 3 * (k + 1) + moved;
     }
 }
 
@@ -253,6 +259,10 @@ static double logo_half(double r) {
     return LOGO_SLIM * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
 }
 
+/* How far the rattle hangs above where the logo's segments are drawn, in the model's rows: one row of this frame,
+ * since a segment moved by part of a row is drawn with other widths */
+#define LOGO_RAISE (1 / logo_scale)
+#define LOGO_POINTED 5.5                                  /* rows the tail narrows to its point over */
 #define LOGO_STEP 0.25                                    /* rows between two points of the snake's line */
 #define LOGO_POINTS (4 * (LOGO_NECK - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
 
@@ -270,9 +280,9 @@ static void logo_draw_snake(double p) {
      * columns tall): thinner, it fell apart into single glyphs where the body slants */
     double edge =
         LOGO_EDGE / logo_sqrt(logo_scale) > 2.2 / logo_scale ? LOGO_EDGE / logo_sqrt(logo_scale) : 2.2 / logo_scale;
-    /* and as wide across a row wherever the body runs (3 of this frame's columns at least): measured across the body
-     * alone, it was two glyphs where the body runs straight down and four where it slants */
-    double across = 3.0 / logo_scale > edge ? 3.0 / logo_scale : edge;
+    /* and as wide across a row wherever the body runs (2 of this frame's columns at least): measured across the body
+     * alone, it was two glyphs where the body runs straight down and four where it slants; 3 was too busy */
+    double across = 2.0 / logo_scale > edge ? 2.0 / logo_scale : edge;
     double margin =
         LOGO_MARGIN / logo_sqrt(logo_scale) > 1.2 / logo_scale ? LOGO_MARGIN / logo_sqrt(logo_scale) : 1.2 / logo_scale;
     double down = logo_long(LOGO_NECK) - LOGO_NECK; /* how far the head is drawn below the logo's */
@@ -285,10 +295,13 @@ static void logo_draw_snake(double p) {
         double t = (i * LOGO_STEP) / 3; /* 0 at the first segment's middle, 1 at the tail's end */
 
         double r = LOGO_TAIL - 3 + i * LOGO_STEP; /* the model's row */
+        /* the tail narrows to a point over LOGO_POINTED rows, its tip at the first segment's lower end, which it just
+         * touches */
+        double point = (r - (LOGO_TAIL - 2 - LOGO_RAISE)) / LOGO_POINTED;
 
         row[i] = logo_long(r);
         col[i] = t < 1 ? rattle[1] + (rattle[0] - rattle[1]) * t : logo_middle(r, p);
-        half[i] = (t < 1 ? t : 1) * logo_half(r < LOGO_TAIL ? LOGO_TAIL : r);
+        half[i] = (point < 0 ? 0 : point < 1 ? point : 1) * logo_half(r < LOGO_TAIL ? LOGO_TAIL : r);
     }
 
     for (y = logo_y(LOGO_TAIL - 3) - logo_y(2); y <= logo_y(logo_long(LOGO_NECK + 2)); y++) {
@@ -410,7 +423,7 @@ static void logo_draw_tongue(double p) {
 /* The rattle: cut out of the horizon, each segment swinging from the one below it, the first from the tail's end,
  * which tapers into it (logo_draw_snake draws the taper) */
 static void logo_draw_rattle(double p) {
-    double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3, LOGO_TAIL - 6, LOGO_TAIL - 9};
+    double rows[4] = {LOGO_TAIL, LOGO_TAIL - 3 - LOGO_RAISE, LOGO_TAIL - 6 - LOGO_RAISE, LOGO_TAIL - 9 - LOGO_RAISE};
     double cols[4];
     double scale = 1.05;
     int k;
