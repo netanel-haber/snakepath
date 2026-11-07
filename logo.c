@@ -486,7 +486,7 @@ int logo_frame(double t) {
 }
 
 #ifdef LOGO_MAIN
-/* Plays the snake in a terminal at least 96 columns wide, until Ctrl-C. Given a directory, it writes one sway there
+/* Plays the snake in a terminal, at most as wide and tall as it, until Ctrl-C. Given a directory, it writes one sway there
  * instead, a file per frame, through snakepath. */
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L /* nanosleep */
@@ -499,8 +499,37 @@ int logo_frame(double t) {
 #endif
 #include <stdio.h>
 #ifndef _WIN32
+#include <sys/ioctl.h>
 #include <time.h>
+#include <unistd.h>
 #endif
+
+/* The most columns a frame may have to fit the terminal, with a row to spare so it never scrolls, and in *rows_out
+ * the rows it has room for; 0 if unknown. Drawn wider or taller, its lines wrap and each frame scrolls on below the
+ * last instead of over it */
+static int logo_fit(int *rows_out) {
+    int cols = 0;
+    int rows = 0;
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO info;
+
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+        cols = info.srWindow.Right - info.srWindow.Left + 1;
+        rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+    }
+#else
+    struct winsize size;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+        cols = size.ws_col;
+        rows = size.ws_row;
+    }
+#endif
+    *rows_out = rows - 1;
+    if (cols <= 0 || rows <= 1)
+        return 0;
+    return cols < (rows - 1) * 96 / 51 ? cols : (rows - 1) * 96 / 51;
+}
 
 int main(int argc, char **argv) {
     int frames = (int)(30 / logo_set.speed);
@@ -526,8 +555,18 @@ int main(int argc, char **argv) {
     }
     printf("\033[2J");
     for (f = 0;; f++) {
+        int room = 0;
+        int fit = logo_fit(&room); /* every frame, so a resized terminal is followed */
+        char *end = logo_out;
+
+        if (fit > 0 && logo_set.columns > fit)
+            logo_set.columns = fit;
         logo_frame(f * 1000.0 / 30);
-        printf("\033[H\033[32m%s\033[0m\n", logo_out);
+        while (room > 0 && (end = strchr(end, '\n')) != NULL && --room > 0)
+            end++;
+        if (end != NULL && room == 0 && fit > 0) /* narrower than the smallest frame is tall: its top only */
+            *end = '\0';
+        printf("\033[H\033[32m%s\033[0m", logo_out);
         fflush(stdout);
 #ifdef _WIN32
         Sleep(1000 / 30);
