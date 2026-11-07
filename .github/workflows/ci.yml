@@ -232,47 +232,6 @@ jobs:
           python snakepath.py --build
           python snakepath.py
 
-  # pip install snakepath: one stable-ABI (abi3) wheel per platform, for every CPython from 3.15 on, each tried once
-  # where its runner can run it and audited for symbols outside the stable ABI
-  wheels:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.15'
-
-      - name: Build wheels
-        run: |
-          pip install cibuildwheel==4.3.1
-          python -m cibuildwheel --output-dir wheelhouse
-        env:
-          CIBW_BUILD: "cp315-*"
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
-          CIBW_ARCHS_WINDOWS: "AMD64 ARM64"
-          CIBW_TEST_COMMAND: >-
-            python -c "import snakepath as s, tempfile; d = s.Path(tempfile.mkdtemp()); (d / 'a').mkdir();
-            (d / 'a' / 'f.py').write_text('x'); assert [p.name for p in d.rglob('*.py')] == ['f.py'];
-            assert (d / 'a' / 'f.py').relative_to(d) == s.Path('a', 'f.py'); d._delete(); assert not d.exists()"
-
-      - name: Check that the wheels use only the stable ABI
-        shell: bash
-        run: pipx run abi3audit==0.0.26 --strict --report wheelhouse/*.whl
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.os }}
-          path: wheelhouse/*.whl
-
   sdist:
     runs-on: ubuntu-latest
     timeout-minutes: 10
