@@ -183,36 +183,12 @@ static double logo_drawn(int side, double r) {
     return (1 - t) * logo_snake[below - LOGO_TAIL][side] + t * logo_snake[above - LOGO_TAIL][side];
 }
 
-#define LOGO_KNEES 3       /* the body's bends at rest, the first to the right below the neck */
 #define LOGO_BEND 6.0      /* columns a knee reaches from the line between the tail's end and the neck, by the neck */
-#define LOGO_BEND_TAIL 4.0 /* and by the tail */
+#define LOGO_BEND_TAIL 4.0 /* and by the tail, which is further off */
 
-/* The body's bend at row LOGO_NECK - i (i from 0 at the neck to LOGO_NECK - LOGO_TAIL at the tail's end), its
- * middle's distance from the straight line between the tail's end and the neck as drawn, and its quadrature: the same
- * bends a quarter of a wave further along the body (the drawn bend's sine series with every term turned a quarter,
- * the discrete Hilbert transform). Turning from the one to the other moves the drawn S along the body as a wave */
-static void logo_bends(int i, double *bend, double *quad) {
-    static double bends[LOGO_NECK - LOGO_TAIL + 1];
-    static double quads[LOGO_NECK - LOGO_TAIL + 1];
-    const int N = LOGO_NECK - LOGO_TAIL;
-    static int ready;
-    int j;
-    int n;
-
-    for (j = 0; !ready && j <= N; j++) /* the knees, smaller toward the tail, which is further off */
-        bends[j] = (LOGO_BEND + (LOGO_BEND_TAIL - LOGO_BEND) * j / N) * logo_sin(LOGO_KNEES * LOGO_PI * j / N);
-    for (n = 1; !ready && n < N; n++) {
-        double b = 0;
-
-        for (j = 1; j < N; j++)
-            b += 2.0 / N * bends[j] * logo_sin(n * LOGO_PI * j / N);
-        for (j = 0; j <= N; j++)
-            quads[j] += b * logo_sin(n * LOGO_PI * j / N + LOGO_PI / 2);
-    }
-    ready = 1;
-    *bend = bends[i];
-    *quad = quads[i];
-}
+/* How many half waves the body bends in: 3 knees at the default, from 1 with no waves to 7 with the most, the
+ * first to the right below the neck */
+static double logo_knees(void) { return 1 + 2 * logo_set.waves; }
 
 /* How far the head nods from its place in the view's middle at phase p */
 static double logo_nod(double p) {
@@ -222,42 +198,33 @@ static double logo_nod(double p) {
 }
 
 /* The middle of the snake at the model's row (held between the tail's end and the chin) at phase p, as a snake
- * crawls: the drawn S's bends run along the body, from the neck toward the tail, so that it is always an S and half a
- * sway on it is the drawing's mirror image. The sway knob takes it from still (0) through all the way into the mirror
- * image (the default) to a wider swing; the waves knob from the S turning over in place (0) through its bends running
- * along it (the default) to more of them at once. The turn eases in below the neck, so the head stays in the middle,
- * and the bends move less toward the tail's end, which is far off: moved as far as near ones, it lay flat */
+ * crawls: its knees run along the body from the neck toward the tail, so that half a sway on it is its mirror image.
+ * The sway knob takes it from still (0) through all the way into the mirror image (the default) to a wider swing, the
+ * waves knob from one bend to seven, each the less deep the more there are so that the body never lies flat. The turn
+ * eases in below the neck, so the head stays in the middle, and the knees move less toward the tail's end, which is
+ * far off: moved as far as near ones, it lay flat */
 static double logo_middle(double row, double p) {
     double r = row < LOGO_TAIL ? LOGO_TAIL : row > LOGO_CHIN - 1 ? LOGO_CHIN - 1 : row;
-    double middle = (logo_drawn(0, r) + logo_drawn(1, r)) / 2;
-    double from_neck = LOGO_NECK - r;
-    double u = from_neck / (LOGO_NECK - LOGO_TAIL);
-    int i = (int)from_neck; /* from_neck is never below 0 here, so this is its floor */
-    double t = from_neck - i;
+    double u = (LOGO_NECK - r) / (LOGO_NECK - LOGO_TAIL);
     double reach = logo_set.sway / 2;
     double mix = reach < 1 ? reach : 1;
     double grow = reach > 1 ? 1 + (reach - 1) * 0.15 : 1;
-    double travel = logo_set.waves < 1 ? logo_set.waves : 1;
-    double q = p - (logo_set.waves > 1 ? logo_set.waves - 1 : 0) * 2 * LOGO_PI * u;
+    double knees = logo_knees();
+    double deep = (LOGO_BEND + (LOGO_BEND_TAIL - LOGO_BEND) * u) * (knees > 3 ? 3 / knees : 1);
     double near = u / 0.3;
     double ease = near > 1 ? 1 : near * near * (3 - 2 * near);
     double far = (u - 0.75) / 0.25;
     double tip = 1 - LOGO_TIP * (far < 0 ? 0 : far * far * (3 - 2 * far));
     double tail = (logo_drawn(0, LOGO_TAIL) + logo_drawn(1, LOGO_TAIL)) / 2;
     double neck = (logo_drawn(0, LOGO_NECK) + logo_drawn(1, LOGO_NECK)) / 2;
-    double line = neck + (tail - neck) * u; /* the straight line the bends are measured from */
-    double bend[2];
-    double quad[2];
-    double turned;
+    double line = neck + (tail - neck) * u; /* the straight line the knees are measured from */
+    double at = knees * LOGO_PI * u;
+    double bend = deep * logo_sin(at); /* at rest */
+    double turned = deep * (logo_sin(at + p) * tip + logo_sin(at) * logo_sin(p + LOGO_PI / 2) * (1 - tip)); /* moving */
 
     if (r >= LOGO_NECK)
-        return middle + logo_nod(p);
-    logo_bends(i, &bend[0], &quad[0]);
-    logo_bends(i + 1 <= LOGO_NECK - LOGO_TAIL ? i + 1 : i, &bend[1], &quad[1]);
-    bend[0] += (bend[1] - bend[0]) * t;
-    quad[0] += (quad[1] - quad[0]) * t;
-    turned = bend[0] * logo_sin(q + LOGO_PI / 2) + travel * tip * quad[0] * logo_sin(q);
-    return line + grow * (bend[0] + mix * ease * (turned - bend[0])) + (1 - u) * logo_nod(p);
+        return (logo_drawn(0, r) + logo_drawn(1, r)) / 2 + logo_nod(p);
+    return line + grow * (bend + mix * ease * (turned - bend)) + (1 - u) * logo_nod(p);
 }
 
 /* The middles of the rattle's segments at phase p, in the model's columns, after the tail's end (cols[0]): each
@@ -301,6 +268,9 @@ static void logo_draw_snake(double p) {
      * columns tall): thinner, it fell apart into single glyphs where the body slants */
     double edge =
         LOGO_EDGE / logo_sqrt(logo_scale) > 2.2 / logo_scale ? LOGO_EDGE / logo_sqrt(logo_scale) : 2.2 / logo_scale;
+    /* and as wide across a row wherever the body runs (3 of this frame's columns at least): measured across the body
+     * alone, it was two glyphs where the body runs straight down and four where it slants */
+    double across = 3.0 / logo_scale > edge ? 3.0 / logo_scale : edge;
     double margin =
         LOGO_MARGIN / logo_sqrt(logo_scale) > 1.2 / logo_scale ? LOGO_MARGIN / logo_sqrt(logo_scale) : 1.2 / logo_scale;
     double down = logo_long(LOGO_NECK) - LOGO_NECK; /* how far the head is drawn below the logo's */
@@ -326,7 +296,7 @@ static void logo_draw_snake(double p) {
         int x;
 
         for (i = 0; i < LOGO_POINTS; i++) {
-            double reach = half[i] + edge + margin;
+            double reach = half[i] + across + margin;
 
             if ((row[i] - m) * 2 < reach && (m - row[i]) * 2 < reach) {
                 lo = col[i] - reach < lo ? col[i] - reach : lo;
@@ -336,6 +306,7 @@ static void logo_draw_snake(double p) {
         for (x = logo_round(logo_x(lo)); lo < hi && x <= logo_round(logo_x(hi)); x++) {
             double c = x / logo_scale + LOGO_CENTER - 48; /* the model's column of this cell */
             double d = 1e9;
+            double band = edge; /* the outline's thickness across the nearest stretch of the body */
 
             for (i = 0; i + 1 < LOGO_POINTS; i++) {
                 double ax = col[i];
@@ -351,15 +322,20 @@ static void logo_draw_snake(double p) {
                 dx = c - ax - t * bx;
                 dy = m * 2 - ay - t * by;
                 here = logo_sqrt(dx * dx + dy * dy) - (half[i] + (half[i + 1] - half[i]) * t);
-                d = here < d ? here : d;
+                if (here < d) {
+                    double upright = (by < 0 ? -by : by) / logo_sqrt(bx * bx + by * by); /* 1 where it runs down */
+
+                    d = here;
+                    band = across * upright > edge ? across * upright : edge;
+                }
             }
             if (x < 0 || x >= logo_cols || y < 0 || y >= logo_height)
                 continue;
             if (d < 0)
                 logo_rows[y][x] = ' ';
-            else if (d < edge)
+            else if (d < band)
                 logo_rows[y][x] = 'c';
-            else if (d < edge + margin && y > logo_y(LOGO_HORIZON))
+            else if (d < band + margin && y > logo_y(LOGO_HORIZON))
                 logo_rows[y][x] = ' ';
         }
     }
