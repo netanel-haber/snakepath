@@ -3105,6 +3105,7 @@ int main(void) {
                          {"#passwd: ldap\nPasswd: ldap\npasswd: files\n# group: files\n", 2, 0},
                          {"passwd: files\npasswd: ldap\ngroup:\n", 0, 0},
                          {"passwd: files # local\ngroup: files\t\r\n", 1, 2},
+                         {"passwd files\ngroup: files\n", 0, 2},
                          {"hosts: files dns\n", 0, 0}};
         SpPath db_conf = sp_join_one(&db_base, "nsswitch.conf");
         for (size_t i = 0; i < ARRAY_LEN(nss_confs); i++) {

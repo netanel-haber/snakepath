@@ -3736,50 +3736,43 @@ static SpPath sp_priv_getenv_path(const wchar_t *name, SpFlavor flavor) {
 #ifdef SP_PRIV_GLIBC
 /* How glibc looks database (passwd or group) up, by its line in conf (/etc/nsswitch.conf), parsed as glibc parses it:
  * 2 when files is the only source, 1 when it is the first and has no actions (an entry it finds is glibc's answer),
- * else 0. Anything unclear is 0 too: no line, where glibc's default depends on how it was built; more than one; a file
- * with NUL bytes, or past the buffer here. */
+ * else 0. Anything unclear is 0 too: no line, where glibc's default depends on how it was built; more than one; one
+ * without the ':' glibc skips it for; a file with NUL bytes, or past the buffer here. */
 static int sp_priv_nss_files(const char *conf, const char *database) {
     char text[8192];
     size_t len = 0;
     int fd = open(conf, O_RDONLY | O_CLOEXEC);
-    for (long got = 1; fd >= 0 && got != 0 && len < sizeof(text);) {
-        got = read(fd, text + len, sizeof(text) - len);
+    for (long got = 1; fd >= 0 && got != 0 && len < sizeof(text) - 1;) {
+        got = read(fd, text + len, sizeof(text) - 1 - len);
         if (got < 0 && errno != EINTR)
-            len = sizeof(text); /* unread, as a file too large is */
+            len = sizeof(text) - 1; /* unread, as a file too large is */
         else if (got > 0)
             len += SP_PRIV_CAST(size_t, got);
     }
     if (fd >= 0)
         close(fd);
-    if (fd < 0 || len == sizeof(text) || memchr(text, '\0', len))
+    if (fd < 0 || len == sizeof(text) - 1 || memchr(text, '\0', len))
         return 0;
+    text[len] = '\0';
 
     /* A line is a database's name after blanks, ended by a blank or ':', then blanks and ':', then its sources:
      * names ended by a blank or '[', each with its actions in brackets after it */
     int files = 0;
     int lines = 0;
-    size_t name_len = strlen(database);
-    for (size_t at = 0, end; at < len; at = end + 1) {
-        const char *eol = SP_PRIV_CAST(const char *, memchr(text + at, '\n', len - at));
-        end = eol ? SP_PRIV_CAST(size_t, eol - text) : len;
-        while (at < end && strchr(" \t\r\v\f", text[at]))
-            at++;
-        size_t name = at;
-        while (at < end && !strchr(" \t\r\v\f:", text[at]))
-            at++;
-        if (at - name != name_len || memcmp(text + name, database, name_len) != 0)
+    for (const char *line = text; *line; line += *line == '\n') {
+        const char *name = line + strspn(line, " \t\r\v\f");
+        size_t name_len = strcspn(name, " \t\r\v\f:\n");
+        const char *source = name + name_len + strspn(name + name_len, " \t\r\v\f:");
+        size_t source_len = strcspn(source, " \t\r\v\f[\n");
+        const char *after = source + source_len + strspn(source + source_len, " \t\r\v\f");
+        line = after + strcspn(after, "\n");
+        if (name_len != strlen(database) || memcmp(name, database, name_len) != 0)
             continue;
 
         lines++;
-        while (at < end && strchr(" \t\r\v\f:", text[at]))
-            at++;
-        size_t source = at;
-        while (at < end && !strchr(" \t\r\v\f[", text[at]))
-            at++;
-        bool first = at - source == 5 && memcmp(text + source, "files", 5) == 0;
-        while (at < end && strchr(" \t\r\v\f", text[at]))
-            at++;
-        files = !first || (at < end && text[at] == '[') ? 0 : at == end ? 2 : 1;
+        bool colon = memchr(name + name_len, ':', SP_PRIV_CAST(size_t, source - name) - name_len) != SP_PRIV_NULL;
+        bool first = source_len == 5 && memcmp(source, "files", 5) == 0;
+        files = !colon || !first || *after == '[' ? 0 : after == line ? 2 : 1;
     }
     return lines == 1 ? files : 0;
 }
@@ -3801,8 +3794,7 @@ static void sp_priv_db_find(const char *file, size_t last_number, const char *na
     size_t at = 0; /* bytes of the field so far */
     unsigned long long number = 0;
     bool start = true; /* no byte of the line but blanks yet */
-    bool skip = false; /* the line can't be the entry */
-    bool match = true;
+    bool match = true; /* the line can still be the entry */
     bool too_long = false;
     for (long got = 1; fd >= 0 && got > 0 && out->error == SP_ERR_NOT_FOUND;) {
         got = read(fd, buf, sizeof(buf));
@@ -3815,8 +3807,8 @@ static void sp_priv_db_find(const char *file, size_t last_number, const char *na
         for (long i = 0; got >= 0 && i < (got > 0 ? got : 1) && out->error == SP_ERR_NOT_FOUND; i++) {
             char c = buf[i];
             bool blank = c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r';
-            skip = skip || (start && c == '#');
-            if (c != '\n' && (skip || (start && blank)))
+            match = match && !(start && c == '#');
+            if (c != '\n' && (!match || (start && blank)))
                 continue;
             start = false;
 
@@ -3836,7 +3828,6 @@ static void sp_priv_db_find(const char *file, size_t last_number, const char *na
                 else if (field == want)
                     too_long = true;
                 at++;
-                skip = !match;
                 continue;
             }
 
@@ -3848,18 +3839,16 @@ static void sp_priv_db_find(const char *file, size_t last_number, const char *na
             field++;
             at = 0;
             number = 0;
-            skip = skip || !match;
             if (c != '\n')
                 continue;
 
             /* The end of a line: an entry with all its numbers is the one */
-            if (!skip && field > last_number) {
+            if (match && field > last_number) {
                 out->error = too_long ? SP_ERR_TOO_LONG : SP_OK;
             } else {
                 out->len = 0;
                 field = 0;
                 start = true;
-                skip = false;
                 match = true;
                 too_long = false;
             }
@@ -3890,9 +3879,6 @@ static void sp_priv_user_db(bool group, const char *name, size_t name_len, unsig
     if (files == 2 || (files == 1 && out->error != SP_ERR_NOT_FOUND))
         return;
 #endif
-    out->len = 0;
-    out->error = SP_ERR_NOT_FOUND;
-    out->buf[0] = '\0';
     char entry_buf[16384]; /* a group's members' names too */
     char user[256];
     struct passwd pw_entry;
@@ -3900,17 +3886,16 @@ static void sp_priv_user_db(bool group, const char *name, size_t name_len, unsig
     struct group gr_entry;
     struct group *gr = SP_PRIV_NULL;
     int failed = 0;
-    if (name && (name_len >= sizeof(user) || memchr(name, '\0', name_len)))
-        return;
-    if (name) {
+    bool named = name && name_len < sizeof(user) && !memchr(name, '\0', name_len); /* else no such user */
+    if (named) {
         memcpy(user, name, name_len);
         user[name_len] = '\0';
     }
     if (group)
         failed = getgrgid_r(SP_PRIV_CAST(gid_t, id), &gr_entry, entry_buf, sizeof(entry_buf), &gr);
-    else if (name)
+    else if (named)
         failed = getpwnam_r(user, &pw_entry, entry_buf, sizeof(entry_buf), &pw);
-    else
+    else if (!name)
         failed = getpwuid_r(SP_PRIV_CAST(uid_t, id), &pw_entry, entry_buf, sizeof(entry_buf), &pw);
 
     const char *found = gr ? gr->gr_name : !pw ? SP_PRIV_NULL : want_dir ? pw->pw_dir : pw->pw_name;
