@@ -253,6 +253,7 @@ static double logo_half(double r) {
     return LOGO_SLIM * (logo_drawn(1, r) - logo_drawn(0, r)) / 2;
 }
 
+#define LOGO_POINTED 4.0                                  /* rows the tail narrows to its point over */
 #define LOGO_STEP 0.25                                    /* rows between two points of the snake's line */
 #define LOGO_POINTS (4 * (LOGO_NECK - LOGO_TAIL + 3) + 1) /* from the first rattle segment's middle to the neck */
 
@@ -285,10 +286,13 @@ static void logo_draw_snake(double p) {
         double t = (i * LOGO_STEP) / 3; /* 0 at the first segment's middle, 1 at the tail's end */
 
         double r = LOGO_TAIL - 3 + i * LOGO_STEP; /* the model's row */
+        /* the tail narrows to a point over LOGO_POINTED rows, its tip at the first segment's lower end, which it just
+         * touches */
+        double point = (r - (LOGO_TAIL - 2)) / LOGO_POINTED;
 
         row[i] = logo_long(r);
         col[i] = t < 1 ? rattle[1] + (rattle[0] - rattle[1]) * t : logo_middle(r, p);
-        half[i] = (t < 1 ? t : 1) * logo_half(r < LOGO_TAIL ? LOGO_TAIL : r);
+        half[i] = (point < 0 ? 0 : point < 1 ? point : 1) * logo_half(r < LOGO_TAIL ? LOGO_TAIL : r);
     }
 
     for (y = logo_y(LOGO_TAIL - 3) - logo_y(2); y <= logo_y(logo_long(LOGO_NECK + 2)); y++) {
