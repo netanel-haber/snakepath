@@ -1,10 +1,11 @@
 /* snakepath.h - C99 pathlib port, STB-style header-only library
  * No mallocs. POSIX and Windows compatible.
- * On Linux nothing under it allocates either: directories are listed with getdents64 into snakepath's own memory, the
- * working directory comes from the system call, and the user database is read from /etc/passwd and /etc/group, as the
- * C library's "files" source reads them (so a user that only LDAP or systemd knows isn't found; Android's lookups are
- * its C library's). Elsewhere some OS calls allocate inside: Windows' path calls (its listings read into snakepath's
- * memory too, with NtQueryDirectoryFile), and on other POSIX systems opendir and the user lookups.
+ * On Linux with glibc nothing under it allocates either: directories are listed with getdents64 into snakepath's own
+ * memory, the working directory comes from the system call, and where /etc/nsswitch.conf makes /etc/passwd and
+ * /etc/group glibc's answer, they are read here. Users and groups from other sources (LDAP, sssd, systemd's) are asked
+ * of the C library, as CPython asks, and that allocates inside it. Elsewhere some OS calls allocate inside: Windows'
+ * path calls (its listings read into snakepath's memory too, with NtQueryDirectoryFile), and on other POSIX systems
+ * opendir and the user lookups.
  *
  * Usage:
  *   #define SNAKEPATH_IMPLEMENTATION
@@ -585,9 +586,11 @@ typedef HANDLE SpPrivFile;
 #include <stdlib.h> /* For getenv */
 #include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
 #include <utime.h>  /* For utime() */
-#if !defined(__linux__) || defined(__ANDROID__)
-#include <pwd.h> /* For getpwuid_r, getpwnam_r */
-#include <grp.h> /* For getgrgid_r */
+#include <pwd.h>    /* For getpwuid_r, getpwnam_r */
+#include <grp.h>    /* For getgrgid_r */
+/* glibc on Linux, whose user database lookups follow /etc/nsswitch.conf (uClibc-ng says it is glibc too) */
+#if defined(__linux__) && defined(__GLIBC__) && !defined(__UCLIBC__)
+#define SP_PRIV_GLIBC 1
 #endif
 #ifdef __linux__
 #include <sys/ioctl.h>
@@ -627,11 +630,9 @@ extern long syscall(long number, ...);
 extern DIR *fdopendir(int fd);
 extern int dirfd(DIR *dir);
 #endif
-#if !defined(__linux__) || defined(__ANDROID__)
 extern int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t size, struct passwd **result);
 extern int getpwnam_r(const char *name, struct passwd *pw, char *buf, size_t size, struct passwd **result);
 extern int getgrgid_r(gid_t gid, struct group *gr, char *buf, size_t size, struct group **result);
-#endif
 #endif
 
 #endif
@@ -3732,7 +3733,57 @@ static SpPath sp_priv_getenv_path(const wchar_t *name, SpFlavor flavor) {
 }
 #endif
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#ifdef SP_PRIV_GLIBC
+/* How glibc looks database (passwd or group) up, by its line in conf (/etc/nsswitch.conf), parsed as glibc parses it:
+ * 2 when files is the only source, 1 when it is the first and has no actions (an entry it finds is glibc's answer),
+ * else 0. Anything unclear is 0 too: no line, where glibc's default depends on how it was built; more than one; a file
+ * with NUL bytes, or past the buffer here. */
+static int sp_priv_nss_files(const char *conf, const char *database) {
+    char text[8192];
+    size_t len = 0;
+    int fd = open(conf, O_RDONLY | O_CLOEXEC);
+    for (long got = 1; fd >= 0 && got != 0 && len < sizeof(text);) {
+        got = read(fd, text + len, sizeof(text) - len);
+        if (got < 0 && errno != EINTR)
+            len = sizeof(text); /* unread, as a file too large is */
+        else if (got > 0)
+            len += SP_PRIV_CAST(size_t, got);
+    }
+    if (fd >= 0)
+        close(fd);
+    if (fd < 0 || len == sizeof(text) || memchr(text, '\0', len))
+        return 0;
+
+    /* A line is a database's name after blanks, ended by a blank or ':', then blanks and ':', then its sources:
+     * names ended by a blank or '[', each with its actions in brackets after it */
+    int files = 0;
+    int lines = 0;
+    size_t name_len = strlen(database);
+    for (size_t at = 0, end; at < len; at = end + 1) {
+        const char *eol = SP_PRIV_CAST(const char *, memchr(text + at, '\n', len - at));
+        end = eol ? SP_PRIV_CAST(size_t, eol - text) : len;
+        while (at < end && strchr(" \t\r\v\f", text[at]))
+            at++;
+        size_t name = at;
+        while (at < end && !strchr(" \t\r\v\f:", text[at]))
+            at++;
+        if (at - name != name_len || memcmp(text + name, database, name_len) != 0)
+            continue;
+
+        lines++;
+        while (at < end && strchr(" \t\r\v\f:", text[at]))
+            at++;
+        size_t source = at;
+        while (at < end && !strchr(" \t\r\v\f[", text[at]))
+            at++;
+        bool first = at - source == 5 && memcmp(text + source, "files", 5) == 0;
+        while (at < end && strchr(" \t\r\v\f", text[at]))
+            at++;
+        files = !first || (at < end && text[at] == '[') ? 0 : at == end ? 2 : 1;
+    }
+    return lines == 1 ? files : 0;
+}
+
 /* The entry of file, /etc/passwd (name:password:uid:gid:gecos:home:shell) or /etc/group (name:password:gid:members),
  * whose name is name, or with a NULL name whose id (the third field) is id: its field want, into out. Fields up to
  * last_number are numbers. Read as glibc's "files" source parses these files: blank lines, lines starting with '#' after
@@ -3822,16 +3873,23 @@ static void sp_priv_db_find(const char *file, size_t last_number, const char *na
 #endif
 
 #ifndef SP_WINDOWS
-/* A user's name, or home (want_dir), by id or with a name by name; with group, a group's name by id. out gets it, or is
- * empty with SP_ERR_NOT_FOUND (no such entry) or SP_ERR_TOO_LONG (one past SP_PATH_MAX). On Linux, Android aside, the
- * files the C library's "files" source reads, read here: its lookups allocate (glibc's open the file with stdio), and
- * other sources it may be set up with (LDAP, systemd's users) aren't asked. Elsewhere, the C library's lookups, into
- * a buffer here. */
+/* A user's name, or home (want_dir), by id or with a name by name; with group, a group's name by id: the C library's
+ * answer, as CPython's pwd and grp modules ask for it. out gets it, or is empty with SP_ERR_NOT_FOUND (no such entry)
+ * or SP_ERR_TOO_LONG (one past SP_PATH_MAX, or an entry past the buffer here, like a group of many members).
+ *
+ * The C library's lookups allocate (glibc's open the file with stdio, and load its sources), so where glibc's answer
+ * is the file's, the file is read here: when /etc/nsswitch.conf has files as the database's first source, an entry
+ * found there, and as its only source, no entry there too. Any other source (LDAP, sssd, systemd's users) is asked
+ * through the C library, as Go asks it for host names in a configuration it can't follow itself. */
 static void sp_priv_user_db(bool group, const char *name, size_t name_len, unsigned long id, bool want_dir,
                             SpTerm *out) {
-#if defined(__linux__) && !defined(__ANDROID__)
-    sp_priv_db_find(group ? "/etc/group" : "/etc/passwd", group ? 2 : 3, name, name_len, id, want_dir ? 5 : 0, out);
-#else
+#ifdef SP_PRIV_GLIBC
+    int files = sp_priv_nss_files("/etc/nsswitch.conf", group ? "group" : "passwd");
+    if (files > 0)
+        sp_priv_db_find(group ? "/etc/group" : "/etc/passwd", group ? 2 : 3, name, name_len, id, want_dir ? 5 : 0, out);
+    if (files == 2 || (files == 1 && out->error != SP_ERR_NOT_FOUND))
+        return;
+#endif
     out->len = 0;
     out->error = SP_ERR_NOT_FOUND;
     out->buf[0] = '\0';
@@ -3862,7 +3920,6 @@ static void sp_priv_user_db(bool group, const char *name, size_t name_len, unsig
     if (out->len > 0)
         memcpy(out->buf, found, out->len);
     out->buf[out->len] = '\0';
-#endif
 }
 #endif
 

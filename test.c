@@ -1273,7 +1273,7 @@ static size_t count_parents(const SpPath *p) {
 #define TEST_ASAN 1
 #endif
 #endif
-#if defined(__linux__) && defined(__GLIBC__) && !defined(__cplusplus) && !defined(__SANITIZE_ADDRESS__) && !defined(TEST_ASAN)
+#if defined(SP_PRIV_GLIBC) && !defined(__cplusplus) && !defined(__SANITIZE_ADDRESS__) && !defined(TEST_ASAN)
 #define TEST_HEAP 1
 #ifdef __clang__
 #pragma clang diagnostic ignored "-Wreserved-identifier"
@@ -2996,10 +2996,11 @@ int main(void) {
     ASSERT(group_str.error == SP_ERR_UNSUPPORTED && group_str.len == 0);
 #endif
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#ifdef SP_PRIV_GLIBC
     /* The user database as glibc's "files" source reads it, on files written here: what glibc's lookups answer for
      * them, line by line (a comment, blanks, NIS's names, numbers that aren't, a line short of fields, a repeated name,
-     * a last line with no newline), then a line longer than a read and a home longer than a path */
+     * a last line with no newline), then a line longer than a read and a home longer than a path. Then when
+     * /etc/nsswitch.conf makes the file glibc's answer. */
     {
         char db_dir[64];
         snprintf(db_dir, sizeof(db_dir), "./test_userdb_%ld", pid);
@@ -3090,6 +3091,28 @@ int main(void) {
         SpPath db_missing = sp_join_one(&db_base, "missing");
         sp_priv_db_find(sp_str(&db_missing), 3, NULL, 0, 0, 0, &found);
         ASSERT(found.error == SP_ERR_NOT_FOUND);
+
+        /* 2: files alone answers; 1: files first answers what it finds; 0: the C library answers */
+        static const struct {
+            const char *text;
+            int passwd, group;
+        } nss_confs[] = {{"passwd: files\ngroup: files\n", 2, 2},
+                         {"passwd:         files systemd\ngroup:          files systemd\n", 1, 1},
+                         {"  passwd :files sss\ngroup:files", 1, 2},
+                         {"passwd: files [NOTFOUND=return] ldap\ngroup: files[SUCCESS=continue] ldap\n", 0, 0},
+                         {"passwd: sss files\ngroup: compat\n", 0, 0},
+                         {"passwd: filesx\ngroup: files_db\n", 0, 0},
+                         {"#passwd: ldap\nPasswd: ldap\npasswd: files\n# group: files\n", 2, 0},
+                         {"passwd: files\npasswd: ldap\ngroup:\n", 0, 0},
+                         {"passwd: files # local\ngroup: files\t\r\n", 1, 2},
+                         {"hosts: files dns\n", 0, 0}};
+        SpPath db_conf = sp_join_one(&db_base, "nsswitch.conf");
+        for (size_t i = 0; i < ARRAY_LEN(nss_confs); i++) {
+            ASSERT(sp_write_file(&db_conf, nss_confs[i].text, strlen(nss_confs[i].text)).error == SP_OK);
+            ASSERT(sp_priv_nss_files(sp_str(&db_conf), "passwd") == nss_confs[i].passwd);
+            ASSERT(sp_priv_nss_files(sp_str(&db_conf), "group") == nss_confs[i].group);
+        }
+        ASSERT(sp_priv_nss_files(sp_str(&db_missing), "passwd") == 0);
         ASSERT(sp_remove(&db_base, recursive_opts(false)) == SP_OK);
     }
 #endif
@@ -3544,10 +3567,29 @@ int main(void) {
 
         SpPath heap_file = sp_join(&heap_deep, "file_000.txt");
         SpStatResult heap_st = sp_stat(&heap_file, true);
+
+        /* The user database allocates nothing where glibc's answer is the file's: files first in /etc/nsswitch.conf,
+         * and the entries there. Elsewhere its answer comes from the C library, as CPython's does. */
+        heap_armed = 0;
+        SpTerm heap_probe;
+        bool heap_db = sp_priv_nss_files("/etc/nsswitch.conf", "passwd") > 0;
+        heap_db = heap_db && sp_priv_nss_files("/etc/nsswitch.conf", "group") > 0;
+        sp_priv_db_find("/etc/passwd", 3, NULL, 0, heap_st.sp_uid, 0, &heap_probe);
+        heap_db = heap_db && heap_probe.error == SP_OK;
+        sp_priv_db_find("/etc/passwd", 3, NULL, 0, getuid(), 5, &heap_probe);
+        heap_db = heap_db && heap_probe.error == SP_OK;
+        sp_priv_db_find("/etc/passwd", 3, "root", 4, 0, 5, &heap_probe);
+        heap_db = heap_db && heap_probe.error == SP_OK;
+        sp_priv_db_find("/etc/group", 2, NULL, 0, heap_st.sp_gid, 0, &heap_probe);
+        heap_db = heap_db && heap_probe.error == SP_OK;
+        if (!heap_db)
+            printf("  the user database here is NSS's beyond its files: user lookups not counted\n");
+        heap_armed = heap_db;
         SpTerm heap_owner = sp_owner(&heap_file, true);
         SpTerm heap_group = sp_group(&heap_file, true);
         SpPath heap_tilde = sp_path("~root/x");
         SpPath heap_root_x = sp_expanduser(&heap_tilde);
+        heap_armed = 1;
 
         /* The other families on files: links, metadata, moves, reading, URIs */
         SpPath heap_hard = sp_join(&heap_top, "hard");
@@ -3573,7 +3615,7 @@ int main(void) {
         const char *heap_env_home = getenv("HOME");
         snprintf(heap_saved_home, sizeof(heap_saved_home), "%s", heap_env_home ? heap_env_home : "");
         ASSERT(unsetenv("HOME") == 0);
-        heap_armed = 1;
+        heap_armed = heap_db;
         SpPath heap_home = sp_home(SP_FLAVOR_NATIVE);
         heap_armed = 0;
         if (heap_env_home)
@@ -3606,20 +3648,20 @@ int main(void) {
         ASSERT(heap_deep_cwd.error == SP_ERR_TOO_LONG);
 
         /* The same answers as glibc's lookups */
-        static char heap_db[16384];
+        static char heap_db_buf[16384];
         struct passwd heap_pw;
         struct passwd *heap_pwr = NULL;
         struct group heap_gr;
         struct group *heap_grr = NULL;
         ASSERT(heap_st.error == SP_OK);
-        ASSERT(getpwuid_r((uid_t)heap_st.sp_uid, &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        ASSERT(getpwuid_r((uid_t)heap_st.sp_uid, &heap_pw, heap_db_buf, sizeof(heap_db_buf), &heap_pwr) == 0 && heap_pwr);
         ASSERT_TERM(heap_owner, heap_pw.pw_name);
-        ASSERT(getgrgid_r((gid_t)heap_st.sp_gid, &heap_gr, heap_db, sizeof(heap_db), &heap_grr) == 0 && heap_grr);
+        ASSERT(getgrgid_r((gid_t)heap_st.sp_gid, &heap_gr, heap_db_buf, sizeof(heap_db_buf), &heap_grr) == 0 && heap_grr);
         ASSERT_TERM(heap_group, heap_gr.gr_name);
-        ASSERT(getpwuid_r(getuid(), &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        ASSERT(getpwuid_r(getuid(), &heap_pw, heap_db_buf, sizeof(heap_db_buf), &heap_pwr) == 0 && heap_pwr);
         SpPath heap_expected = sp_path(heap_pw.pw_dir);
         ASSERT(heap_home.error == SP_OK && sp_path_eq(&heap_home, &heap_expected));
-        ASSERT(getpwnam_r("root", &heap_pw, heap_db, sizeof(heap_db), &heap_pwr) == 0 && heap_pwr);
+        ASSERT(getpwnam_r("root", &heap_pw, heap_db_buf, sizeof(heap_db_buf), &heap_pwr) == 0 && heap_pwr);
         heap_expected = sp_path(heap_pw.pw_dir);
         heap_expected = sp_join(&heap_expected, "x");
         ASSERT(heap_root_x.error == SP_OK && sp_path_eq(&heap_root_x, &heap_expected));
