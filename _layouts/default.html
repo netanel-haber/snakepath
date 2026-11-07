@@ -77,11 +77,11 @@
       background: rgba(0, 0, 0, 0.1);
       width: 100%;
       border-bottom: 1px dashed #b5e853;
-      padding: 0.75rem 0;
+      padding: 0.5rem 0;
       margin: 0 0 0.75rem 0;
     }
-    .hero { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 2rem; align-items: center; }
-    .hero .logo { display: block; height: 180px; width: auto; }
+    .hero { display: grid; grid-template-columns: 250px minmax(0, 1fr); column-gap: 1.5rem; align-items: center; }
+    .hero .logo { display: block; width: 250px; height: auto; }
     .hero p { margin: 0 0 0.5rem; max-width: 60em; }
     .hero .title { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1.25rem; }
     .hero #downloads { margin: 0; }
@@ -172,11 +172,11 @@
     #main_content details { margin-bottom: 0.3rem; }
     #main_content #build--test, #build--test + div.highlighter-rouge { display: inline-block; vertical-align: middle; margin: 0 0.75rem 0.6rem 0; }
     #build--test + div.highlighter-rouge pre { margin: 0; }
-    #main_content > p:has(> img[src$="snakepath.png"]) { display: none; }
+    #main_content > p:has(> img[src$="snakepath.gif"]) { display: none; }
     @media (max-width: 700px) {
       .container { padding: 0 1rem; }
       .hero { grid-template-columns: 1fr; row-gap: 0.75rem; }
-      .hero .logo { height: 140px; }
+      .hero .logo { height: auto; width: 100%; }
     }
     @media (min-width: 1700px) { html { font-size: 112.5%; } }
   </style>
@@ -187,7 +187,9 @@
   {%- assign parts = content | split: "<!-- The site shows the text above in its header, beside the logo. -->" %}
   <header>
     <div class="container hero">
-      <img class="logo" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+      <snakepath-toy controls>
+        <img class="logo" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+      </snakepath-toy>
       <div>
         <div class="title">
           <a id="a-title" href="/">
@@ -208,6 +210,7 @@
 {{ parts[1] }}
     </section>
   </div>
+  <script type="module" src="./toy.js"></script>
   <!-- Cloudflare Web Analytics -->
   <script defer src='https://static.cloudflareinsights.com/beacon.min.js'
     data-cf-beacon='{"token": "3f373ef649f141d28ac1f0fae75e965f"}'></script><!-- End Cloudflare Web Analytics -->
