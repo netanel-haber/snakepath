@@ -1265,6 +1265,40 @@ static size_t count_parents(const SpPath *p) {
 #define test_getpid getpid
 #endif
 
+/* glibc lets a program replace malloc and calls the replacement from inside the C library too, so while heap_armed is
+ * set every heap allocation in the process is counted, the library's and the OS calls' it makes. Not under the
+ * sanitizers, which replace malloc themselves, nor in C++, where glibc declares malloc noexcept. */
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define TEST_ASAN 1
+#endif
+#endif
+#if defined(__linux__) && defined(__GLIBC__) && !defined(__cplusplus) && !defined(__SANITIZE_ADDRESS__) && !defined(TEST_ASAN)
+#define TEST_HEAP 1
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wreserved-identifier"
+#endif
+extern void *__libc_malloc(size_t size);
+extern void *__libc_calloc(size_t count, size_t size);
+extern void *__libc_realloc(void *ptr, size_t size);
+static long heap_armed, heap_calls;
+
+void *malloc(size_t size) {
+    heap_calls += heap_armed;
+    return __libc_malloc(size);
+}
+
+void *calloc(size_t count, size_t size) {
+    heap_calls += heap_armed;
+    return __libc_calloc(count, size);
+}
+
+void *realloc(void *ptr, size_t size) {
+    heap_calls += heap_armed;
+    return __libc_realloc(ptr, size);
+}
+#endif
+
 static int tests_run = 0;
 static char test_dir_mkdir_temp[64];
 static char test_dir_mkdir_nested[64];
@@ -3345,6 +3379,75 @@ int main(void) {
 #endif
     printf("  recursive remove tests OK\n");
 
+#ifdef TEST_HEAP
+    /* Every listing (iterdir, glob, walk, copy, recursive remove) and walk's sorting, which glibc's opendir and qsort
+     * would allocate for: a tree with more names in a directory than qsort sorts on its stack, deep enough for listings
+     * to nest. User and group names are left out: glibc's lookups open the user database with stdio. */
+    printf("\nheap tests:\n");
+    {
+        char heap_name[64];
+        snprintf(heap_name, sizeof(heap_name), "./test_heap_%ld", pid);
+        SpPath heap_top = sp_path(heap_name);
+        SpPath heap_copy = sp_join(&heap_top, "copy");
+        SpPath heap_tree = sp_join(&heap_top, "tree");
+        SpPath heap_deep = sp_join(&heap_tree, "a", "b", "c");
+        SpPath heap_link = sp_join(&heap_tree, "link");
+        SpPath heap_target = sp_path("a");
+        SpLinkOptions heap_symlink = {false, true};
+        static char heap_names[1 << 16];
+        char heap_uri[SP_PATH_MAX * 3];
+        size_t heap_listed = 0;
+        size_t heap_globbed = 0;
+        size_t heap_walked = 0;
+
+        heap_armed = 1;
+        ASSERT(sp_mkdir(&heap_deep, 0755, mkdir_opts(true, false, SP_MODE_DIR)) == SP_OK);
+        for (int i = 0; i < 300; i++) {
+            char name[32];
+            snprintf(name, sizeof(name), "file_%03d.txt", i);
+            SpPath file = sp_join(i % 2 ? &heap_tree : &heap_deep, name);
+            ASSERT(sp_write_file(&file, name, strlen(name)).error == SP_OK);
+        }
+        bool heap_links = sp_link_to(&heap_link, &heap_target, heap_symlink) == SP_OK;
+
+        SP_ITERDIR_FOREACH(&heap_tree, heap_entry) {
+            heap_listed += heap_entry.len > 0;
+        }
+        SpGlobOptions heap_rglob = {true, true, SP_CASE_DEFAULT};
+        SP_GLOB_FOREACH(&heap_tree, "*.txt", heap_rglob, heap_match) {
+            heap_globbed += heap_match.len > 0;
+        }
+        for (int bottom_up = 0; bottom_up < 2; bottom_up++) {
+            SpWalkIter it = sp_walk_begin(&heap_tree, walk_opts(bottom_up == 1, true), heap_names, sizeof(heap_names));
+            for (SpWalkEntry *e; (e = sp_walk_next(&it)) != NULL;) {
+                heap_walked += e->filename_count;
+                for (size_t i = 1; i < e->filename_count; i++)
+                    ASSERT(strcmp(e->filenames[i - 1], e->filenames[i]) < 0);
+            }
+            ASSERT(it.error == SP_OK);
+            sp_walk_end(&it);
+        }
+        SpCopyOptions heap_copy_opts = {false, true, false};
+        SpPath heap_copied = sp_copy(&heap_tree, &heap_copy, heap_copy_opts);
+        SpPath heap_resolved = sp_resolve(&heap_deep, true);
+        SpPath heap_home = sp_home(SP_FLAVOR_NATIVE);
+        SpPath heap_cwd = sp_cwd(SP_FLAVOR_NATIVE);
+        SpError heap_uri_error = sp_as_uri(&heap_resolved, heap_uri, sizeof(heap_uri));
+        SpError heap_removed = sp_remove(&heap_top, recursive_opts(false));
+        heap_armed = 0;
+
+        ASSERT(heap_listed == (heap_links ? 152 : 151));
+        ASSERT(heap_globbed == (heap_links ? 450 : 300));
+        ASSERT(heap_walked == 2 * (heap_links ? 450 : 300));
+        ASSERT(heap_copied.error == SP_OK && heap_resolved.error == SP_OK && heap_home.error == SP_OK && heap_cwd.error == SP_OK);
+        ASSERT(heap_uri_error == SP_OK && heap_removed == SP_OK);
+        if (heap_calls != 0)
+            fprintf(stderr, "  %ld heap allocations\n", heap_calls);
+        ASSERT(heap_calls == 0);
+    }
+    printf("  heap tests OK\n");
+#endif
+
     test_errors(pid);
 
     /* ============ Struct Size Tests ============ */
@@ -3377,10 +3480,15 @@ int main(void) {
     ASSERT_SIZE(sizeof(SpSuffixes), 272);
     ASSERT_SIZE(sizeof(SpStatResult), 104);
     ASSERT_SIZE(sizeof(SpPathInfo), 8);
-    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 48);
+    ASSERT_SIZE(sizeof(SpIterdirIter), sizeof(SpPath) + 40 + sizeof(SpPrivListing));
     ASSERT_SIZE(sizeof(SpWalkEntry), sizeof(SpPath) + 40);
     ASSERT_SIZE(sizeof(SpWalkIter), sizeof(SpWalkEntry) + 48);
-    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * 24);
+#ifdef __linux__
+    ASSERT_SIZE(sizeof(SpPrivListing), 288); /* a descriptor, and one getdents64 record of a 255-byte name */
+#else
+    ASSERT_SIZE(sizeof(SpPrivListing), 8);
+#endif
+    ASSERT_SIZE(sizeof(SpGlobIter), sizeof(SpPath) + 280 + SP_GLOB_MAX_DEPTH * (16 + sizeof(SpPrivListing)));
 #endif
 
     printf("  struct size tests OK\n");

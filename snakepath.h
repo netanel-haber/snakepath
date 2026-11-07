@@ -1,6 +1,8 @@
 /* snakepath.h - C99 pathlib port, STB-style header-only library
  * No mallocs. POSIX and Windows compatible.
- * Note: OS functions (opendir/closedir, stat, getcwd, etc.) may allocate internally.
+ * Directories are listed into snakepath's own memory: getdents64 on Linux, NtQueryDirectoryFile on Windows. What still
+ * allocates does so inside the OS: the C library's user and group lookups (~user, owner, group), Windows' path calls,
+ * and opendir on other POSIX systems, which have no other way to list a directory.
  *
  * Usage:
  *   #define SNAKEPATH_IMPLEMENTATION
@@ -238,13 +240,27 @@ typedef struct {
     } priv_;
 } SpPathInfo;
 
+/* A directory being listed, read into memory of its own. On Linux: its descriptor and the getdents64 records read from
+ * it but not given out yet, at most one entry's worth (a record for a 255-byte name), so that a glob's nested listings
+ * stay small. On Windows: its handle, read one entry at a time. On other POSIX systems, whose only listing is
+ * opendir's: the DIR. */
+typedef struct {
+#if defined(__linux__)
+    int fd; /* plus one: 0 for none, so a zeroed listing is closed */
+    unsigned short pos, end;
+    char records[280];
+#else
+    void *handle;
+#endif
+} SpPrivListing;
+
 typedef struct {
     SpPath dir;
     SpError error;   /* why the listing ended early (or never started) */
     SpPathInfo info; /* of the entry sp_iterdir_next gave last */
     SpStr name; /* that entry's name (DirEntry.name): the end of its path, NUL-terminated, valid while that path is */
     struct {
-        void *handle;
+        SpPrivListing listing;
         bool done;
     } priv_;
 } SpIterdirIter;
@@ -288,7 +304,7 @@ typedef struct {
         SpPath path;  /* each frame's directory is a prefix of it */
         /* Each frame matches pattern[from..to) below path[0..root_len), listing path[0..path_len). */
         struct {
-            void *handle;
+            SpPrivListing listing;
             uint32_t path_len, from, to, root_len; /* SP_PATH_MAX and SP_GLOB_PATTERN_MAX lengths */
         } stack[SP_GLOB_MAX_DEPTH];
     } priv_;
@@ -559,12 +575,16 @@ typedef HANDLE SpPrivFile;
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h> /* For SYS_getdents64 */
+#else
 #include <dirent.h>
-#include <stdlib.h> /* For getenv, qsort */
+#endif
+#include <stdlib.h> /* For getenv */
 #include <fcntl.h>  /* For O_CREAT and, where the headers show it, fchmodat's AT_SYMLINK_NOFOLLOW */
 #include <utime.h>  /* For utime() */
-#include <pwd.h>    /* For getpwuid, getpwnam */
-#include <grp.h>    /* For getgrgid */
+#include <pwd.h>    /* For getpwuid_r, getpwnam_r */
+#include <grp.h>    /* For getgrgid_r */
 #ifdef __linux__
 #include <sys/ioctl.h>
 #include <sys/sendfile.h>
@@ -597,8 +617,15 @@ extern int gethostname(char *name, size_t len);
 extern int openat(int dir_fd, const char *path, int flags, ...);
 extern int unlinkat(int dir_fd, const char *path, int flags);
 extern int fstatat(int dir_fd, const char *path, struct stat *buf, int flags);
+#ifdef __linux__
+extern long syscall(long number, ...);
+#else
 extern DIR *fdopendir(int fd);
 extern int dirfd(DIR *dir);
+#endif
+extern int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t size, struct passwd **result);
+extern int getpwnam_r(const char *name, struct passwd *pw, char *buf, size_t size, struct passwd **result);
+extern int getgrgid_r(gid_t gid, struct group *gr, char *buf, size_t size, struct group **result);
 #endif
 
 #endif
@@ -2312,20 +2339,74 @@ static DWORD sp_priv_final_path(const SpPath *p, SpPath *out) {
     return e;
 }
 
-/* ntpath._findfirstfile: the name of the path's last part as the directory spells it */
+/* A directory entry as NtQueryDirectoryFile gives it: FILE_FULL_DIR_INFO, with room for a 255-character name. Its
+ * EaSize is a reparse point's tag, as FindFirstFile's dwReserved0. */
+typedef union {
+    FILE_FULL_DIR_INFO info;
+    unsigned char bytes[sizeof(FILE_FULL_DIR_INFO) + 255 * sizeof(WCHAR)];
+} SpPrivDirEntry;
+
+typedef LONG(NTAPI *SpPrivQueryDirectory)(HANDLE file, HANDLE event, void *apc, void *apc_context, void *io_status,
+                                          void *info, ULONG size, int info_class, BOOLEAN single, void *mask,
+                                          BOOLEAN restart);
+
+/* The next entry of an open directory, or with a mask its first entry of that name: SP_OK, or SP_ERR_NOT_FOUND at the
+ * end. This is FindFirstFile's own call, ntdll's NtQueryDirectoryFile, without the memory FindFirstFile allocates: it
+ * reads one entry at a time into the caller's. ntdll is in every process, so it is looked up rather than linked. */
+static SpError sp_priv_query_dir(HANDLE dir, const wchar_t *mask, size_t mask_len, SpPrivDirEntry *entry) {
+    struct {
+        USHORT len;
+        USHORT size;
+        const wchar_t *buf;
+    } name = {SP_PRIV_CAST(USHORT, mask_len * sizeof(WCHAR)), SP_PRIV_CAST(USHORT, mask_len * sizeof(WCHAR)), mask};
+    struct {
+        void *status;
+        ULONG_PTR information;
+    } io = {SP_PRIV_NULL, 0};
+    SpPrivQueryDirectory query;
+    FARPROC proc = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryDirectoryFile");
+    memcpy(&query, &proc, sizeof(query));
+    ULONG status = SP_PRIV_CAST(ULONG, query(dir, SP_PRIV_NULL, SP_PRIV_NULL, SP_PRIV_NULL, &io, entry, sizeof(*entry),
+                                             2 /* FileFullDirectoryInformation */, TRUE, mask ? &name : SP_PRIV_NULL,
+                                             mask ? TRUE : FALSE));
+
+    /* STATUS_NO_MORE_FILES and STATUS_NO_SUCH_FILE (an empty drive root has no "." entry) end it; a file isn't a
+     * directory (STATUS_INVALID_PARAMETER), and a name past 255 characters doesn't fit (STATUS_BUFFER_OVERFLOW) */
+    return status == 0                                      ? SP_OK
+           : status == 0x80000006u || status == 0xC000000Fu ? SP_ERR_NOT_FOUND
+           : status == 0xC000000Du                          ? SP_ERR_NOT_DIR
+           : status == 0x80000005u                          ? SP_ERR_TOO_LONG
+           : status == 0xC0000022u                          ? SP_ERR_PERMISSION
+                                                            : SP_ERR_IO;
+}
+
+/* ntpath._findfirstfile: the name of the path's last part as the directory spells it. As FindFirstFile, the directory
+ * is asked for the name, here without its wildcards (a name can't have them, so it would find another). */
 static bool sp_priv_real_name(const SpPath *p, SpPath *name) {
     SpPrivNative native;
     if (sp_priv_native(p, &native) != SP_OK)
         return false;
 
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW(native.path, &fd);
-    if (h == INVALID_HANDLE_VALUE)
+    size_t len = wcslen(native.buf);
+    size_t base = len;
+    while (base > 0 && !wcschr(L"\\/:", native.buf[base - 1]))
+        base--;
+    wchar_t last[256];
+    if (base == len || len - base >= SP_ARRAY_LEN(last) || wcspbrk(native.buf + base, L"*?<>\""))
         return false;
+    memcpy(last, native.buf + base, (len - base) * sizeof(WCHAR));
+    native.buf[base] = L'\0'; /* the directory, its separator kept */
 
-    FindClose(h);
+    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const wchar_t *parent = base > 0 ? native.buf : L".";
+    HANDLE dir = CreateFileW(parent, FILE_LIST_DIRECTORY, share, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    SpPrivDirEntry entry;
+    bool found = dir != INVALID_HANDLE_VALUE && sp_priv_query_dir(dir, last, len - base, &entry) == SP_OK;
+    if (dir != INVALID_HANDLE_VALUE)
+        CloseHandle(dir);
     *name = sp_priv_error_path(p->flavor, SP_OK);
-    return sp_priv_from_wide(fd.cFileName, wcslen(fd.cFileName), name->buf, SP_PATH_MAX, &name->len) == SP_OK;
+    return found && sp_priv_from_wide(entry.info.FileName, entry.info.FileNameLength / sizeof(WCHAR), name->buf,
+                                      SP_PATH_MAX, &name->len) == SP_OK;
 }
 
 /* One step of ntpath's _readlink_deep: 1 when path became its link's target (joined to the link's directory when
@@ -2708,12 +2789,14 @@ static SpError sp_priv_remove_impl(const SpPath *p, bool is_dir) {
     DWORD attrs = GetFileAttributesW(native.path);
     DWORD dir_link = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
     if (!is_dir && attrs != INVALID_FILE_ATTRIBUTES && (attrs & dir_link) == dir_link) {
-        WIN32_FIND_DATAW fd;
-        HANDLE find = FindFirstFileW(native.path, &fd);
-        if (find != INVALID_HANDLE_VALUE) {
-            FindClose(find);
-            is_dir = fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT;
-        }
+        DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+        DWORD flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+        HANDLE h = CreateFileW(native.path, FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
+        FILE_ATTRIBUTE_TAG_INFO tag = {0, 0};
+        if (h != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)))
+            is_dir = tag.ReparseTag == IO_REPARSE_TAG_SYMLINK || tag.ReparseTag == IO_REPARSE_TAG_MOUNT_POINT;
+        if (h != INVALID_HANDLE_VALUE)
+            CloseHandle(h);
     }
     bool ok = (is_dir ? RemoveDirectoryW(native.path) : DeleteFileW(native.path)) != 0;
 #else
@@ -2880,47 +2963,62 @@ const char *sp_error_str(SpError error) {
     return i < SP_ARRAY_LEN(messages) ? messages[i] : "Unknown error";
 }
 
-static void sp_priv_readdir_close(void **handle) {
-    if (!*handle)
-        return;
-#ifdef SP_WINDOWS
-    FindClose(*handle);
+static void sp_priv_readdir_close(SpPrivListing *listing) {
+#if defined(SP_WINDOWS)
+    if (listing->handle)
+        CloseHandle(listing->handle);
+    listing->handle = SP_PRIV_NULL;
+#elif defined(__linux__)
+    if (listing->fd != 0)
+        close(listing->fd - 1);
+    listing->fd = 0;
 #else
-    closedir(SP_PRIV_CAST(DIR *, *handle));
+    if (listing->handle)
+        closedir(SP_PRIV_CAST(DIR *, listing->handle));
+    listing->handle = SP_PRIV_NULL;
 #endif
-    *handle = SP_PRIV_NULL;
 }
 
-/* A directory to list through one already open: its handle, the length of its text in the path, and whether a link at
- * the end of the rest may be followed (POSIX's openat, which saves looking the whole path up again and can't be sent
+/* A directory to list through one already open: its listing, the length of its text in the path, and whether a link
+ * at the end of the rest may be followed (POSIX's openat, which saves looking the whole path up again and can't be sent
  * elsewhere by a link swapped into it; Windows lists by path) */
 typedef struct {
-    void *handle;
+    const SpPrivListing *listing;
     size_t len;
     bool nofollow;
 } SpPrivDirAt;
 
-/* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
- * sp_priv_join_child builds it), info what the listing says of its type (as os.scandir's DirEntry: the link itself,
- * and following it only when it isn't a symlink), and the name length is returned. At the end it returns 0, and out is
- * an empty path whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry
- * too long to join, which ends the listing). */
 #ifndef SP_WINDOWS
-/* dir for the *at functions: the descriptor of through's handle and the rest of dir's text, or else the working
- * directory and all of it */
+/* A listing's descriptor, -1 when it is closed */
+static int sp_priv_listing_fd(const SpPrivListing *listing) {
+#ifdef __linux__
+    return listing->fd - 1;
+#else
+    return listing->handle ? dirfd(SP_PRIV_CAST(DIR *, listing->handle)) : -1;
+#endif
+}
+
+/* dir for the *at functions: the descriptor of through's listing and the rest of dir's text, or else (no listing, or
+ * a closed one) the working directory and all of it */
 static int sp_priv_at(const SpPrivDirAt *through, const SpPath *dir, const char **rest) {
-    if (!through || !through->handle) {
+    int fd = through && through->listing ? sp_priv_listing_fd(through->listing) : -1;
+    if (fd < 0) {
         *rest = dir->len > 0 ? dir->buf : ".";
         return AT_FDCWD;
     }
     for (*rest = dir->buf + through->len; **rest == '/';)
         (*rest)++;
     *rest = **rest ? *rest : ".";
-    return dirfd(SP_PRIV_CAST(DIR *, through->handle));
+    return fd;
 }
 #endif
 
-static size_t sp_priv_readdir_next(void **handle, const SpPrivDirAt *through, const SpPath *dir, SpPath *out,
+/* The next entry of dir other than "." and "..", opening the listing on the first call: out gets dir / name (as
+ * sp_priv_join_child builds it), info what the listing says of its type (as os.scandir's DirEntry: the link itself,
+ * and following it only when it isn't a symlink), and the name length is returned. At the end it returns 0, and out is
+ * an empty path whose error says why: SP_OK when the listing is complete, or what failed (SP_ERR_TOO_LONG for an entry
+ * too long to join, which ends the listing). */
+static size_t sp_priv_readdir_next(SpPrivListing *listing, const SpPrivDirAt *through, const SpPath *dir, SpPath *out,
                                    SpPathInfo *info) {
     char sep = dir->flavor == SP_FLAVOR_WINDOWS ? '\\' : '/';
     char last = dir->len > 0 ? dir->buf[dir->len - 1] : '/';
@@ -2941,72 +3039,98 @@ static size_t sp_priv_readdir_next(void **handle, const SpPrivDirAt *through, co
 #endif
     for (;;) {
 #ifdef SP_WINDOWS
-        WIN32_FIND_DATAW fd;
-        if (!*handle) {
+        /* Opened as FindFirstFile opens a listing, following a link at its end */
+        if (!listing->handle) {
             end = sp_priv_native(dir, &native);
-            size_t wlen = end == SP_OK ? wcslen(native.path) : 0;
-            if (end == SP_OK && wlen + 2 >= SP_PATH_MAX)
-                end = SP_ERR_TOO_LONG;
+            DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+            HANDLE h = end == SP_OK ? CreateFileW(native.path, FILE_LIST_DIRECTORY, share, NULL, OPEN_EXISTING,
+                                                  FILE_FLAG_BACKUP_SEMANTICS, NULL)
+                                    : INVALID_HANDLE_VALUE;
+            if (end == SP_OK && h == INVALID_HANDLE_VALUE)
+                end = sp_priv_last_error();
             if (end != SP_OK)
                 break;
-            native.buf[wlen] = L'\\';
-            native.buf[wlen + 1] = L'*';
-            native.buf[wlen + 2] = L'\0';
-
-            /* Only an empty drive root has no "." entry to find. FindExInfoBasic skips the short 8.3 names, which nothing
-             * reads, and a large fetch asks the file system for more entries per call */
-            *handle = FindFirstFileExW(native.buf, FindExInfoBasic, &fd, FindExSearchNameMatch, SP_PRIV_NULL,
-                                       FIND_FIRST_EX_LARGE_FETCH);
-            if (*handle == INVALID_HANDLE_VALUE) {
-                *handle = SP_PRIV_NULL;
-                end = GetLastError() == ERROR_FILE_NOT_FOUND ? SP_OK : sp_priv_last_error();
-                break;
-            }
-        } else if (!FindNextFileW(*handle, &fd)) {
-            end = GetLastError() == ERROR_NO_MORE_FILES ? SP_OK : sp_priv_last_error();
+            listing->handle = h;
+        }
+        SpPrivDirEntry entry;
+        end = sp_priv_query_dir(listing->handle, SP_PRIV_NULL, 0, &entry);
+        if (end != SP_OK) {
+            end = end == SP_ERR_NOT_FOUND ? SP_OK : end;
             break;
         }
-        const wchar_t *wide = fd.cFileName;
-        if (wide[0] == L'.' && (wide[1] == L'\0' || (wide[1] == L'.' && wide[2] == L'\0')))
+        const wchar_t *wide = entry.info.FileName;
+        size_t wlen = entry.info.FileNameLength / sizeof(WCHAR);
+        if (wide[0] == L'.' && (wlen == 1 || (wlen == 2 && wide[1] == L'.')))
             continue;
 
         size_t n;
-        end = sp_priv_from_wide(wide, wcslen(wide), out->buf + at, SP_PATH_MAX - at, &n);
+        end = sp_priv_from_wide(wide, wlen, out->buf + at, SP_PATH_MAX - at, &n);
         if (end != SP_OK)
             break;
 
         /* Only a symlink is S_IFLNK, as in sp_stat; a junction is the directory it is */
-        bool symlink = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
-        unsigned int mode = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? SP_PRIV_IFDIR : SP_PRIV_IFREG;
+        DWORD attributes = entry.info.FileAttributes;
+        bool symlink = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) && entry.info.EaSize == IO_REPARSE_TAG_SYMLINK;
+        unsigned int mode = (attributes & FILE_ATTRIBUTE_DIRECTORY) ? SP_PRIV_IFDIR : SP_PRIV_IFREG;
         mode = symlink ? SP_PRIV_IFLNK : mode;
 #else
-        if (!*handle) {
+        if (sp_priv_listing_fd(listing) < 0) {
+            const char *rest;
+            int base = sp_priv_at(through, dir, &rest);
+            int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | (through && through->nofollow ? O_NOFOLLOW : 0);
             end = sp_priv_native(dir, &native);
-            if (end == SP_OK && through && (through->handle || through->nofollow)) {
-                const char *rest;
-                int base = sp_priv_at(through, dir, &rest);
-                int fd = openat(base, rest, O_RDONLY | O_DIRECTORY | O_CLOEXEC | (through->nofollow ? O_NOFOLLOW : 0));
-                *handle = fd >= 0 ? fdopendir(fd) : SP_PRIV_NULL;
-                if (fd >= 0 && !*handle) {
-                    end = sp_priv_last_error();
-                    close(fd);
-                }
-            } else if (end == SP_OK) {
-                *handle = opendir(native.path);
-            }
-            if (end == SP_OK && !*handle)
+            int fd = end == SP_OK ? openat(base, rest, flags) : -1;
+            if (end == SP_OK && fd < 0)
                 end = sp_priv_last_error();
             if (end != SP_OK)
                 break;
+#ifdef __linux__
+            listing->fd = fd + 1;
+            listing->pos = 0;
+            listing->end = 0;
+#else
+            listing->handle = fdopendir(fd);
+            if (!listing->handle) {
+                end = sp_priv_last_error();
+                close(fd);
+                break;
+            }
+#endif
         }
+
+#ifdef __linux__
+        /* A record: d_ino (8 bytes), d_off (8), d_reclen (2), d_type (1), then the NUL-terminated name. The kernel
+         * gives at least one whole record or fails, EINVAL for a buffer too small for it. */
+        if (listing->pos == listing->end) {
+            long got = syscall(SYS_getdents64, listing->fd - 1, listing->records, sizeof(listing->records));
+            if (got <= 0) {
+                end = got == 0 ? SP_OK : errno == EINVAL ? SP_ERR_TOO_LONG : sp_priv_last_error();
+                break;
+            }
+            listing->pos = 0;
+            listing->end = SP_PRIV_CAST(unsigned short, got);
+        }
+        const char *record = listing->records + listing->pos;
+        unsigned short reclen;
+        memcpy(&reclen, record + 16, sizeof(reclen));
+        listing->pos = SP_PRIV_CAST(unsigned short, listing->pos + reclen);
+        const char *name = record + 19;
+        unsigned int type = SP_PRIV_CAST(unsigned char, record[18]);
+#else
         errno = 0;
-        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, *handle));
+        struct dirent *de = readdir(SP_PRIV_CAST(DIR *, listing->handle));
         if (!de) {
             end = errno != 0 ? sp_priv_last_error() : SP_OK;
             break;
         }
-
         const char *name = de->d_name;
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(DT_UNKNOWN)
+        unsigned int type = de->d_type;
+#else
+        unsigned int type = 0;
+#endif
+#endif
+
         size_t n = strlen(name);
         if (name[0] == '.' && (n == 1 || (n == 2 && name[1] == '.')))
             continue;
@@ -3017,11 +3141,7 @@ static size_t sp_priv_readdir_next(void **handle, const SpPrivDirAt *through, co
         memcpy(out->buf + at, name, n + 1);
 
         /* d_type is the file type bits shifted down (BSD's DTTOIF); DT_UNKNOWN, 0, leaves it to stat */
-#if defined(_DIRENT_HAVE_D_TYPE) || defined(DT_UNKNOWN)
-        unsigned int mode = SP_PRIV_CAST(unsigned int, de->d_type) << 12;
-#else
-        unsigned int mode = 0;
-#endif
+        unsigned int mode = type << 12;
 #endif
         out->len = at + n;
         info->priv_.lstat = mode != 0 ? 2 | mode : 0;
@@ -3152,21 +3272,18 @@ static SpError sp_priv_copy_tree(const SpPath *src, const SpPrivDirAt *at, SpPat
             err = sp_priv_link_to_impl(dst, &target, true, target_is_dir);
     } else if (type == SP_PRIV_IFDIR) {
         /* Children are listed before dst is created, so an unreadable src leaves no dst behind */
-        void *handle = SP_PRIV_NULL;
+        SpPrivListing listing = SP_PRIV_ZERO;
         SpPath child;
         SpPathInfo listed; /* unused: each child is stat()ed as a source */
         SpMkdirOptions plain = SP_PRIV_ZERO;
-        size_t n = sp_priv_readdir_next(&handle, at, src, &child, &listed);
+        size_t n = sp_priv_readdir_next(&listing, at, src, &child, &listed);
         err = n == 0 ? child.error : SP_OK;
         if (err == SP_OK)
             err = sp_mkdir(dst, SP_MODE_DIR, plain);
 
-        SpPrivDirAt parent;
-        parent.len = src->len;
-        parent.nofollow = !follow_symlinks;
+        SpPrivDirAt parent = {&listing, src->len, !follow_symlinks};
         for (size_t len = dst->len; err == SP_OK && n > 0;
-             n = sp_priv_readdir_next(&handle, at, src, &child, &listed)) {
-            parent.handle = handle;
+             n = sp_priv_readdir_next(&listing, at, src, &child, &listed)) {
             err = sp_priv_join_child(dst, child.buf + child.len - n, n);
             if (err == SP_OK)
                 err = sp_priv_copy_tree(&child, &parent, dst, follow_symlinks, preserve_metadata);
@@ -3175,7 +3292,7 @@ static SpError sp_priv_copy_tree(const SpPath *src, const SpPrivDirAt *at, SpPat
         }
         if (err == SP_OK)
             err = child.error; /* why the listing ended */
-        sp_priv_readdir_close(&handle);
+        sp_priv_readdir_close(&listing);
     } else {
         SpStatResult to_st = sp_stat(dst, true);
         if (st.error == SP_OK && to_st.error == SP_OK && st.sp_dev == to_st.sp_dev && st.sp_ino == to_st.sp_ino)
@@ -3278,21 +3395,20 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
     SpError err = SP_OK;
 #endif
 
-    void *listing = SP_PRIV_NULL;
+    SpPrivListing listing = SP_PRIV_ZERO;
     SpPath child;
     SpPathInfo info;
-    SpPrivDirAt here = {SP_PRIV_NULL, p->len, true};
+    SpPrivDirAt here = {&listing, p->len, true};
     child.error = SP_OK;
     for (int pass = 0; err == SP_OK; pass++) {
         bool removed = false;
         size_t n = sp_priv_readdir_next(&listing, through, p, &child, &info);
 #ifndef SP_WINDOWS
-        if (listing && (fstat(dirfd(SP_PRIV_CAST(DIR *, listing)), &opened) != 0 || opened.st_dev != seen.st_dev ||
-                        opened.st_ino != seen.st_ino))
+        int fd = sp_priv_listing_fd(&listing);
+        if (fd >= 0 && (fstat(fd, &opened) != 0 || opened.st_dev != seen.st_dev || opened.st_ino != seen.st_ino))
             err = SP_ERR_IO; /* CPython's "Cannot call rmtree on a symbolic link" */
 #endif
         for (; err == SP_OK && n > 0; n = sp_priv_readdir_next(&listing, through, p, &child, &info)) {
-            here.handle = listing;
             removed = true;
             if (sp_info(&child, &info, SP_DIR, false))
                 err = sp_priv_rmtree(&child, &here, false);
@@ -3300,8 +3416,7 @@ static SpError sp_priv_rmtree(const SpPath *p, const SpPrivDirAt *through, bool 
             else if ((err = sp_priv_remove_impl(&child, false)) == SP_ERR_NOT_FOUND)
                 err = SP_OK;
 #else
-            else if (unlinkat(dirfd(SP_PRIV_CAST(DIR *, listing)), child.buf + child.len - n, 0) != 0 &&
-                     errno != ENOENT)
+            else if (unlinkat(fd, child.buf + child.len - n, 0) != 0 && errno != ENOENT)
                 err = sp_priv_last_error();
 #endif
         }
@@ -3403,14 +3518,14 @@ static bool sp_priv_glob_wildcard(SpStr part) {
     return memchr(part.data, '*', part.len) || memchr(part.data, '?', part.len) || memchr(part.data, '[', part.len);
 }
 
-/* A frame deeper than SP_GLOB_MAX_DEPTH stops the glob with SP_ERR_LIMIT */
+/* A frame deeper than SP_GLOB_MAX_DEPTH stops the glob with SP_ERR_LIMIT. Its listing is closed: zeroed with the
+ * iterator, and closed whenever a frame is left. */
 static void sp_priv_glob_push(SpGlobIter *it, size_t from, size_t to, size_t root_len) {
     if (it->depth + 1 >= SP_GLOB_MAX_DEPTH) {
         it->error = SP_ERR_LIMIT;
         return;
     }
     it->depth++;
-    it->priv_.stack[it->depth].handle = SP_PRIV_NULL;
     it->priv_.stack[it->depth].path_len = SP_PRIV_CAST(uint32_t, it->priv_.path.len);
     it->priv_.stack[it->depth].from = SP_PRIV_CAST(uint32_t, from);
     it->priv_.stack[it->depth].to = SP_PRIV_CAST(uint32_t, to);
@@ -3536,7 +3651,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
          * this frame for a subdirectory it didn't stat as a link, doesn't follow one at its end */
         SpPrivDirAt below = SP_PRIV_ZERO;
         if (it->depth > 0) {
-            below.handle = it->priv_.stack[it->depth - 1].handle;
+            below.listing = &it->priv_.stack[it->depth - 1].listing;
             below.len = it->priv_.stack[it->depth - 1].path_len;
             below.nofollow = walk && !it->priv_.recurse_symlinks && it->priv_.stack[it->depth - 1].from == from &&
                              it->priv_.stack[it->depth - 1].to == to;
@@ -3545,11 +3660,11 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
         /* Like pathlib, a directory that can't be listed has no matches; an entry too long for a path is an error */
         SpPath entry;
         SpPathInfo info;
-        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].handle, &below, path, &entry, &info);
+        size_t n = sp_priv_readdir_next(&it->priv_.stack[it->depth].listing, &below, path, &entry, &info);
         if (n == 0 && entry.error == SP_ERR_TOO_LONG)
             it->error = SP_ERR_TOO_LONG;
         if (n == 0) {
-            sp_priv_readdir_close(&it->priv_.stack[it->depth].handle);
+            sp_priv_readdir_close(&it->priv_.stack[it->depth].listing);
             it->depth--;
             continue;
         }
@@ -3583,7 +3698,7 @@ bool sp_glob_next(SpGlobIter *it, SpPath *out) {
 
 void sp_glob_end(SpGlobIter *it) {
     for (; it->depth >= 0; it->depth--)
-        sp_priv_readdir_close(&it->priv_.stack[it->depth].handle);
+        sp_priv_readdir_close(&it->priv_.stack[it->depth].listing);
 }
 
 #ifdef SP_WINDOWS
@@ -3638,7 +3753,9 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
     return home;
 #else
     /* posixpath: HOME (else the passwd entry) for the current user, the passwd entry for others */
+    /* The entry's strings go in entry_buf (getpw*_r, as CPython's pwd module asks), not a buffer the C library keeps */
     const char *dir = ulen == 0 ? getenv("HOME") : SP_PRIV_NULL;
+    char entry_buf[SP_PATH_MAX + 1024];
     if (!dir) {
         char name[256];
         if (ulen >= sizeof(name))
@@ -3646,7 +3763,12 @@ static SpPath sp_priv_user_home(const char *user, size_t ulen, SpFlavor flavor) 
         memcpy(name, user, ulen);
         name[ulen] = '\0';
 
-        struct passwd *pw = ulen == 0 ? getpwuid(getuid()) : getpwnam(name);
+        struct passwd entry;
+        struct passwd *pw = SP_PRIV_NULL;
+        int failed = ulen == 0 ? getpwuid_r(getuid(), &entry, entry_buf, sizeof(entry_buf), &pw)
+                               : getpwnam_r(name, &entry, entry_buf, sizeof(entry_buf), &pw);
+        if (failed == ERANGE)
+            return sp_priv_error_path(flavor, SP_ERR_TOO_LONG);
         if (!pw || !pw->pw_dir)
             return sp_priv_error_path(flavor, SP_ERR_NO_HOME);
         dir = pw->pw_dir;
@@ -3696,10 +3818,16 @@ SpTerm sp_owner(const SpPath *p, bool follow_symlinks) {
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
     SpStatResult st = sp_stat(p, follow_symlinks);
-    struct passwd *pw = st.error == SP_OK ? getpwuid(st.sp_uid) : SP_PRIV_NULL;
+    struct passwd entry;
+    struct passwd *pw = SP_PRIV_NULL;
+    char entry_buf[SP_PATH_MAX + 1024];
+    int failed = st.error == SP_OK ? getpwuid_r(st.sp_uid, &entry, entry_buf, sizeof(entry_buf), &pw) : 0;
     const char *name = pw ? pw->pw_name : SP_PRIV_NULL;
     if (!name)
-        return sp_priv_term(NULL, 0, st.error != SP_OK ? st.error : SP_ERR_NOT_FOUND);
+        return sp_priv_term(NULL, 0,
+                            st.error != SP_OK  ? st.error
+                            : failed == ERANGE ? SP_ERR_TOO_LONG
+                                               : SP_ERR_NOT_FOUND);
 
     size_t len = strlen(name);
     return sp_priv_term(name, len, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
@@ -3713,10 +3841,16 @@ SpTerm sp_group(const SpPath *p, bool follow_symlinks) {
     return sp_priv_term(NULL, 0, p->error != SP_OK ? p->error : SP_ERR_UNSUPPORTED);
 #else
     SpStatResult st = sp_stat(p, follow_symlinks);
-    struct group *gr = st.error == SP_OK ? getgrgid(st.sp_gid) : SP_PRIV_NULL;
+    struct group entry;
+    struct group *gr = SP_PRIV_NULL;
+    char entry_buf[16384]; /* the members' names too: a large group past it is SP_ERR_TOO_LONG */
+    int failed = st.error == SP_OK ? getgrgid_r(st.sp_gid, &entry, entry_buf, sizeof(entry_buf), &gr) : 0;
     const char *name = gr ? gr->gr_name : SP_PRIV_NULL;
     if (!name)
-        return sp_priv_term(NULL, 0, st.error != SP_OK ? st.error : SP_ERR_NOT_FOUND);
+        return sp_priv_term(NULL, 0,
+                            st.error != SP_OK  ? st.error
+                            : failed == ERANGE ? SP_ERR_TOO_LONG
+                                               : SP_ERR_NOT_FOUND);
 
     size_t len = strlen(name);
     return sp_priv_term(name, len, len < SP_PATH_MAX ? SP_OK : SP_ERR_TOO_LONG);
@@ -3730,17 +3864,22 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
     SpPrivNative native;
     it.error = sp_priv_native(p, &native);
 #ifdef SP_WINDOWS
-    /* FindFirstFile opens the listing with its first entry, on the first next(): check now what it will see, the entry
-     * itself, so that like CPython's scandir only a directory or a link made as one lists (a link to a missing file, or
-     * in a loop, is not a directory) */
+    /* The listing opens on the first next(): check now what it will see, the entry itself, so that like CPython's
+     * scandir only a directory or a link made as one lists (a link to a missing file, or in a loop, is not a
+     * directory) */
     DWORD attributes = it.error == SP_OK ? GetFileAttributesW(native.path) : INVALID_FILE_ATTRIBUTES;
     if (it.error == SP_OK && attributes == INVALID_FILE_ATTRIBUTES)
         it.error = sp_priv_last_error();
     else if (it.error == SP_OK && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
         it.error = SP_ERR_NOT_DIR;
-#else
-    if (it.error == SP_OK && !(it.priv_.handle = opendir(native.path)))
+#elif defined(__linux__)
+    int fd = it.error == SP_OK ? open(native.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1;
+    if (it.error == SP_OK && fd < 0)
         it.error = sp_priv_last_error();
+    it.priv_.listing.fd = fd + 1;
+#else
+        if (it.error == SP_OK && !(it.priv_.listing.handle = opendir(native.path)))
+            it.error = sp_priv_last_error();
 #endif
     return it;
 }
@@ -3748,7 +3887,7 @@ SpIterdirIter sp_iterdir_begin(const SpPath *p) {
 bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
     if (it->error != SP_OK || it->priv_.done)
         return false;
-    size_t n = sp_priv_readdir_next(&it->priv_.handle, SP_PRIV_NULL, &it->dir, out, &it->info);
+    size_t n = sp_priv_readdir_next(&it->priv_.listing, SP_PRIV_NULL, &it->dir, out, &it->info);
     if (n > 0) {
         it->name = SP_PRIV_STR(out->buf + out->len - n, n);
         return true;
@@ -3760,7 +3899,7 @@ bool sp_iterdir_next(SpIterdirIter *it, SpPath *out) {
 }
 
 void sp_iterdir_end(SpIterdirIter *it) {
-    sp_priv_readdir_close(&it->priv_.handle);
+    sp_priv_readdir_close(&it->priv_.listing);
     it->priv_.done = true;
 }
 
@@ -3776,7 +3915,7 @@ typedef struct {
     size_t filename_count;
     char **listed; /* the subdirectories the listing found, sorted, whatever the caller does to dirnames */
     size_t listed_count;
-    void *handle; /* the listing, which its subdirectories open through (POSIX) */
+    SpPrivListing listing; /* which its subdirectories open through (POSIX) */
 } SpPrivWalkLevel;
 
 /* The entry shows a level's names */
@@ -3789,6 +3928,31 @@ static void sp_priv_walk_show(SpWalkEntry *e, const SpPrivWalkLevel *level) {
 
 static int sp_priv_walk_name_cmp(const void *a, const void *b) {
     return strcmp(*SP_PRIV_CAST(char *const *, a), *SP_PRIV_CAST(char *const *, b));
+}
+
+/* Names sorted in place, by bottom-up heapsort (qsort may allocate: glibc's does past 1 KB of pointers). Each name
+ * placed in the heap leaves a hole that sinks along the larger children to a leaf, and the name rises back from there:
+ * about one comparison per level, as many as a merge sort makes. */
+static void sp_priv_walk_sort(char **list, size_t n) {
+    for (size_t start = n / 2, end = n; end > 1;) {
+        char *name;
+        if (start > 0) {
+            name = list[--start]; /* building the heap */
+        } else {
+            name = list[--end]; /* the largest goes to the end, and the last name in its place */
+            list[end] = list[0];
+        }
+
+        size_t hole = start;
+        for (size_t child; (child = 2 * hole + 1) < end; hole = child) {
+            if (child + 1 < end && strcmp(list[child], list[child + 1]) < 0)
+                child++;
+            list[hole] = list[child];
+        }
+        for (; hole > start && strcmp(list[(hole - 1) / 2], name) < 0; hole = (hole - 1) / 2)
+            list[hole] = list[(hole - 1) / 2];
+        list[hole] = name;
+    }
 }
 
 /* Lists entry.dirpath into a new level on top of the buffer's stack (levels start at pointer-aligned offsets) and points
@@ -3807,16 +3971,16 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     SpPrivDirAt above = SP_PRIV_ZERO;
     if (it->priv_.level != SP_PRIV_CAST(size_t, -1)) {
         SpPrivWalkLevel *up = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, buf + it->priv_.level));
-        above.handle = up->handle;
+        above.listing = &up->listing;
         above.len = up->dir_len;
         above.nofollow = it->priv_.nofollow;
     }
 
     /* A directory or not as the listing says, like os.walk's scandir entries: a stat only for a link to follow */
-    void *handle = SP_PRIV_NULL;
+    SpPrivListing listing = SP_PRIV_ZERO;
     SpPath child;
     SpPathInfo info;
-    for (size_t n; (n = sp_priv_readdir_next(&handle, &above, &e->dirpath, &child, &info)) > 0; count++) {
+    for (size_t n; (n = sp_priv_readdir_next(&listing, &above, &e->dirpath, &child, &info)) > 0; count++) {
         if (used + n + 2 > it->priv_.size) {
             it->error = SP_ERR_TOO_LONG;
             break;
@@ -3835,10 +3999,10 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
         (names > it->priv_.size || ptrs + (count + dirs_listed) * sizeof(char *) > it->priv_.size))
         it->error = SP_ERR_TOO_LONG;
 #ifdef SP_WINDOWS
-    sp_priv_readdir_close(&handle); /* held, it would keep a deleted subdirectory pending, so its parent not empty */
+    sp_priv_readdir_close(&listing); /* held, it would keep a deleted subdirectory pending, so its parent not empty */
 #endif
     if (it->error != SP_OK || child.error != SP_OK) {
-        sp_priv_readdir_close(&handle);
+        sp_priv_readdir_close(&listing);
         return it->error != SP_OK ? it->error : child.error;
     }
     char **list = SP_PRIV_CAST(char **, SP_PRIV_CAST(void *, buf + ptrs));
@@ -3850,8 +4014,8 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
         else
             list[count - ++files] = buf + at + 1;
     }
-    qsort(list, dirs, sizeof(char *), sp_priv_walk_name_cmp);
-    qsort(list + dirs, files, sizeof(char *), sp_priv_walk_name_cmp);
+    sp_priv_walk_sort(list, dirs);
+    sp_priv_walk_sort(list + dirs, files);
     if (dirs > 0)
         memcpy(list + count, list, dirs * sizeof(char *));
 
@@ -3864,7 +4028,7 @@ static SpError sp_priv_walk_list(SpWalkIter *it) {
     level->filename_count = files;
     level->listed = list + count;
     level->listed_count = dirs;
-    level->handle = handle;
+    level->listing = listing;
     it->priv_.level = it->priv_.used;
     it->priv_.used = ptrs + (count + dirs) * sizeof(char *);
     sp_priv_walk_show(e, level);
@@ -3934,7 +4098,7 @@ SpWalkEntry *sp_walk_next(SpWalkIter *it) {
             continue;
         }
 
-        sp_priv_readdir_close(&level->handle);
+        sp_priv_readdir_close(&level->listing);
         it->priv_.used = it->priv_.level;
         it->priv_.level = level->prev;
         if (!top_down) {
@@ -3949,7 +4113,7 @@ SpWalkEntry *sp_walk_next(SpWalkIter *it) {
 void sp_walk_end(SpWalkIter *it) {
     while (it->priv_.level != SP_PRIV_CAST(size_t, -1)) {
         SpPrivWalkLevel *level = SP_PRIV_CAST(SpPrivWalkLevel *, SP_PRIV_CAST(void *, it->priv_.buf + it->priv_.level));
-        sp_priv_readdir_close(&level->handle);
+        sp_priv_readdir_close(&level->listing);
         it->priv_.used = it->priv_.level;
         it->priv_.level = level->prev;
     }
