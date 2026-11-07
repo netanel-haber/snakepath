@@ -187,9 +187,6 @@
   {%- assign parts = content | split: "<!-- The site shows the text above in its header, beside the logo. -->" %}
   <header>
     <div class="container hero">
-      <snakepath-toy controls>
-        <img class="logo" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
-      </snakepath-toy>
       <div>
         <div class="title">
           <a id="a-title" href="/">
@@ -203,6 +200,9 @@
         <h2>Python's pathlib in C99</h2>
 {{ parts[0] }}
       </div>
+      <snakepath-toy controls>
+        <img class="logo" src="./snakepath.png" alt="snake ascii art that also looks like a path" />
+      </snakepath-toy>
     </div>
   </header>
   <div class="container">
