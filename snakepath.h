@@ -586,6 +586,18 @@ typedef int SpPrivFile;
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_SYMLINK_FOLLOW 0x400
 #endif
+/* struct stat's times (t: a, m or c) in seconds and nanoseconds, under each system's names: macOS's and NetBSD's
+ * timespecs, the separate fields of glibc's and macOS's strict modes, else POSIX 2008's */
+#if (defined(__APPLE__) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))) || defined(__NetBSD__)
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##timespec.tv_sec
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##timespec.tv_nsec
+#elif (defined(__GLIBC__) && !defined(__USE_XOPEN2K8)) || defined(__APPLE__)
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##time
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##timensec
+#else
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##tim.tv_sec
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##tim.tv_nsec
+#endif
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
 #ifndef __cplusplus
@@ -2097,19 +2109,12 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
     result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
     result.sp_size = SP_PRIV_CAST(long long, st.st_size);
-#if defined(__APPLE__) || defined(__NetBSD__)
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
-#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8) /* glibc's strict C modes hide POSIX 2008's st_atim */
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_atimensec);
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_mtimensec);
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_ctimensec);
-#else
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atim.tv_sec) * 1000000000LL + st.st_atim.tv_nsec;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctim.tv_sec) * 1000000000LL + st.st_ctim.tv_nsec;
-#endif
+    result.sp_atime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, a)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, a));
+    result.sp_mtime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, m)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, m));
+    result.sp_ctime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, c)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, c));
 #endif
 
     /* As CPython: seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
@@ -3068,11 +3073,11 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
     bool link = S_ISLNK(st.st_mode);
 
 #ifdef UTIME_OMIT /* to the nanosecond, as os.utime(ns=...), where the headers show utimensat (glibc's strict modes don't) */
-#if defined(__APPLE__) || defined(__NetBSD__)
-    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
-#else
-    struct timespec times[2] = {st.st_atim, st.st_mtim};
-#endif
+    struct timespec times[2];
+    times[0].tv_sec = SP_PRIV_ST_SEC(st, a);
+    times[0].tv_nsec = SP_PRIV_CAST(long, SP_PRIV_ST_NSEC(st, a));
+    times[1].tv_sec = SP_PRIV_ST_SEC(st, m);
+    times[1].tv_nsec = SP_PRIV_CAST(long, SP_PRIV_ST_NSEC(st, m));
     if (utimensat(AT_FDCWD, dst, times, link ? AT_SYMLINK_NOFOLLOW : 0) != 0)
         return false;
 #else
