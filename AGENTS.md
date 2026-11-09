@@ -39,8 +39,8 @@ cc -x c -o nob nob.h && ./nob   # everything: builds, tests, Python checks, layo
 ./nob clean                     # before comparing against a clean main
 ```
 
-Requirements: a C compiler, CPython 3.15+, clang-format 21. `SNAKEPATH_SKIP_GCC=1` builds with clang only. CI (Linux
-and Windows) is authoritative.
+Requirements: a C compiler, CPython 3.15+, clang-format 21. `SNAKEPATH_SKIP_GCC=1` builds with clang only, as nob
+does on macOS, FreeBSD and OpenBSD. CI (Linux, macOS, Windows, and FreeBSD in a VM) is authoritative.
 
 ## Git
 

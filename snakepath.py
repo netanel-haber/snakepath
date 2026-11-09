@@ -1163,6 +1163,12 @@ def check_fs(limit=20):
         for step in ["a/b/leaf", "a/out", "a/missing", "a", "", ""]:
             compare(f"tree/{step}._delete()", lambda: (Path(root, "tree-ours", step)._delete(), tree_snapshot("ours")),
                     lambda: (pathlib.Path(root, "tree-real", step)._delete(), tree_snapshot("real")))
+        # A hard link to a symlink links what it points to, as os.link follows it (link() alone differs by platform)
+        if (base / "link").is_symlink():
+            Path(root, "hard-ours").hardlink_to(Path(root, "link"))
+            pathlib.Path(root, "hard-real").hardlink_to(pathlib.Path(root, "link"))
+            compare("hardlink_to(link) then os.lstat().st_mode", lambda: os.lstat(Path(root, "hard-ours")).st_mode,
+                    lambda: os.lstat(pathlib.Path(root, "hard-real")).st_mode)
         Path(root, "twin-ours").chmod(0o640)
         pathlib.Path(root, "twin-real").chmod(0o640)
         compare("chmod(0o640) then os.stat().st_mode", lambda: os.stat(Path(root, "twin-ours")).st_mode,

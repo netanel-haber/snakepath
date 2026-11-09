@@ -569,6 +569,9 @@ typedef HANDLE SpPrivFile;
 #include <sys/ioctl.h>
 #include <sys/sendfile.h>
 #endif
+#ifdef __APPLE__
+#include <copyfile.h>
+#endif
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
@@ -581,6 +584,7 @@ typedef int SpPrivFile;
 #define AT_FDCWD -100
 #define AT_REMOVEDIR 0x200
 #define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_SYMLINK_FOLLOW 0x400
 #endif
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
@@ -588,7 +592,7 @@ typedef int SpPrivFile;
 extern int lstat(const char *path, struct stat *buf);
 extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 extern int symlink(const char *target, const char *linkpath);
-extern int link(const char *oldpath, const char *newpath);
+extern int linkat(int from_fd, const char *from, int to_fd, const char *to, int flags);
 extern int chmod(const char *path, mode_t mode);
 #ifdef AT_SYMLINK_NOFOLLOW
 extern int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
@@ -2600,7 +2604,9 @@ static SpError sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool 
     if (!symbolic)
         return SP_ERR_UNSUPPORTED; /* Android forbids hard links: CPython there has no os.link */
 #endif
-    bool ok = (symbolic ? symlink(to.path, at.path) : link(to.path, at.path)) == 0;
+    /* os.link follows a link it is given, which link() alone does only on some systems */
+    bool ok =
+        (symbolic ? symlink(to.path, at.path) : linkat(AT_FDCWD, to.path, AT_FDCWD, at.path, AT_SYMLINK_FOLLOW)) == 0;
 #endif
     return ok ? SP_OK : sp_priv_last_error();
 }
@@ -3081,17 +3087,25 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
 #ifndef SP_WINDOWS
 /* The bytes of in, written to out */
 static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
+    /* As CPython's copy: a copy-on-write clone where the file system makes one (Linux's FICLONE, from linux/fs.h, which
+     * clashes with sys/mount.h), or macOS's fcopyfile, then copy_file_range where the headers declare it (glibc 2.27 for
+     * _GNU_SOURCE, FreeBSD 13), then Linux's sendfile, each after the one before fails as CPython lets it, before
+     * anything is copied. A first 0 from copy_file_range moves on too (older kernels copied nothing of a procfs file),
+     * and a file sendfile can't take is read and written */
 #ifdef __linux__
-    /* As CPython's copy: a copy-on-write clone where the file system makes one (FICLONE, from linux/fs.h, which clashes
-     * with sys/mount.h), then copy_file_range where the headers declare it (glibc 2.27, for _GNU_SOURCE), then
-     * sendfile, each after the one before fails as CPython lets it, before anything is copied. A first 0 from
-     * copy_file_range moves on too (older kernels copied nothing of a procfs file), and a file sendfile can't take is
-     * read and written */
     if (ioctl(out, _IOW(0x94, 9, int), in) == 0)
         return SP_OK;
     if (errno != EBADF && errno != EOPNOTSUPP && errno != ETXTBSY && errno != EXDEV)
         return sp_priv_last_error();
-#if defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)
+#endif
+#ifdef __APPLE__
+    if (fcopyfile(in, out, SP_PRIV_NULL, COPYFILE_DATA) == 0)
+        return SP_OK;
+    if (errno != EINVAL && errno != ENOTSUP)
+        return sp_priv_last_error();
+#endif
+#if (defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)) ||                          \
+    (defined(__FreeBSD__) && __FreeBSD__ >= 13)
     for (bool sent_any = false;;) {
         ssize_t sent = copy_file_range(in, SP_PRIV_NULL, out, SP_PRIV_NULL, 0x40000000, 0);
         if (sent == 0 && sent_any)
@@ -3105,6 +3119,7 @@ static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
         sent_any = true;
     }
 #endif
+#ifdef __linux__
     for (bool sent_any = false;;) {
         ssize_t sent = sendfile(out, in, SP_PRIV_NULL, 0x40000000);
         if (sent == 0)
