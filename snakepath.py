@@ -1144,7 +1144,7 @@ def check_fs(limit=20):
                 compare(f"{name!r}.copy(preserve_metadata=True) then os.stat().{field}",
                         lambda: getattr(os.stat(ours_copy), field), lambda: getattr(os.stat(real_copy), field))
         # A link copied as a link, with its own times and, where it has one, mode (os.utime and chmod without following)
-        if (base / "link").is_symlink():
+        if (base / "link").is_symlink() and os.utime in os.supports_follow_symlinks:
             os.chmod(base / "link", 0o700, follow_symlinks=False) if os.chmod in os.supports_follow_symlinks else None
             os.utime(base / "link", ns=(1_500_000_000_000_000_001, 1_500_000_000_000_000_002), follow_symlinks=False)
             ours_copy = Path(root, "link").copy(Path(root, "copy-ours-link"), follow_symlinks=False,
