@@ -569,6 +569,9 @@ typedef HANDLE SpPrivFile;
 #include <sys/ioctl.h>
 #include <sys/sendfile.h>
 #endif
+#ifdef __APPLE__
+#include <copyfile.h>
+#endif
 typedef char SpPrivChar;
 typedef int SpPrivFile;
 #define SP_PRIV_NATIVE_MAX 1
@@ -581,6 +584,19 @@ typedef int SpPrivFile;
 #define AT_FDCWD -100
 #define AT_REMOVEDIR 0x200
 #define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_SYMLINK_FOLLOW 0x400
+#endif
+/* struct stat's times (t: a, m or c) in seconds and nanoseconds, under each system's names: macOS's and NetBSD's
+ * timespecs, the separate fields of glibc's and macOS's strict modes, else POSIX 2008's */
+#if (defined(__APPLE__) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))) || defined(__NetBSD__)
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##timespec.tv_sec
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##timespec.tv_nsec
+#elif (defined(__GLIBC__) && !defined(__USE_XOPEN2K8)) || defined(__APPLE__)
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##time
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##timensec
+#else
+#define SP_PRIV_ST_SEC(st, t) (st).st_##t##tim.tv_sec
+#define SP_PRIV_ST_NSEC(st, t) (st).st_##t##tim.tv_nsec
 #endif
 /* C99 workaround - these functions exist but aren't declared without feature test macros.
    C++ headers already expose them via stdlib.h/cstdlib, so only declare in C mode. */
@@ -588,7 +604,7 @@ typedef int SpPrivFile;
 extern int lstat(const char *path, struct stat *buf);
 extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 extern int symlink(const char *target, const char *linkpath);
-extern int link(const char *oldpath, const char *newpath);
+extern int linkat(int from_fd, const char *from, int to_fd, const char *to, int flags);
 extern int chmod(const char *path, mode_t mode);
 #ifdef AT_SYMLINK_NOFOLLOW
 extern int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
@@ -657,7 +673,7 @@ static SpError sp_priv_last_error(void) {
         {EPERM, SP_ERR_PERMISSION},      {ENOTDIR, SP_ERR_NOT_DIR},     {EISDIR, SP_ERR_IS_DIR},
         {ENOTEMPTY, SP_ERR_NOT_EMPTY},   {ELOOP, SP_ERR_LOOP},          {EXDEV, SP_ERR_CROSS_DEVICE},
         {ENAMETOOLONG, SP_ERR_TOO_LONG}, {ERANGE, SP_ERR_TOO_LONG},     {EINVAL, SP_ERR_INVALID_ARG},
-        {ENOSYS, SP_ERR_UNSUPPORTED},    {ENOTSUP, SP_ERR_UNSUPPORTED},
+        {ENOSYS, SP_ERR_UNSUPPORTED},    {ENOTSUP, SP_ERR_UNSUPPORTED}, {EOPNOTSUPP, SP_ERR_UNSUPPORTED},
     };
     unsigned long code = SP_PRIV_CAST(unsigned long, errno);
 #endif
@@ -2093,19 +2109,12 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
     result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
     result.sp_size = SP_PRIV_CAST(long long, st.st_size);
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
-#elif defined(__GLIBC__) && !defined(__USE_XOPEN2K8) /* glibc's strict C modes hide POSIX 2008's st_atim */
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_atimensec);
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_mtimensec);
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctime) * 1000000000LL + SP_PRIV_CAST(long long, st.st_ctimensec);
-#else
-    result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atim.tv_sec) * 1000000000LL + st.st_atim.tv_nsec;
-    result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
-    result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctim.tv_sec) * 1000000000LL + st.st_ctim.tv_nsec;
-#endif
+    result.sp_atime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, a)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, a));
+    result.sp_mtime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, m)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, m));
+    result.sp_ctime_ns =
+        SP_PRIV_CAST(long long, SP_PRIV_ST_SEC(st, c)) * 1000000000LL + SP_PRIV_CAST(long long, SP_PRIV_ST_NSEC(st, c));
 #endif
 
     /* As CPython: seconds + nanoseconds * 1e-9, which rounds differently from nanoseconds / 1e9 */
@@ -2600,7 +2609,9 @@ static SpError sp_priv_link_to_impl(const SpPath *p, const SpPath *target, bool 
     if (!symbolic)
         return SP_ERR_UNSUPPORTED; /* Android forbids hard links: CPython there has no os.link */
 #endif
-    bool ok = (symbolic ? symlink(to.path, at.path) : link(to.path, at.path)) == 0;
+    /* os.link follows a link it is given, which link() alone does only on some systems */
+    bool ok =
+        (symbolic ? symlink(to.path, at.path) : linkat(AT_FDCWD, to.path, AT_FDCWD, at.path, AT_SYMLINK_FOLLOW)) == 0;
 #endif
     return ok ? SP_OK : sp_priv_last_error();
 }
@@ -3055,43 +3066,69 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
     return ok && (!follow_symlinks ||
                   (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
 #else
+    /* Each on a link itself where the system sets it there, as CPython's lookup of follow_symlinks support: else skipped */
     struct stat st;
     if ((follow_symlinks ? stat(src, &st) : lstat(src, &st)) != 0)
         return false;
-    if (S_ISLNK(st.st_mode))
-        return true; /* utime() and chmod() would follow the link */
+    bool link = S_ISLNK(st.st_mode);
 
 #ifdef UTIME_OMIT /* to the nanosecond, as os.utime(ns=...), where the headers show utimensat (glibc's strict modes don't) */
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
-#else
-    struct timespec times[2] = {st.st_atim, st.st_mtim};
-#endif
-    bool timed = utimensat(AT_FDCWD, dst, times, 0) == 0;
+    struct timespec times[2];
+    times[0].tv_sec = SP_PRIV_ST_SEC(st, a);
+    times[0].tv_nsec = SP_PRIV_CAST(long, SP_PRIV_ST_NSEC(st, a));
+    times[1].tv_sec = SP_PRIV_ST_SEC(st, m);
+    times[1].tv_nsec = SP_PRIV_CAST(long, SP_PRIV_ST_NSEC(st, m));
+    if (utimensat(AT_FDCWD, dst, times, link ? AT_SYMLINK_NOFOLLOW : 0) != 0)
+        return false;
 #else
     struct utimbuf times;
     times.actime = st.st_atime;
     times.modtime = st.st_mtime;
-    bool timed = utime(dst, &times) == 0;
+    if (!link && utime(dst, &times) != 0)
+        return false;
 #endif
-    return timed && chmod(dst, st.st_mode & 07777) == 0;
+
+    /* A link has no mode of its own on Linux */
+    mode_t mode = st.st_mode & 07777;
+    if ((link ? fchmodat(AT_FDCWD, dst, mode, AT_SYMLINK_NOFOLLOW) : chmod(dst, mode)) != 0 &&
+        (!link || sp_priv_last_error() != SP_ERR_UNSUPPORTED))
+        return false;
+
+#ifdef UF_NODUMP /* BSD's file flags, as CPython copies st_flags, where the file system keeps them */
+#ifdef __OpenBSD__
+    int flagged = link ? 0 : chflags(dst, st.st_flags); /* no lchflags */
+#else
+    int flagged = link ? lchflags(dst, st.st_flags) : chflags(dst, st.st_flags);
+#endif
+    if (flagged != 0 && sp_priv_last_error() != SP_ERR_UNSUPPORTED)
+        return false;
+#endif
+    return true;
 #endif
 }
 
 #ifndef SP_WINDOWS
 /* The bytes of in, written to out */
 static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
+    /* As CPython's copy: a copy-on-write clone where the file system makes one (Linux's FICLONE, from linux/fs.h, which
+     * clashes with sys/mount.h), or macOS's fcopyfile, then copy_file_range where the headers declare it (glibc 2.27 for
+     * _GNU_SOURCE, FreeBSD 13), then Linux's sendfile, each after the one before fails as CPython lets it, before
+     * anything is copied. A first 0 from copy_file_range moves on too (older kernels copied nothing of a procfs file),
+     * and a file sendfile can't take is read and written */
 #ifdef __linux__
-    /* As CPython's copy: a copy-on-write clone where the file system makes one (FICLONE, from linux/fs.h, which clashes
-     * with sys/mount.h), then copy_file_range where the headers declare it (glibc 2.27, for _GNU_SOURCE), then
-     * sendfile, each after the one before fails as CPython lets it, before anything is copied. A first 0 from
-     * copy_file_range moves on too (older kernels copied nothing of a procfs file), and a file sendfile can't take is
-     * read and written */
     if (ioctl(out, _IOW(0x94, 9, int), in) == 0)
         return SP_OK;
     if (errno != EBADF && errno != EOPNOTSUPP && errno != ETXTBSY && errno != EXDEV)
         return sp_priv_last_error();
-#if defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)
+#endif
+#ifdef __APPLE__
+    if (fcopyfile(in, out, SP_PRIV_NULL, COPYFILE_DATA) == 0)
+        return SP_OK;
+    if (errno != EINVAL && errno != ENOTSUP)
+        return sp_priv_last_error();
+#endif
+#if (defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)) ||                          \
+    (defined(__FreeBSD__) && __FreeBSD__ >= 13 && __BSD_VISIBLE)
     for (bool sent_any = false;;) {
         ssize_t sent = copy_file_range(in, SP_PRIV_NULL, out, SP_PRIV_NULL, 0x40000000, 0);
         if (sent == 0 && sent_any)
@@ -3105,6 +3142,7 @@ static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
         sent_any = true;
     }
 #endif
+#ifdef __linux__
     for (bool sent_any = false;;) {
         ssize_t sent = sendfile(out, in, SP_PRIV_NULL, 0x40000000);
         if (sent == 0)

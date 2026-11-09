@@ -134,7 +134,8 @@
 #define NOBDEF
 #endif /* NOBDEF */
 
-#if defined(__unix__) && !defined(_POSIX_C_SOURCE)
+/* snakepath: Linux only, where glibc's strict modes need it; on the BSDs it hides sysconf's _SC_NPROCESSORS_ONLN */
+#if defined(__linux__) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
 
@@ -3502,7 +3503,7 @@ static bool verbose = true;
     "-Weverything", \
     "-Wno-disabled-macro-expansion", "-Wno-padded", \
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
-    "-Wno-unsafe-buffer-usage"
+    "-Wno-unsafe-buffer-usage", "-Wno-poison-system-directories"
 
 #define CLANG_C_EXCLUSIONS \
     "-Wno-declaration-after-statement"
@@ -3603,7 +3604,7 @@ static bool build_source_async(BuildConfig cfg, const char *source, Nob_Procs *p
 #endif
     {
         if (cfg.sanitizers) {
-            nob_cmd_append(&cmd, "-fsanitize=address,undefined,leak");
+            nob_cmd_append(&cmd, "-fsanitize=address,undefined");
             nob_cmd_append(&cmd, "-fsanitize=pointer-compare,pointer-subtract");
             nob_cmd_append(&cmd, "-fsanitize=float-divide-by-zero,float-cast-overflow");
             nob_cmd_append(&cmd, "-fsanitize-address-use-after-scope");
@@ -3632,13 +3633,13 @@ static bool run_valgrind(const char *exe) {
 }
 #endif
 
-/* SNAKEPATH_SKIP_GCC (Termux, where gcc is clang) keeps only the clang builds, without sanitizers;
- * otherwise sanitizer builds need SNAKEPATH_SANITIZE */
+/* SNAKEPATH_SKIP_GCC keeps only the clang builds, as on macOS, FreeBSD and OpenBSD, whose compiler is clang (gcc
+ * there is clang or missing), and on Termux; sanitizer builds need SNAKEPATH_SANITIZE */
 static bool skip_gcc, use_sanitizers;
 
 static bool config_enabled(BuildConfig cfg) {
     if (skip_gcc && (cfg.compiler == COMPILER_GCC || cfg.compiler == COMPILER_GPP)) return false;
-    return !cfg.sanitizers || (use_sanitizers && !skip_gcc);
+    return !cfg.sanitizers || use_sanitizers;
 }
 
 static const char *all_artifacts[] = {
@@ -4159,7 +4160,11 @@ int main(int argc, char **argv) {
     const char *program = nob_shift(argv, argc);
     (void)program;
 #ifndef _WIN32
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+    skip_gcc = true;
+#else
     skip_gcc = getenv("SNAKEPATH_SKIP_GCC") != NULL;
+#endif
     use_sanitizers = getenv("SNAKEPATH_SANITIZE") != NULL;
 #endif
 
@@ -4326,8 +4331,8 @@ int main(int argc, char **argv) {
     }
 
 #ifndef _WIN32
-    /* Phase 4: Valgrind (must be sequential, slow) */
-    if (all_ok) {
+    /* Phase 4: Valgrind on the gcc build (must be sequential, slow) */
+    if (all_ok && !skip_gcc) {
         LOG_INFO( "=== Running valgrind ===");
         if (!run_valgrind("./test_gcc")) {
             nob_log(NOB_ERROR, "Valgrind check failed");

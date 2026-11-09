@@ -59,6 +59,54 @@ jobs:
       - name: Run build and tests
         run: .\nob.exe
 
+  # macOS's compiler is clang, so nob builds with clang only, sanitizers included; valgrind doesn't run there
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.15'
+
+      - name: Install clang-format
+        run: pip install clang-format==21.1.8
+
+      - name: Build nob
+        run: cc -x c -o nob nob.h
+
+      - name: Run build and tests
+        run: ./nob
+        env:
+          SNAKEPATH_SANITIZE: "1"
+
+  # FreeBSD in a VM on the Linux runner, its base clang building everything, as a user that permissions bind
+  build-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run build and tests on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "15.0"
+          usesh: true
+          prepare: |
+            pkg install -y python315 llvm21
+            ln -sf /usr/local/bin/python3.15 /usr/local/bin/python3
+            ln -sf /usr/local/llvm21/bin/clang-format /usr/local/bin/clang-format
+            pw useradd ci -m
+          run: |
+            chown -R ci .
+            su ci -c 'cc -x c -o nob nob.h && ./nob'
+
   # Informational: the pure path API against the PR's base branch through ./nob diff. A PR that changes behavior on
   # purpose differs by design, so this never blocks a merge; the report is for the reviewer.
   diff-linux:
@@ -212,15 +260,15 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               print(f"versions={json.dumps(versions)}", file=out)
 
-  # Parity with each 3.15 release, on Linux and Windows: the bindings built for it, then the fuzz and check_fs against
-  # its own pathlib and os, and CPython's pathlib tests from its own release tag. build-linux and build-windows run the
-  # same checks on the latest release, with everything else
+  # Parity with each 3.15 release, on Linux, Windows and macOS: the bindings built for it, then the fuzz and check_fs
+  # against its own pathlib and os, and CPython's pathlib tests from its own release tag. The build jobs run the same
+  # checks on the latest release, with everything else
   parity:
     needs: python-releases
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ${{ fromJSON(needs.python-releases.outputs.versions) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
