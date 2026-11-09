@@ -134,7 +134,8 @@
 #define NOBDEF
 #endif /* NOBDEF */
 
-#if defined(__unix__) && !defined(_POSIX_C_SOURCE)
+/* snakepath: Linux only, where glibc's strict modes need it; on the BSDs it hides sysconf's _SC_NPROCESSORS_ONLN */
+#if defined(__linux__) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
 
@@ -3502,7 +3503,7 @@ static bool verbose = true;
     "-Weverything", \
     "-Wno-disabled-macro-expansion", "-Wno-padded", \
     "-Wno-covered-switch-default", "-Wno-unknown-warning-option", \
-    "-Wno-unsafe-buffer-usage"
+    "-Wno-unsafe-buffer-usage", "-Wno-poison-system-directories"
 
 #define CLANG_C_EXCLUSIONS \
     "-Wno-declaration-after-statement"

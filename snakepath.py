@@ -1143,6 +1143,17 @@ def check_fs(limit=20):
             for field in ["st_mode", "st_size", "st_mtime_ns"]:
                 compare(f"{name!r}.copy(preserve_metadata=True) then os.stat().{field}",
                         lambda: getattr(os.stat(ours_copy), field), lambda: getattr(os.stat(real_copy), field))
+        # A link copied as a link, with its own times and, where it has one, mode (os.utime and chmod without following)
+        if (base / "link").is_symlink():
+            os.chmod(base / "link", 0o700, follow_symlinks=False) if os.chmod in os.supports_follow_symlinks else None
+            os.utime(base / "link", ns=(1_500_000_000_000_000_001, 1_500_000_000_000_000_002), follow_symlinks=False)
+            ours_copy = Path(root, "link").copy(Path(root, "copy-ours-link"), follow_symlinks=False,
+                                                preserve_metadata=True)
+            real_copy = pathlib.Path(root, "link").copy(pathlib.Path(root, "copy-real-link"), follow_symlinks=False,
+                                                        preserve_metadata=True)
+            for field in ["st_mode", "st_mtime_ns"]:
+                compare(f"'link'.copy(follow_symlinks=False, preserve_metadata=True) then os.lstat().{field}",
+                        lambda: getattr(os.lstat(ours_copy), field), lambda: getattr(os.lstat(real_copy), field))
         # Path._delete, step by step on twin trees, each with a link out to d that must not be followed
         def tree_snapshot(side):
             top = os.path.join(root, f"tree-{side}")

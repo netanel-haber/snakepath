@@ -661,7 +661,7 @@ static SpError sp_priv_last_error(void) {
         {EPERM, SP_ERR_PERMISSION},      {ENOTDIR, SP_ERR_NOT_DIR},     {EISDIR, SP_ERR_IS_DIR},
         {ENOTEMPTY, SP_ERR_NOT_EMPTY},   {ELOOP, SP_ERR_LOOP},          {EXDEV, SP_ERR_CROSS_DEVICE},
         {ENAMETOOLONG, SP_ERR_TOO_LONG}, {ERANGE, SP_ERR_TOO_LONG},     {EINVAL, SP_ERR_INVALID_ARG},
-        {ENOSYS, SP_ERR_UNSUPPORTED},    {ENOTSUP, SP_ERR_UNSUPPORTED},
+        {ENOSYS, SP_ERR_UNSUPPORTED},    {ENOTSUP, SP_ERR_UNSUPPORTED}, {EOPNOTSUPP, SP_ERR_UNSUPPORTED},
     };
     unsigned long code = SP_PRIV_CAST(unsigned long, errno);
 #endif
@@ -2097,7 +2097,7 @@ SpStatResult sp_stat(const SpPath *p, bool follow_symlinks) {
     result.sp_uid = SP_PRIV_CAST(unsigned int, st.st_uid);
     result.sp_gid = SP_PRIV_CAST(unsigned int, st.st_gid);
     result.sp_size = SP_PRIV_CAST(long long, st.st_size);
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#if defined(__APPLE__) || defined(__NetBSD__)
     result.sp_atime_ns = SP_PRIV_CAST(long long, st.st_atimespec.tv_sec) * 1000000000LL + st.st_atimespec.tv_nsec;
     result.sp_mtime_ns = SP_PRIV_CAST(long long, st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
     result.sp_ctime_ns = SP_PRIV_CAST(long long, st.st_ctimespec.tv_sec) * 1000000000LL + st.st_ctimespec.tv_nsec;
@@ -3061,26 +3061,44 @@ static bool sp_priv_copy_metadata(const SpPrivChar *src, const SpPrivChar *dst, 
     return ok && (!follow_symlinks ||
                   (dst_attrs != INVALID_FILE_ATTRIBUTES && (attrs == dst_attrs || SetFileAttributesW(dst, attrs))));
 #else
+    /* Each on a link itself where the system sets it there, as CPython's lookup of follow_symlinks support: else skipped */
     struct stat st;
     if ((follow_symlinks ? stat(src, &st) : lstat(src, &st)) != 0)
         return false;
-    if (S_ISLNK(st.st_mode))
-        return true; /* utime() and chmod() would follow the link */
+    bool link = S_ISLNK(st.st_mode);
 
 #ifdef UTIME_OMIT /* to the nanosecond, as os.utime(ns=...), where the headers show utimensat (glibc's strict modes don't) */
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#if defined(__APPLE__) || defined(__NetBSD__)
     struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
 #else
     struct timespec times[2] = {st.st_atim, st.st_mtim};
 #endif
-    bool timed = utimensat(AT_FDCWD, dst, times, 0) == 0;
+    if (utimensat(AT_FDCWD, dst, times, link ? AT_SYMLINK_NOFOLLOW : 0) != 0)
+        return false;
 #else
     struct utimbuf times;
     times.actime = st.st_atime;
     times.modtime = st.st_mtime;
-    bool timed = utime(dst, &times) == 0;
+    if (!link && utime(dst, &times) != 0)
+        return false;
 #endif
-    return timed && chmod(dst, st.st_mode & 07777) == 0;
+
+    /* A link has no mode of its own on Linux */
+    mode_t mode = st.st_mode & 07777;
+    if ((link ? fchmodat(AT_FDCWD, dst, mode, AT_SYMLINK_NOFOLLOW) : chmod(dst, mode)) != 0 &&
+        (!link || sp_priv_last_error() != SP_ERR_UNSUPPORTED))
+        return false;
+
+#ifdef UF_NODUMP /* BSD's file flags, as CPython copies st_flags, where the file system keeps them */
+#ifdef __OpenBSD__
+    int flagged = link ? 0 : chflags(dst, st.st_flags); /* no lchflags */
+#else
+    int flagged = link ? lchflags(dst, st.st_flags) : chflags(dst, st.st_flags);
+#endif
+    if (flagged != 0 && sp_priv_last_error() != SP_ERR_UNSUPPORTED)
+        return false;
+#endif
+    return true;
 #endif
 }
 
@@ -3105,7 +3123,7 @@ static SpError sp_priv_copy_stream(SpPrivFile in, SpPrivFile out) {
         return sp_priv_last_error();
 #endif
 #if (defined(__GLIBC__) && defined(__USE_GNU) && (__GLIBC__ > 2 || __GLIBC_MINOR__ >= 27)) ||                          \
-    (defined(__FreeBSD__) && __FreeBSD__ >= 13)
+    (defined(__FreeBSD__) && __FreeBSD__ >= 13 && __BSD_VISIBLE)
     for (bool sent_any = false;;) {
         ssize_t sent = copy_file_range(in, SP_PRIV_NULL, out, SP_PRIV_NULL, 0x40000000, 0);
         if (sent == 0 && sent_any)
